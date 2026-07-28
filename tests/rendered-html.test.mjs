@@ -217,11 +217,14 @@ test("keeps finance plans and market quotes behind password sessions", async () 
 });
 
 test("provides a native Next.js build and server-only D1 adapter for Vercel", async () => {
-  const [packageJson, vercelConfig, nextConfig, adapter, declarations, readme] = await Promise.all([
+  const [packageJson, vercelConfig, nextConfig, adapter, proxy, registerRoute, accountRoute, declarations, readme] = await Promise.all([
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/vercel/cloudflare-workers.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/vercel/proxy-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/register/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/account/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../cloudflare-workers.d.ts", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
   ]);
@@ -235,7 +238,14 @@ test("provides a native Next.js build and server-only D1 adapter for Vercel", as
   assert.match(adapter, /CLOUDFLARE_D1_API_TOKEN/);
   assert.match(adapter, /cache: "no-store"/);
   assert.doesNotMatch(adapter, /Bearer\s+[A-Za-z0-9_-]{20,}/);
+  assert.match(proxy, /needsCloudflareBackendProxy/);
+  assert.match(proxy, /klarbudget-kevin-2026\.alpher5\.chatgpt\.site/);
+  assert.match(proxy, /incomingOrigin !== incomingUrl\.origin/);
+  assert.match(proxy, /getSetCookie/);
+  assert.match(registerRoute, /if \(needsCloudflareBackendProxy\(\)\) return proxyApiRequest\(request\)/);
+  assert.match(accountRoute, /if \(needsCloudflareBackendProxy\(\)\) return proxyApiRequest\(request\)/);
   assert.match(declarations, /declare module "cloudflare:workers"/);
   assert.match(readme, /Deployment auf Vercel/);
   assert.match(readme, /D1 Read und D1 Write/);
+  assert.match(readme, /automatisch serverseitig\s+an das bestehende Cloudflare-Backend/);
 });

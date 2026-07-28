@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { isLocalHostname } from "../../local-host";
 import { clearSessionCookie, ensureAuthSchema, getSessionIdentity, maskEmail, userId } from "../../password-auth";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -124,6 +125,7 @@ async function upsertUser(identity: Identity, recordAccess = false) {
 }
 
 export async function GET(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   const identity = await requestIdentity(request);
   if (!identity) return json({ authenticated: false }, 401);
 
@@ -143,6 +145,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!isSameOrigin(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return json({ error: "JSON erwartet." }, 415);
   const identity = await requestIdentity(request);
@@ -174,6 +177,7 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!isSameOrigin(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   const identity = await requestIdentity(request);
   if (!identity) return json({ authenticated: false }, 401);

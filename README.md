@@ -48,11 +48,13 @@ email address, because the deterministic user id is unchanged.
 ## Deployment auf Vercel
 
 Vercel verwendet über `vercel.json` den nativen Next.js-Build und erzeugt die
-erwartete `.next`-Ausgabe. Die API-Routen greifen serverseitig über die
-Cloudflare D1 Query API auf dieselbe Datenbank wie die Cloudflare-Version zu.
+erwartete `.next`-Ausgabe. Wenn keine D1-Zugangsdaten im Vercel-Projekt gesetzt
+sind, leitet die Anwendung Account- und Admin-Anfragen automatisch serverseitig
+an das bestehende Cloudflare-Backend weiter. Dadurch bleiben Registrierung,
+Login und vorhandene Accounts ohne zusätzliche Secrets erreichbar.
 
-Folgende Environment Variables müssen im Vercel-Projekt für Production,
-Preview und Development hinterlegt werden:
+Für einen späteren direkten Zugriff auf die Cloudflare D1 Query API können
+folgende Environment Variables in Vercel gesetzt werden:
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_D1_DATABASE_ID`

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loginPasswordAccount, normalizeEmail, setSessionCookie, validPassword } from "../../../password-auth";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,7 @@ function json(data: unknown, status = 200) {
 }
 
 export async function POST(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   const origin = request.headers.get("origin");
   if ((origin && origin !== new URL(request.url).origin) || !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return json({ error: "Unzulässige Anfrage." }, 403);

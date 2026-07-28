@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeEmail, PasswordAuthError, registerPasswordAccount, setSessionCookie, validPassword } from "../../../password-auth";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ function validRequest(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!validRequest(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   try {
     const body = await request.json() as { email?: unknown; password?: unknown };

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,7 @@ async function validToken(provided: string, expected: string) {
 }
 
 export async function GET(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   const runtimeEnv = env as typeof env & { GELDRAUM_ADMIN_TOKEN?: string };
   const expected = runtimeEnv.GELDRAUM_ADMIN_TOKEN;
   const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";

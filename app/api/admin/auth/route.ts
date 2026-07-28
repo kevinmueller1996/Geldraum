@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeEmail, validPassword, verifyPasswordAccount } from "../../../password-auth";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ async function equalSecret(left: string, right: string) {
 }
 
 export async function POST(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   const runtimeEnv = env as typeof env & { GELDRAUM_ADMIN_TOKEN?: string; GELDRAUM_ADMIN_USER_ID?: string };
   const expectedToken = runtimeEnv.GELDRAUM_ADMIN_TOKEN;
   const expectedUserId = runtimeEnv.GELDRAUM_ADMIN_USER_ID;
