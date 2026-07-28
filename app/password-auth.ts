@@ -75,6 +75,10 @@ type AttemptRow = {
   locked_until: string | null;
 };
 
+type PasswordVerification =
+  | { error: "locked" | "invalid" }
+  | { id: string; emailMask: string };
+
 function bytesToBase64Url(bytes: Uint8Array) {
   let binary = "";
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
@@ -214,7 +218,7 @@ async function recordFailure(db: D1Database, emailHash: string, attempt: Attempt
     .bind(emailHash, failedCount, windowStartedAt, lockedUntil).run();
 }
 
-export async function verifyPasswordAccount(email: string, password: string) {
+export async function verifyPasswordAccount(email: string, password: string): Promise<PasswordVerification> {
   const db = await ensureAuthSchema();
   const id = await userId(email);
   const attempt = await db.prepare("SELECT failed_count, window_started_at, locked_until FROM auth_attempts WHERE email_hash = ?")
@@ -236,7 +240,7 @@ export async function verifyPasswordAccount(email: string, password: string) {
 export async function loginPasswordAccount(email: string, password: string) {
   const result = await verifyPasswordAccount(email, password);
   if ("error" in result) return result;
-  return { ...result, token: await createSession(result.id) };
+  return { id: result.id, emailMask: result.emailMask, token: await createSession(result.id) };
 }
 
 export async function getSessionIdentity(request: NextRequest): Promise<SessionIdentity | null> {

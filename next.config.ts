@@ -1,6 +1,24 @@
 import type { NextConfig } from "next";
+import path from "node:path";
+
+const vercelWorkersShim = path.resolve(process.cwd(), "app/vercel/cloudflare-workers.ts");
+const isVercelBuild = process.env.VERCEL === "1";
 
 const nextConfig: NextConfig = {
+  ...(isVercelBuild ? {
+    turbopack: {
+      resolveAlias: {
+        "cloudflare:workers": "./app/vercel/cloudflare-workers.ts",
+      },
+    },
+    webpack(config) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        "cloudflare:workers": vercelWorkersShim,
+      };
+      return config;
+    },
+  } : {}),
   async headers() {
     return [{
       source: "/(.*)",

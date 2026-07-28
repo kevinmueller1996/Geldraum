@@ -45,6 +45,24 @@ identity provider:
 Existing plans remain attached when a previous tester registers with the same
 email address, because the deterministic user id is unchanged.
 
+## Deployment auf Vercel
+
+Vercel verwendet über `vercel.json` den nativen Next.js-Build und erzeugt die
+erwartete `.next`-Ausgabe. Die API-Routen greifen serverseitig über die
+Cloudflare D1 Query API auf dieselbe Datenbank wie die Cloudflare-Version zu.
+
+Folgende Environment Variables müssen im Vercel-Projekt für Production,
+Preview und Development hinterlegt werden:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_D1_DATABASE_ID`
+- `CLOUDFLARE_D1_API_TOKEN` mit D1 Read und D1 Write
+- `GELDRAUM_ADMIN_TOKEN` und `GELDRAUM_ADMIN_USER_ID`, falls die Admin-App
+  weiterhin auf diese Instanz zugreifen soll
+
+Die Werte gehören ausschließlich in die Vercel-Projekteinstellungen und
+dürfen nicht in GitHub committed werden.
+
 ## Befehle
 
 - `npm run dev`: lokale Entwicklung starten

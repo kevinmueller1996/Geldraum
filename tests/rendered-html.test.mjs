@@ -215,3 +215,27 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(page, /Account und Finanzdaten löschen/);
   assert.doesNotMatch(page + loginPage + route + quoteRoute + searchRoute, /signin-with-chatgpt|signout-with-chatgpt|getChatGPTUser/);
 });
+
+test("provides a native Next.js build and server-only D1 adapter for Vercel", async () => {
+  const [packageJson, vercelConfig, nextConfig, adapter, declarations, readme] = await Promise.all([
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../vercel.json", import.meta.url), "utf8"),
+    readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/vercel/cloudflare-workers.ts", import.meta.url), "utf8"),
+    readFile(new URL("../cloudflare-workers.d.ts", import.meta.url), "utf8"),
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(packageJson, /"build:vercel":\s*"VERCEL=1 next build"/);
+  assert.match(vercelConfig, /"framework":\s*"nextjs"/);
+  assert.match(vercelConfig, /"buildCommand":\s*"npm run build:vercel"/);
+  assert.match(nextConfig, /"cloudflare:workers":\s*"\.\/app\/vercel\/cloudflare-workers\.ts"/);
+  assert.match(adapter, /import "server-only"/);
+  assert.match(adapter, /api\.cloudflare\.com\/client\/v4\/accounts/);
+  assert.match(adapter, /CLOUDFLARE_D1_API_TOKEN/);
+  assert.match(adapter, /cache: "no-store"/);
+  assert.doesNotMatch(adapter, /Bearer\s+[A-Za-z0-9_-]{20,}/);
+  assert.match(declarations, /declare module "cloudflare:workers"/);
+  assert.match(readme, /Deployment auf Vercel/);
+  assert.match(readme, /D1 Read und D1 Write/);
+});
