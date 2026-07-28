@@ -56,6 +56,55 @@ test("renders Geldraum locally without requiring authentication", async () => {
     assert.equal(account.authenticated, true);
     assert.equal(account.user.local, true);
 
+    const loginResponse = await fetch(`${baseUrl}/login`, { headers: { accept: "text/html" } });
+    assert.equal(loginResponse.status, 200);
+    const loginHtml = await loginResponse.text();
+    assert.match(loginHtml, /E-Mail-Adresse/);
+    assert.match(loginHtml, /Konto erstellen/);
+    assert.doesNotMatch(loginHtml, /Sign in with ChatGPT|signin-with-chatgpt/i);
+
+    const email = `auth-${process.pid}-${Date.now()}@example.invalid`;
+    const password = "Test-Passwort-2026!";
+    const authHeaders = { "Content-Type": "application/json", Origin: baseUrl };
+    const registration = await fetch(`${baseUrl}/api/auth/register`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ email, password }),
+    });
+    assert.equal(registration.status, 201);
+    const registrationCookie = registration.headers.get("set-cookie") ?? "";
+    assert.match(registrationCookie, /geldraum_session=/);
+    assert.match(registrationCookie, /HttpOnly/i);
+    assert.match(registrationCookie, /SameSite=Lax/i);
+
+    const logout = await fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST",
+      headers: { Origin: baseUrl, Cookie: registrationCookie.split(";", 1)[0] },
+    });
+    assert.equal(logout.status, 200);
+
+    const invalidLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ email, password: "Falsches-Passwort!" }),
+    });
+    assert.equal(invalidLogin.status, 401);
+
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ email, password }),
+    });
+    assert.equal(login.status, 200);
+    const loginCookie = login.headers.get("set-cookie") ?? "";
+    assert.match(loginCookie, /geldraum_session=/);
+
+    const deletion = await fetch(`${baseUrl}/api/account`, {
+      method: "DELETE",
+      headers: { Origin: baseUrl, Cookie: loginCookie.split(";", 1)[0] },
+    });
+    assert.equal(deletion.status, 200);
+
     const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
     assert.equal(manifestResponse.status, 200);
     const manifest = await manifestResponse.json();
@@ -69,11 +118,18 @@ test("renders Geldraum locally without requiring authentication", async () => {
   });
 });
 
-test("keeps finance plans and market quotes behind server-side identity", async () => {
-  const [route, quoteRoute, searchRoute, page, layout, localHost, schema, hosting] = await Promise.all([
+test("keeps finance plans and market quotes behind password sessions", async () => {
+  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, hosting] = await Promise.all([
     readFile(new URL("../app/api/account/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/testers/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/auth/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/market/quotes/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/market/search/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/password-auth.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/login/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/register/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/logout/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/login/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/local-host.ts", import.meta.url), "utf8"),
@@ -84,27 +140,52 @@ test("keeps finance plans and market quotes behind server-side identity", async 
   assert.match(hosting, /"d1":\s*"DB"/);
   assert.match(schema, /financePlans/);
   assert.match(schema, /revision/);
-  assert.match(route, /getChatGPTUser\(\)/);
+  assert.match(schema, /authCredentials/);
+  assert.match(schema, /authSessions/);
+  assert.match(schema, /authAttempts/);
+  assert.match(route, /getSessionIdentity\(request\)/);
   assert.match(route, /isLocalHostname\(hostname\)/);
   assert.match(route, /local: identity\.local/);
-  assert.match(route, /crypto\.subtle\.digest\("SHA-256"/);
+  assert.match(route, /identity\.emailMask/);
+  assert.match(route, /user_activity/);
   assert.match(route, /WHERE user_id = \?/);
   assert.match(route, /body\.revision !== existing\.revision/);
   assert.match(route, /if \(!isSameOrigin\(request\)\)/);
   assert.doesNotMatch(route, /body\.(userId|email)/);
   assert.match(route, /validList\(value\.savings/);
-  assert.match(quoteRoute, /getChatGPTUser\(\)/);
+  assert.match(quoteRoute, /isRequestAuthenticated\(request\)/);
   assert.match(quoteRoute, /if \(!isSameOrigin\(request\)\)/);
   assert.match(quoteRoute, /query2\.finance\.yahoo\.com/);
   assert.match(quoteRoute, /priceEur: quote\.price \* exchangeRate/);
   assert.match(quoteRoute, /body\.symbols\.length > 20/);
-  assert.match(searchRoute, /getChatGPTUser\(\)/);
+  assert.match(searchRoute, /isRequestAuthenticated\(request\)/);
   assert.match(searchRoute, /finance\/autocomplete/);
   assert.match(searchRoute, /region", "DE"/);
   assert.match(searchRoute, /\["S", "E", "M"\]/);
   assert.match(searchRoute, /function instrumentKey/);
   assert.match(searchRoute, /const grouped = new Map/);
   assert.match(searchRoute, /sourcePriority - b\.sourcePriority/);
+  assert.match(adminRoute, /GELDRAUM_ADMIN_TOKEN/);
+  assert.match(adminRoute, /validToken\(provided, expected\)/);
+  assert.match(adminRoute, /testerCode: `T-\$\{row\.user_id\.slice\(0, 10\)/);
+  assert.doesNotMatch(adminRoute, /plan_json|display_name/);
+  assert.match(adminAuthRoute, /GELDRAUM_ADMIN_USER_ID/);
+  assert.match(adminAuthRoute, /verifyPasswordAccount/);
+  assert.match(adminAuthRoute, /equalSecret\(result\.id, expectedUserId\)/);
+  assert.match(passwordAuth, /bcryptHash/);
+  assert.match(passwordAuth, /PASSWORD_COST = 11/);
+  assert.match(passwordAuth, /PASSWORD_SCHEME = "bcrypt"/);
+  assert.match(passwordAuth, /httpOnly: true/);
+  assert.match(passwordAuth, /sameSite: "lax"/);
+  assert.match(passwordAuth, /LOGIN_MAX_FAILURES = 5/);
+  assert.match(passwordAuth, /auth_sessions/);
+  assert.match(passwordAuth, /bcryptCompare/);
+  assert.doesNotMatch(passwordAuth, /oai-authenticated-user|ChatGPT/);
+  assert.match(loginRoute, /loginPasswordAccount/);
+  assert.match(registerRoute, /registerPasswordAccount/);
+  assert.match(logoutRoute, /destroySession/);
+  assert.match(loginPage, /autocomplete="current-password"|current-password/);
+  assert.match(loginPage, /Mindestens 10 Zeichen/);
   assert.match(localHost, /normalized === "localhost"/);
   assert.match(localHost, /normalized\.endsWith\("\.localhost"\)/);
   assert.match(localHost, /normalized === "127\.0\.0\.1"/);
@@ -113,15 +194,23 @@ test("keeps finance plans and market quotes behind server-side identity", async 
   assert.match(page, /isLocalHostname\(window\.location\.hostname\)/);
   assert.match(page, /Keine Anmeldung erforderlich/);
   assert.match(page, /Als App auf dem iPhone/);
-  assert.match(page, /!cloudUser\?\.local && <a href="\/signout-with-chatgpt/);
+  assert.match(page, /fetch\("\/api\/auth\/logout"/);
+  assert.match(page, /href="\/login"/);
   assert.match(layout, /viewportFit: "cover"/);
   assert.match(layout, /appleWebApp: \{ capable: true/);
   assert.match(layout, /PwaRegistration/);
   assert.match(page, /Diese lokalen Daten gehören mir|Gehört dieser Finanzplan dir/);
+  assert.match(page, /Kurzer Fragebogen · etwa 3 Minuten/);
+  assert.match(page, /Schritt \{onboardingStep \+ 1\} von/);
+  assert.match(page, /Pflicht/);
+  assert.match(page, /Optional/);
+  assert.match(page, /Geldraum starten/);
+  assert.match(page, /function onboardingIssue/);
   assert.match(page, /Depot & Ersparnisse/);
   assert.match(page, /Wertpapierkurse aktualisieren/);
   assert.match(page, /aria-autocomplete="list"/);
   assert.match(page, /Handelsplatz wird automatisch gewählt/);
   assert.doesNotMatch(page, /localStorage\.setItem/);
   assert.match(page, /Account und Finanzdaten löschen/);
+  assert.doesNotMatch(page + loginPage + route + quoteRoute + searchRoute, /signin-with-chatgpt|signout-with-chatgpt|getChatGPTUser/);
 });

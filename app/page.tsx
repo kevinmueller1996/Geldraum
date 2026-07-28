@@ -40,6 +40,7 @@ const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
 const OLD_STORAGE_KEY = "klarbudget-profile";
 const months = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const categories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges"];
+const onboardingSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Jahresplanung", "Ziele"] as const;
 const savingKindLabels: Record<SavingKind, string> = {
   security: "Aktie oder ETF",
   dayMoney: "Tagesgeldkonto",
@@ -243,6 +244,8 @@ export default function Home() {
   const [remoteUpdatedAt, setRemoteUpdatedAt] = useState<string | null>(null);
   const [legacyPlan, setLegacyPlan] = useState<Plan | null>(null);
   const [showLegacyPrompt, setShowLegacyPrompt] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingError, setOnboardingError] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
@@ -324,7 +327,7 @@ export default function Home() {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [authStatus, checkingIn, editing, plan, savingsOpen, showLegacyPrompt]);
+  }, [authStatus, checkingIn, editing, onboardingStep, plan, savingsOpen, showLegacyPrompt]);
 
   const active = plan ?? demoPlan;
   const metrics = useMemo(() => {
@@ -446,6 +449,59 @@ export default function Home() {
     }
   }
 
+  function onboardingIssue(step: number) {
+    if (step === 0 && !draft.name.trim()) return "Bitte gib deinem Geldraum einen Namen.";
+    if (step === 1 && !draft.accounts.some((item) => item.name.trim())) return "Bitte lege mindestens ein Konto oder eine Karte an.";
+    if (step === 2 && !draft.incomes.some((item) => !item.annual && item.name.trim() && item.amount > 0)) return "Bitte trage mindestens ein monatliches Einkommen mit Betrag ein.";
+    if (step === 3 && draft.expenses.some((item) => item.amount > 0 && !item.name.trim())) return "Bitte ergänze zu jedem eingetragenen Betrag eine Bezeichnung.";
+    if (step === 4 && draft.annualCosts.some((item) => !item.name.trim() || item.amount <= 0)) return "Bitte vervollständige die angelegten Jahreskosten oder entferne den Eintrag.";
+    if (step === 4 && draft.commitments.some((item) => !item.name.trim() || item.balance <= 0 || item.payment <= 0)) return "Bitte vervollständige angelegte Kredite mit Name, Restschuld und Monatsrate.";
+    if (step === 5 && draft.goals.some((item) => !item.name.trim() || item.target <= 0)) return "Bitte vervollständige angelegte Ziele mit Name und Zielbetrag.";
+    return "";
+  }
+
+  function nextOnboardingStep() {
+    const issue = onboardingIssue(onboardingStep);
+    if (issue) {
+      setOnboardingError(issue);
+      return;
+    }
+    setOnboardingError("");
+    setOnboardingStep((current) => Math.min(current + 1, onboardingSteps.length - 1));
+  }
+
+  function previousOnboardingStep() {
+    setOnboardingError("");
+    setOnboardingStep((current) => Math.max(current - 1, 0));
+  }
+
+  async function finishOnboarding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (onboardingStep < onboardingSteps.length - 1) {
+      nextOnboardingStep();
+      return;
+    }
+    for (let step = 0; step < onboardingSteps.length; step += 1) {
+      const issue = onboardingIssue(step);
+      if (issue) {
+        setOnboardingStep(step);
+        setOnboardingError(issue);
+        return;
+      }
+    }
+    const clean = normalizePlan({
+      ...draft,
+      name: draft.name.trim(),
+      accounts: draft.accounts.filter((item) => item.name.trim()).map((item) => ({ ...item, name: item.name.trim() })),
+      incomes: draft.incomes.filter((item) => item.name.trim() && item.amount > 0).map((item) => ({ ...item, name: item.name.trim() })),
+      expenses: draft.expenses.filter((item) => item.name.trim() && item.amount > 0).map((item) => ({ ...item, name: item.name.trim() })),
+      annualCosts: draft.annualCosts.filter((item) => item.name.trim() && item.amount > 0).map((item) => ({ ...item, name: item.name.trim() })),
+      commitments: draft.commitments.filter((item) => item.name.trim() && item.balance > 0 && item.payment > 0).map((item) => ({ ...item, name: item.name.trim() })),
+      goals: draft.goals.filter((item) => item.name.trim() && item.target > 0).map((item) => ({ ...item, name: item.name.trim() })),
+    });
+    if (!await persistPlan(clean)) setOnboardingError("Dein Geldraum konnte gerade nicht gespeichert werden. Bitte versuche es erneut.");
+  }
+
   function openCheckIn() {
     setCheckInAccounts(structuredClone(active.accounts));
     setCheckInDate(new Date().toISOString().slice(0, 10));
@@ -513,10 +569,18 @@ export default function Home() {
       window.localStorage.removeItem(STORAGE_KEY);
       window.localStorage.removeItem(PREVIOUS_STORAGE_KEY);
       window.localStorage.removeItem(OLD_STORAGE_KEY);
-      window.location.href = cloudUser?.local ? "/" : "/signout-with-chatgpt?return_to=/";
+      window.location.href = cloudUser?.local ? "/" : "/login";
     } catch {
       setSyncStatus("error");
       setDeletingAccount(false);
+    }
+  }
+
+  async function signOut() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      window.location.href = "/login";
     }
   }
 
@@ -585,7 +649,7 @@ export default function Home() {
   }
 
   if (!ready) return <main className="loading" aria-label="Geldraum wird geladen"><span className="loading-mark" /></main>;
-  if (authStatus === "anonymous") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Deine Finanzen. Dein Raum.</p><h1>Heute klar.<br /><em>Morgen frei.</em></h1><p>Kontostände, Monatsplan, Kredite, Ziele und Ersparnisse – sicher getrennt in deinem persönlichen Bereich.</p><a className="auth-button" href="/signin-with-chatgpt?return_to=/">Sicher anmelden <b>→</b></a><small>Die Anmeldung stellt sicher, dass nur du deine Finanzdaten sehen kannst.</small></section><aside className="auth-visual" aria-hidden="true"><span>Aktueller Spielraum</span><strong>+ 1.540 €</strong><div><i /><i /><i /></div><p>Ein ruhiger Blick auf das, was heute zählt.</p></aside></main>;
+  if (authStatus === "anonymous") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Deine Finanzen. Dein Raum.</p><h1>Heute klar.<br /><em>Morgen frei.</em></h1><p>Kontostände, Monatsplan, Kredite, Ziele und Ersparnisse – sicher getrennt in deinem persönlichen Bereich.</p><a className="auth-button" href="/login">Mit E-Mail anmelden <b>→</b></a><small>Dein Passwort wird verschlüsselt gehasht; deine Finanzdaten bleiben deinem Konto zugeordnet.</small></section><aside className="auth-visual" aria-hidden="true"><span>Aktueller Spielraum</span><strong>+ 1.540 €</strong><div><i /><i /><i /></div><p>Ein ruhiger Blick auf das, was heute zählt.</p></aside></main>;
   if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Geldraum konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
 
   const currentMonth = new Date().getMonth();
@@ -718,7 +782,7 @@ export default function Home() {
           })}</div><div className="annual-list">{upcomingAnnual.map((item) => <article key={item.id}><span>{months[item.month]}</span><div><strong>{item.name}</strong><small>aus der Monatsrücklage</small></div><b>{euro(item.amount)}</b></article>)}<button className="annual-add" type="button" onClick={() => openFocusedEditor("annual", "annual")}><span>+</span><div><strong>Jahreskosten ergänzen</strong><small>Fälligkeit und Betrag eintragen</small></div></button></div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("annual")}>Jahreskosten ändern</button></article>
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">G</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
           <article className="install-card"><span className="install-icon" aria-hidden="true">⇧</span><div><strong>Als App auf dem iPhone</strong><small>In Safari „Teilen“ öffnen und „Zum Home-Bildschirm“ wählen. Geldraum startet danach ohne Browserleiste.</small></div></article>
-          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "G"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "Angemeldeter Account"}</p><strong>{cloudUser?.displayName}</strong><small>{cloudUser?.local ? "Keine Anmeldung erforderlich" : cloudUser?.email}</small></div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <a href="/signout-with-chatgpt?return_to=/">Abmelden</a>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht deinen Finanzplan endgültig aus der Geldraum-Cloud."}</p><label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
+          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "G"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.displayName}</strong><small>{cloudUser?.local ? "Keine Anmeldung erforderlich" : cloudUser?.email}</small></div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Geldraum-Cloud."}</p><label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
           <article className="privacy-card"><span>{cloudUser?.local ? "Lokale Entwicklung" : "Dein persönlicher Bereich"}</span><p>{cloudUser?.local ? "Auf localhost ist keine Anmeldung nötig. Die Daten bleiben in der lokalen Entwicklungsdatenbank und werden nicht mit einem Online-Account synchronisiert." : "Deine Finanzdaten werden deinem angemeldeten Account zugeordnet und zwischen deinen Geräten synchronisiert. Eine Bankverbindung ist nicht erforderlich."}</p></article>
         </section>}
       </div>
@@ -735,7 +799,59 @@ export default function Home() {
 
       {showLegacyPrompt && legacyPlan && <div className="modal-backdrop"><section className="migration-card" role="dialog" aria-modal="true" aria-labelledby="migration-title"><span className="migration-icon">↗</span><p className="eyebrow">Lokale Daten gefunden</p><h2 id="migration-title">Gehört dieser Finanzplan dir?</h2><p>{cloudUser?.local ? "Auf diesem Gerät liegt ein früherer lokaler Plan. Du kannst ihn jetzt in die lokale Entwicklungsdatenbank übernehmen." : "Auf diesem Gerät liegt ein früherer lokaler Plan. Erst mit deiner Bestätigung wird er deinem persönlichen Account zugeordnet und online synchronisiert."}</p><div><button className="secondary-button" type="button" onClick={() => setShowLegacyPrompt(false)}>Neu beginnen</button><button className="primary-button" type="button" onClick={importLegacyPlan} disabled={syncStatus === "saving"}>Ja, sicher übernehmen <b>→</b></button></div><small>{cloudUser?.local ? "Nach der Übernahme werden die alten lokalen Browserschlüssel entfernt." : "Nach erfolgreicher Übernahme werden die alten lokalen Schlüssel entfernt."}</small></section></div>}
 
-      {(!plan || editing) && !showLegacyPrompt && <div className="modal-backdrop"><section className={`editor-card ${editorScope ? "focused-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      {!plan && !showLegacyPrompt && <div className="modal-backdrop onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+        <div className="onboarding-top"><Brand /><span>Kurzer Fragebogen · etwa 3 Minuten</span></div>
+        <div className="onboarding-progress-copy"><span>Schritt {onboardingStep + 1} von {onboardingSteps.length}</span><strong>{onboardingSteps[onboardingStep]}</strong></div>
+        <div className="onboarding-progress" role="progressbar" aria-label="Fortschritt bei der Einrichtung" aria-valuemin={1} aria-valuemax={onboardingSteps.length} aria-valuenow={onboardingStep + 1}><i style={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }} /></div>
+        <ol className="onboarding-step-list" aria-label="Einrichtungsschritte">{onboardingSteps.map((step, index) => <li className={index === onboardingStep ? "active" : index < onboardingStep ? "done" : ""} key={step}><span>{index < onboardingStep ? "✓" : index + 1}</span><small>{step}</small></li>)}</ol>
+
+        <form onSubmit={finishOnboarding} noValidate>
+          <div className="onboarding-content">
+            {onboardingStep === 0 && <>
+              <p className="eyebrow">Willkommen bei Geldraum</p><h2 id="onboarding-title">Wie möchtest du deinen Finanzplan nennen?</h2><p className="onboarding-intro">Der Name erscheint nur in deinem persönlichen Bereich. Lege außerdem fest, wie oft du deine Kontostände prüfen möchtest.</p>
+              <div className="onboarding-fields two"><label><FieldTitle required>Profilname</FieldTitle><input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Geldraum" /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
+            </>}
+
+            {onboardingStep === 1 && <>
+              <p className="eyebrow">Konten & Karten</p><h2 id="onboarding-title">Wo liegt dein Geld heute?</h2><p className="onboarding-intro">Nur Name und aktueller Stand – eine Bankverbindung oder IBAN ist nicht nötig.</p>
+              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.balance || ""} onChange={(e) => updateList("accounts", index, { balance: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
+              <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
+            </>}
+
+            {onboardingStep === 2 && <>
+              <p className="eyebrow">Monatliches Einkommen</p><h2 id="onboarding-title">Was kommt regelmäßig rein?</h2><p className="onboarding-intro">Ein monatlicher Betrag reicht für den Start. Weitere oder jährliche Einnahmen kannst du später ergänzen.</p>
+              <div className="onboarding-list">{draft.incomes.filter((item) => !item.annual).map((item) => ({ item, index: draft.incomes.findIndex((entry) => entry.id === item.id) })).map(({ item, index }) => <div className="onboarding-row income" key={item.id}><label><FieldTitle required>Quelle</FieldTitle><input value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /></label><label><FieldTitle required>Monatlicher Betrag</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.amount || ""} onChange={(e) => updateList("incomes", index, { amount: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}</div>
+              <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>
+            </>}
+
+            {onboardingStep === 3 && <>
+              <p className="eyebrow">Monatliche Ausgaben</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
+              <div className="optional-note"><b>Optional</b><span>Du kannst direkt weitergehen.</span></div>
+              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.amount || ""} onChange={(e) => updateList("expenses", index, { amount: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
+              <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
+            </>}
+
+            {onboardingStep === 4 && <>
+              <p className="eyebrow">Jahresplanung & Kredite</p><h2 id="onboarding-title">Gibt es größere Verpflichtungen?</h2><p className="onboarding-intro">Beides ist optional. Jahreskosten werden automatisch auf den Monat umgelegt; Kredite fließen mit ihrer Rate in deinen Spielraum ein.</p>
+              <div className="onboarding-optional-groups"><section><div className="onboarding-group-head"><div><strong>Jährliche Ausgaben</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, annualCosts: [...draft.annualCosts, { id: uid(), name: "", amount: 0, month: 0 }] })}>Jahreskosten</AddButton></div>{draft.annualCosts.map((item, index) => <div className="onboarding-row annual" key={item.id}><input aria-label="Jahreskosten" value={item.name} onChange={(e) => updateList("annualCosts", index, { name: e.target.value })} placeholder="z. B. KFZ-Steuer" /><span className="currency-input"><input aria-label="Jahresbetrag" inputMode="decimal" value={item.amount || ""} onChange={(e) => updateList("annualCosts", index, { amount: numberValue(e.target.value) })} placeholder="pro Jahr" /><b>€</b></span><select aria-label="Fälligkeitsmonat" value={item.month} onChange={(e) => updateList("annualCosts", index, { month: Number(e.target.value) })}>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><RemoveButton onClick={() => removeListItem("annualCosts", index)} /></div>)}</section>
+              <section><div className="onboarding-group-head"><div><strong>Kredite & Verpflichtungen</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit</AddButton></div>{draft.commitments.map((item, index) => <div className="onboarding-row loan" key={item.id}><input aria-label="Kreditname" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Autokredit" /><span className="currency-input"><input aria-label="Restschuld" inputMode="decimal" value={item.balance || ""} onChange={(e) => updateList("commitments", index, { balance: numberValue(e.target.value) })} placeholder="Restschuld" /><b>€</b></span><span className="currency-input"><input aria-label="Monatsrate" inputMode="decimal" value={item.payment || ""} onChange={(e) => updateList("commitments", index, { payment: numberValue(e.target.value) })} placeholder="Monatsrate" /><b>€</b></span><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>)}</section></div>
+            </>}
+
+            {onboardingStep === 5 && <>
+              <p className="eyebrow">Ziele & Abschluss</p><h2 id="onboarding-title">Wofür möchtest du Raum schaffen?</h2><p className="onboarding-intro">Ziele sind optional. Danach ist dein Geldraum bereit; Ersparnisse und Wertpapiere kannst du später in Ruhe ergänzen.</p>
+              <div className="optional-note"><b>Optional</b><span>Ohne Ziel kannst du die Einrichtung direkt abschließen.</span></div>
+              <div className="onboarding-list">{draft.goals.map((item, index) => <div className="onboarding-row goal" key={item.id}><label><FieldTitle>Ziel</FieldTitle><input value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label><FieldTitle>Zielbetrag</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.target || ""} onChange={(e) => updateList("goals", index, { target: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Schon gespart</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.saved || ""} onChange={(e) => updateList("goals", index, { saved: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}</div>
+              <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>
+              <div className="onboarding-summary"><span>✓</span><div><strong>Deine Übersicht ist gleich bereit.</strong><p>{draft.accounts.filter((item) => item.name.trim()).length} Konten/Karten · {draft.incomes.filter((item) => !item.annual && item.amount > 0).length} Einkommen · {draft.expenses.filter((item) => item.amount > 0).length} Ausgaben</p></div></div>
+            </>}
+          </div>
+
+          {onboardingError && <p className="onboarding-error" role="alert">{onboardingError}</p>}
+          <div className="onboarding-actions"><button className="secondary-button" type="button" onClick={previousOnboardingStep} disabled={onboardingStep === 0}>Zurück</button><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : onboardingStep < onboardingSteps.length - 1 ? "Du kannst Angaben später ändern." : "Bereit für deinen Überblick."}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{onboardingStep < onboardingSteps.length - 1 ? <>Weiter <b>→</b></> : <>Geldraum starten <b>→</b></>}</button></div>
+        </form>
+      </section></div>}
+
+      {editing && plan && !showLegacyPrompt && <div className="modal-backdrop"><section className={`editor-card ${editorScope ? "focused-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="editor-header"><div><p className="eyebrow">{currentEditorCopy?.eyebrow ?? "Dein lokaler Finanzplan"}</p><h2 id="editor-title">{currentEditorCopy?.title ?? (plan ? "Plan bearbeiten" : "Lass uns Klarheit schaffen.")}</h2></div>{plan && <button type="button" className="close-button" onClick={closeEditor} aria-label="Schließen">×</button>}</div>
         <p className="editor-intro">{currentEditorCopy?.intro ?? "Richte deinen Alltag einmal ein. Danach reichen kurze Check-ins, um jederzeit ein klares Bild zu haben."}</p>
         <form onSubmit={savePlan}>
@@ -936,6 +1052,10 @@ function SummaryCard({ label, value, tone = "" }: { label: string; value: number
 
 function EditorSection({ id, title, subtitle, children }: { id?: string; title: string; subtitle: string; children: React.ReactNode }) {
   return <section id={id} className="editor-section"><div className="editor-section-head"><div><h3>{title}</h3><p>{subtitle}</p></div></div>{children}</section>;
+}
+
+function FieldTitle({ required = false, children }: { required?: boolean; children: React.ReactNode }) {
+  return <span className="field-title"><span>{children}</span><small className={required ? "required" : "optional"}>{required ? "Pflicht" : "Optional"}</small></span>;
 }
 
 function AddButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {

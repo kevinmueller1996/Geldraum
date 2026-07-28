@@ -1,11 +1,11 @@
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
-import { getChatGPTUser } from "../../chatgpt-auth";
 import { isLocalHostname } from "../../local-host";
+import { clearSessionCookie, ensureAuthSchema, getSessionIdentity, maskEmail, userId } from "../../password-auth";
 
 export const dynamic = "force-dynamic";
 
-type Identity = { email: string; displayName: string; local: boolean };
+type Identity = { id: string; displayName: string; emailMask: string; local: boolean };
 
 const USER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY NOT NULL,
@@ -26,6 +26,18 @@ const PLAN_TABLE_SQL = `CREATE TABLE IF NOT EXISTS finance_plans (
 
 const PLAN_UPDATED_INDEX_SQL = "CREATE INDEX IF NOT EXISTS finance_plans_updated_at_idx ON finance_plans(updated_at)";
 
+const USER_ACTIVITY_TABLE_SQL = `CREATE TABLE IF NOT EXISTS user_activity (
+  user_id TEXT PRIMARY KEY NOT NULL,
+  email_mask TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  access_count INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)`;
+
+const USER_ACTIVITY_LAST_SEEN_INDEX_SQL = "CREATE INDEX IF NOT EXISTS user_activity_last_seen_at_idx ON user_activity(last_seen_at)";
+
 function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
@@ -36,21 +48,16 @@ function isSameOrigin(request: NextRequest) {
 }
 
 async function requestIdentity(request: NextRequest): Promise<Identity | null> {
-  const authenticated = await getChatGPTUser();
-  if (authenticated) return { email: authenticated.email.trim().toLowerCase(), displayName: authenticated.displayName, local: false };
+  const authenticated = await getSessionIdentity(request);
+  if (authenticated) return { id: authenticated.id, displayName: authenticated.displayName, emailMask: authenticated.emailMask, local: false };
 
   const hostname = new URL(request.url).hostname;
   if (isLocalHostname(hostname)) {
-    return { email: "local-preview@geldraum.app", displayName: "Lokale Version", local: true };
+    const email = "local-preview@geldraum.app";
+    return { id: await userId(email), displayName: "Lokale Version", emailMask: maskEmail(email), local: true };
   }
 
   return null;
-}
-
-async function userId(email: string) {
-  const bytes = new TextEncoder().encode(email);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function ensureSchema() {
@@ -60,6 +67,8 @@ async function ensureSchema() {
     db.prepare(USER_TABLE_SQL),
     db.prepare(PLAN_TABLE_SQL),
     db.prepare(PLAN_UPDATED_INDEX_SQL),
+    db.prepare(USER_ACTIVITY_TABLE_SQL),
+    db.prepare(USER_ACTIVITY_LAST_SEEN_INDEX_SQL),
   ]);
   return db;
 }
@@ -93,14 +102,24 @@ function isPlan(value: unknown): value is Record<string, unknown> {
     && validList(value.snapshots, 500, (item) => isText(item.id, 100) && isText(item.date, 20) && isRecord(item.balances) && Object.values(item.balances).every(isMoney) && isText(item.note, 500) && (item.netBalance === undefined || isMoney(item.netBalance)));
 }
 
-async function upsertUser(identity: Identity) {
+async function upsertUser(identity: Identity, recordAccess = false) {
   const db = await ensureSchema();
-  const id = await userId(identity.email);
+  const id = identity.id;
   const now = new Date().toISOString();
   await db.prepare(`INSERT INTO users (id, display_name, created_at, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at`)
     .bind(id, identity.displayName, now, now).run();
+  if (recordAccess) {
+    await db.prepare(`INSERT INTO user_activity (user_id, email_mask, first_seen_at, last_seen_at, access_count, source)
+      VALUES (?, ?, ?, ?, 1, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        email_mask = excluded.email_mask,
+        last_seen_at = excluded.last_seen_at,
+        access_count = user_activity.access_count + 1,
+        source = excluded.source`)
+      .bind(id, identity.emailMask, now, now, identity.local ? "local" : "password").run();
+  }
   return { db, id, now };
 }
 
@@ -109,11 +128,11 @@ export async function GET(request: NextRequest) {
   if (!identity) return json({ authenticated: false }, 401);
 
   try {
-    const { db, id } = await upsertUser(identity);
+    const { db, id } = await upsertUser(identity, true);
     const result = await db.prepare("SELECT plan_json, revision, updated_at FROM finance_plans WHERE user_id = ?").bind(id).first<{ plan_json: string; revision: number; updated_at: string }>();
     return json({
       authenticated: true,
-      user: { displayName: identity.displayName, email: identity.email, local: identity.local },
+      user: { displayName: identity.displayName, email: identity.emailMask, local: identity.local },
       plan: result ? JSON.parse(result.plan_json) : null,
       revision: result?.revision ?? null,
       updatedAt: result?.updated_at ?? null,
@@ -160,13 +179,20 @@ export async function DELETE(request: NextRequest) {
   if (!identity) return json({ authenticated: false }, 401);
 
   try {
+    await ensureAuthSchema();
     const db = await ensureSchema();
-    const id = await userId(identity.email);
+    const id = identity.id;
     await db.batch([
       db.prepare("DELETE FROM finance_plans WHERE user_id = ?").bind(id),
+      db.prepare("DELETE FROM user_activity WHERE user_id = ?").bind(id),
+      db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").bind(id),
+      db.prepare("DELETE FROM auth_credentials WHERE user_id = ?").bind(id),
+      db.prepare("DELETE FROM auth_attempts WHERE email_hash = ?").bind(id),
       db.prepare("DELETE FROM users WHERE id = ?").bind(id),
     ]);
-    return json({ deleted: true });
+    const response = json({ deleted: true });
+    clearSessionCookie(response, request);
+    return response;
   } catch {
     return json({ error: "Dein Konto konnte gerade nicht gelöscht werden." }, 503);
   }

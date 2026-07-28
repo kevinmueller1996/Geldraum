@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getChatGPTUser } from "../../../chatgpt-auth";
-import { isLocalHostname } from "../../../local-host";
+import { isRequestAuthenticated } from "../../../password-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +28,7 @@ function isSameOrigin(request: NextRequest) {
 }
 
 async function isAuthenticated(request: NextRequest) {
-  if (await getChatGPTUser()) return true;
-  const hostname = new URL(request.url).hostname;
-  return isLocalHostname(hostname);
+  return isRequestAuthenticated(request);
 }
 
 function validSymbol(value: unknown): value is string {
