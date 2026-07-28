@@ -1,0 +1,27 @@
+{
+  "name": "Geldraum – Heute klar. Morgen frei.",
+  "short_name": "Geldraum",
+  "description": "Dein persönlicher Finanzüberblick für den täglichen Check-in.",
+  "lang": "de-DE",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4efe7",
+  "theme_color": "#f4efe7",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
