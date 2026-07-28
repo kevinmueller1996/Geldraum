@@ -51,7 +51,7 @@ async function providerRequest<T>(url: URL): Promise<T> {
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; Geldraum/1.0; security-search)",
+      "User-Agent": "Mozilla/5.0 (compatible; Njora/1.0; security-search)",
     },
     signal: AbortSignal.timeout(8_000),
   });

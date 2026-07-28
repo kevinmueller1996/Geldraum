@@ -260,7 +260,7 @@ footer { display:none; }
 @media (max-width:620px) { .editor-card,.checkin-card{padding:27px 18px 22px;border-radius:22px}.editor-header h2{font-size:34px}.basis-grid{grid-template-columns:1fr}.editor-row.four,.editor-row.five,.editor-row.scenario-edit,.editor-row.expense-edit,.editor-row.income-edit{grid-template-columns:1fr 1fr}.editor-row .remove-row{grid-column:2;justify-self:end}.loan-details>div{grid-template-columns:1fr}.editor-actions{align-items:stretch;flex-direction:column}.editor-actions>span{text-align:center}.primary-button{width:100%}.checkin-account-edit{grid-template-columns:1fr 1fr}.checkin-account-edit .remove-row{grid-column:2;justify-self:end} }
 @media (prefers-reduced-motion:reduce) { *{scroll-behavior:auto!important;transition:none!important} }
 
-/* Geldraum corporate identity */
+/* Njora corporate identity */
 body { color:var(--ink); background:var(--cream); font-size:14px; font-variant-numeric:tabular-nums; }
 button,a,input,select,textarea,summary { font-size:inherit; }
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible { outline:3px solid rgba(207,98,78,.28); outline-offset:3px; }
@@ -269,11 +269,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .brand { color:var(--brand-dark); }
 .brand { min-height:44px; }
 .brand-lockup { display:inline-flex; align-items:center; gap:11px; }
-.brand-name { font-size:20px; font-weight:800; letter-spacing:-.04em; }
-.brand-mark { position:relative; width:36px; height:36px; display:block; overflow:hidden; border-radius:12px; background:var(--brand); box-shadow:0 8px 20px rgba(47,23,20,.18); }
-.brand-mark:before { content:""; position:absolute; inset:8px; border:3px solid #fff9f2; border-right-color:transparent; border-radius:50%; }
-.brand-mark:after { content:""; position:absolute; right:7px; bottom:9px; width:10px; height:4px; border-radius:4px; background:var(--coral); }
-.brand-mark i { position:absolute; right:8px; top:16px; width:8px; height:3px; border-radius:3px; background:#fff9f2; }
+.brand-mark { width:40px; height:40px; display:block; object-fit:contain; }
+.brand-wordmark { width:106px; height:auto; display:block; }
 .desktop-nav { gap:4px; }
 .desktop-nav button { min-height:44px; padding:10px 15px; color:var(--muted); font-size:13px; }
 .desktop-nav button.active { color:var(--brand-dark); background:var(--paper); box-shadow:0 5px 15px rgba(47,23,20,.06); }

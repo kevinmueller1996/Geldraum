@@ -1,8 +1,8 @@
-# vinext-starter
+# Njora
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Njora ist eine persönliche Finanz-App für Kontostände, Monatsplanung, Kredite,
+Ziele und Ersparnisse. Die Anwendung läuft mit vinext auf Cloudflare Workers
+und speichert Accounts sowie Finanzpläne in D1.
 
 ## Prerequisites
 
@@ -12,24 +12,25 @@ Drizzle support.
 
 ```bash
 npm install
+cp .openai/hosting.example.json .openai/hosting.json
+npm test
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+Die echte `.openai/hosting.json` bleibt lokal und wird nicht in GitHub
+gespeichert. Ohne diese Datei verwendet die Entwicklung automatisch die
+neutrale D1-Bindung `DB`.
 
-## Included Shape
+## Projektstruktur
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+- `app/` enthält Oberfläche, Login und API-Routen.
+- `db/` und `drizzle/` enthalten das Schema und die Migrationen.
+- `public/` enthält PWA-Dateien und die Njora-Markenassets.
+- `.openai/hosting.example.json` ist die neutrale lokale Vorlage.
 
-## Geldraum E-Mail-/Passwort-Login
+## Njora E-Mail-/Passwort-Login
 
-Geldraum uses an app-owned D1 authentication layer instead of an external
+Njora uses an app-owned D1 authentication layer instead of an external
 identity provider:
 
 - normalized email addresses are represented by a SHA-256 user id and are not
@@ -44,12 +45,12 @@ identity provider:
 Existing plans remain attached when a previous tester registers with the same
 email address, because the deterministic user id is unchanged.
 
-## Useful Commands
+## Befehle
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+- `npm run dev`: lokale Entwicklung starten
+- `npm run build`: Produktions-Build prüfen
+- `npm test`: Build und Integrationsprüfungen ausführen
+- `npm run db:generate`: Migrationen nach Schemaänderungen erzeugen
 
 ## Learn More
 

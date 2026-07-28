@@ -40,7 +40,7 @@ async function providerQuote(symbol: string): Promise<RawQuote> {
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; Geldraum/1.0; market-value-check)",
+      "User-Agent": "Mozilla/5.0 (compatible; Njora/1.0; market-value-check)",
     },
     signal: AbortSignal.timeout(8_000),
   });

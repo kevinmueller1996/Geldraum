@@ -1,4 +1,4 @@
-const VERSION = "geldraum-mobile-v1";
+const VERSION = "njora-mobile-v2";
 
 self.addEventListener("install", () => {
   self.skipWaiting();

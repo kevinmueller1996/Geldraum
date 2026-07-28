@@ -33,7 +33,7 @@ async function withPreview(callback) {
   }
 }
 
-test("renders Geldraum locally without requiring authentication", async () => {
+test("renders Njora locally without requiring authentication", async () => {
   await withPreview(async (response, baseUrl) => {
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -42,8 +42,8 @@ test("renders Geldraum locally without requiring authentication", async () => {
     assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
 
     const html = await response.text();
-    assert.match(html, /<title>Geldraum – Heute klar\. Morgen frei\.<\/title>/i);
-    assert.match(html, /Geldraum wird geladen/);
+    assert.match(html, /<title>Njora – Verstehe, was war\. Gestalte, was kommt\.<\/title>/i);
+    assert.match(html, /Njora wird geladen/);
     assert.match(html, /favicon\.png/);
     assert.match(html, /manifest\.webmanifest/);
     assert.match(html, /apple-touch-icon\.png/);
@@ -119,7 +119,7 @@ test("renders Geldraum locally without requiring authentication", async () => {
 });
 
 test("keeps finance plans and market quotes behind password sessions", async () => {
-  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, hosting] = await Promise.all([
+  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, viteConfig] = await Promise.all([
     readFile(new URL("../app/api/account/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/testers/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/auth/route.ts", import.meta.url), "utf8"),
@@ -134,10 +134,11 @@ test("keeps finance plans and market quotes behind password sessions", async () 
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/local-host.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
-    readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(hosting, /"d1":\s*"DB"/);
+  assert.match(viteConfig, /readFileSync/);
+  assert.match(viteConfig, /return \{ d1: "DB", r2: null \}/);
   assert.match(schema, /financePlans/);
   assert.match(schema, /revision/);
   assert.match(schema, /authCredentials/);
@@ -204,7 +205,7 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(page, /Schritt \{onboardingStep \+ 1\} von/);
   assert.match(page, /Pflicht/);
   assert.match(page, /Optional/);
-  assert.match(page, /Geldraum starten/);
+  assert.match(page, /Njora starten/);
   assert.match(page, /function onboardingIssue/);
   assert.match(page, /Depot & Ersparnisse/);
   assert.match(page, /Wertpapierkurse aktualisieren/);

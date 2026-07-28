@@ -46,10 +46,10 @@ export default function LoginPage() {
     <section className="auth-card login-card">
       {/* vinext currently renders next/link with a duplicate React instance in development. */}
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-      <a className="brand-lockup" href="/" aria-label="Geldraum Startseite"><span className="brand-mark" aria-hidden="true"><i /></span><span className="brand-name">Geldraum</span></a>
+      <a className="brand-lockup" href="/" aria-label="Njora Startseite"><img className="brand-mark" src="/njora-mark.png" alt="" /><img className="brand-wordmark" src="/njora-wordmark.png" alt="" /></a>
       <p className="eyebrow">Dein persönlicher Zugang</p>
       <h1>{mode === "login" ? <>Willkommen<br /><em>zurück.</em></> : <>Dein Raum<br /><em>beginnt hier.</em></>}</h1>
-      <p>{mode === "login" ? "Melde dich mit deiner E-Mail-Adresse und deinem persönlichen Passwort an." : "Erstelle einen geschützten Geldraum. Wenn du dieselbe E-Mail wie bisher nutzt, bleibt dein vorhandener Finanzplan erhalten."}</p>
+      <p>{mode === "login" ? "Melde dich mit deiner E-Mail-Adresse und deinem persönlichen Passwort an." : "Erstelle deinen geschützten Bereich bei Njora. Wenn du dieselbe E-Mail wie bisher nutzt, bleibt dein vorhandener Finanzplan erhalten."}</p>
 
       <div className="auth-tabs" role="tablist" aria-label="Anmeldung oder Registrierung">
         <button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Anmelden</button>
@@ -65,6 +65,6 @@ export default function LoginPage() {
       </form>
       <small>Dein Passwort wird niemals im Klartext gespeichert. Eine Funktion zum Zurücksetzen des Passworts folgt nach der Testphase.</small>
     </section>
-    <aside className="auth-visual login-visual" aria-hidden="true"><span>Privat. Direkt. Unabhängig.</span><strong>Dein Geldraum</strong><div><i /><i /><i /></div><p>Heute klar.<br />Morgen frei.</p></aside>
+    <aside className="auth-visual login-visual" aria-hidden="true"><span>Privat. Direkt. Unabhängig.</span><strong>Dein Njora</strong><div><i /><i /><i /></div><p>Verstehe, was war.<br />Gestalte, was kommt.</p></aside>
   </main>;
 }

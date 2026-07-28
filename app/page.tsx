@@ -450,7 +450,7 @@ export default function Home() {
   }
 
   function onboardingIssue(step: number) {
-    if (step === 0 && !draft.name.trim()) return "Bitte gib deinem Geldraum einen Namen.";
+    if (step === 0 && !draft.name.trim()) return "Bitte gib deinem Finanzplan einen Namen.";
     if (step === 1 && !draft.accounts.some((item) => item.name.trim())) return "Bitte lege mindestens ein Konto oder eine Karte an.";
     if (step === 2 && !draft.incomes.some((item) => !item.annual && item.name.trim() && item.amount > 0)) return "Bitte trage mindestens ein monatliches Einkommen mit Betrag ein.";
     if (step === 3 && draft.expenses.some((item) => item.amount > 0 && !item.name.trim())) return "Bitte ergänze zu jedem eingetragenen Betrag eine Bezeichnung.";
@@ -499,7 +499,7 @@ export default function Home() {
       commitments: draft.commitments.filter((item) => item.name.trim() && item.balance > 0 && item.payment > 0).map((item) => ({ ...item, name: item.name.trim() })),
       goals: draft.goals.filter((item) => item.name.trim() && item.target > 0).map((item) => ({ ...item, name: item.name.trim() })),
     });
-    if (!await persistPlan(clean)) setOnboardingError("Dein Geldraum konnte gerade nicht gespeichert werden. Bitte versuche es erneut.");
+    if (!await persistPlan(clean)) setOnboardingError("Dein Finanzplan konnte gerade nicht gespeichert werden. Bitte versuche es erneut.");
   }
 
   function openCheckIn() {
@@ -555,7 +555,7 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `geldraum-sicherung-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = `njora-sicherung-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -648,9 +648,9 @@ export default function Home() {
     setDraft((current) => ({ ...current, [key]: current[key].filter((_, itemIndex) => itemIndex !== index) }));
   }
 
-  if (!ready) return <main className="loading" aria-label="Geldraum wird geladen"><span className="loading-mark" /></main>;
-  if (authStatus === "anonymous") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Deine Finanzen. Dein Raum.</p><h1>Heute klar.<br /><em>Morgen frei.</em></h1><p>Kontostände, Monatsplan, Kredite, Ziele und Ersparnisse – sicher getrennt in deinem persönlichen Bereich.</p><a className="auth-button" href="/login">Mit E-Mail anmelden <b>→</b></a><small>Dein Passwort wird verschlüsselt gehasht; deine Finanzdaten bleiben deinem Konto zugeordnet.</small></section><aside className="auth-visual" aria-hidden="true"><span>Aktueller Spielraum</span><strong>+ 1.540 €</strong><div><i /><i /><i /></div><p>Ein ruhiger Blick auf das, was heute zählt.</p></aside></main>;
-  if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Geldraum konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
+  if (!ready) return <main className="loading" aria-label="Njora wird geladen"><span className="loading-mark" /></main>;
+  if (authStatus === "anonymous") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Deine Finanzen. Deine Möglichkeiten.</p><h1>Verstehe, was war.<br /><em>Gestalte, was kommt.</em></h1><p>Kontostände, Monatsplan, Kredite, Ziele und Ersparnisse – sicher getrennt in deinem persönlichen Bereich.</p><a className="auth-button" href="/login">Mit E-Mail anmelden <b>→</b></a><small>Dein Passwort wird verschlüsselt gehasht; deine Finanzdaten bleiben deinem Konto zugeordnet.</small></section><aside className="auth-visual" aria-hidden="true"><span>Aktueller Spielraum</span><strong>+ 1.540 €</strong><div><i /><i /><i /></div><p>Ein ruhiger Blick auf das, was heute zählt.</p></aside></main>;
+  if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
 
   const currentMonth = new Date().getMonth();
   const upcomingAnnual = [...active.annualCosts].sort((a, b) => ((a.month - currentMonth + 12) % 12) - ((b.month - currentMonth + 12) % 12));
@@ -672,7 +672,7 @@ export default function Home() {
     accounts: { eyebrow: "Konten & Karten", title: "Konten bearbeiten", intro: "Passe ausschließlich deine Konten und Karten an. Aktuelle Stände pflegst du weiterhin am schnellsten über den Check-in." },
     income: { eyebrow: "Einkommen", title: "Einkommen bearbeiten", intro: "Pflege hier ausschließlich deine monatlichen und jährlichen Einkommensquellen. Jahreszuflüsse erscheinen nur in ihrem hinterlegten Monat." },
     expenses: { eyebrow: "Monatsplan", title: "Fixkosten bearbeiten", intro: "Hier änderst du nur deine wiederkehrenden monatlichen Ausgaben und deren Kategorien." },
-    annual: { eyebrow: "Jahresplanung", title: "Jahreskosten bearbeiten", intro: "Pflege unregelmäßige Kosten mit Betrag und Fälligkeitsmonat – Geldraum berechnet daraus die Monatsrücklage." },
+    annual: { eyebrow: "Jahresplanung", title: "Jahreskosten bearbeiten", intro: "Pflege unregelmäßige Kosten mit Betrag und Fälligkeitsmonat – Njora berechnet daraus die Monatsrücklage." },
     specials: { eyebrow: "Sonderposten", title: "Unregelmäßig, aber planbar", intro: "Pflege jährliche Einnahmen und Ausgaben mit ihrem jeweiligen Monat. So weißt du frühzeitig, was besonders wird." },
     loans: { eyebrow: "Verbindlichkeiten", title: "Kredite bearbeiten", intro: "Passe Restschuld und Rate an oder ergänze optionale Vertragsdetails für eine genauere Prognose." },
     goals: { eyebrow: "Ziele", title: "Ziele bearbeiten", intro: "Lege Zielbetrag, aktuellen Stand und optional ein Zieldatum fest. Eine notwendige Sparrate wird nur für Terminziele berechnet." },
@@ -703,7 +703,7 @@ export default function Home() {
   return (
     <main id="top" className="page-shell">
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => navigate("home")} aria-label="Geldraum Startseite"><Brand /></button>
+        <button className="brand" type="button" onClick={() => navigate("home")} aria-label="Njora Startseite"><Brand /></button>
         <nav className="desktop-nav" aria-label="Hauptnavigation">
           <NavButton active={activeView === "home"} onClick={() => navigate("home")}>Heute</NavButton>
           <NavButton active={activeView === "month"} onClick={() => navigate("month")}>Monatsplan</NavButton>
@@ -753,11 +753,11 @@ export default function Home() {
             const hasDetails = Boolean(item.interestRate || item.termMonths || item.extraPayment);
             return <article className="loan-card" key={item.id}><div className="loan-top"><span className="loan-mark">↘</span><button className="edit-chip" type="button" onClick={() => openFocusedEditor("loans", undefined, item.id)}>Ändern</button></div><span className="loan-share">{share}% der Restschuld</span><h2>{item.name}</h2><strong>{euro(item.balance)}</strong><div className="loan-stats"><div><span>Effektive Monatsrate</span><b>{euro(projection.payment)}</b></div><div><span>Restschuld in 12 Mon.</span><b>{euro(projection.balanceIn12Months)}</b></div><div><span>Voraussichtlich offen</span><b>{projection.monthsLeft ? `${projection.monthsLeft} Monate` : "–"}</b></div>{item.interestRate ? <div><span>Zinskosten geschätzt</span><b>{euro(projection.interestCost)}</b></div> : null}</div>{item.termMonths && projection.balanceAtTerm > 1 ? <p className="loan-warning">Nach der angegebenen Laufzeit wären noch etwa {euro(projection.balanceAtTerm)} offen.</p> : <p>{hasDetails ? `${item.interestRate || 0}% p. a.${item.extraPayment ? ` · ${euro(item.extraPayment)} extra` : ""}` : "Basisprognose aus Restschuld und Rate."}</p>}</article>;
           })}<button className="add-card" type="button" onClick={() => openFocusedEditor("loans", "loan")}><span>+</span><strong>Neuen Kredit anlegen</strong><small>Restschuld und Rate reichen für den Start</small></button></div>
-          <article className="principle-card"><span>✦</span><div><p>Geldraum-Prinzip</p><strong>Restschuld und Monatsbelastung gehören zusammen.</strong><small>So siehst du nicht nur, wie viel offen ist, sondern auch, wie stark die Kredite deinen Alltag binden.</small></div></article>
+          <article className="principle-card"><span>✦</span><div><p>Njora-Prinzip</p><strong>Restschuld und Monatsbelastung gehören zusammen.</strong><small>So siehst du nicht nur, wie viel offen ist, sondern auch, wie stark die Kredite deinen Alltag binden.</small></div></article>
         </section>}
 
         {activeView === "goals" && <section className="view" aria-labelledby="goals-title">
-          <ViewHeader id="goals-title" eyebrow="Ziele & Projekte" title="Wofür du deinen Überschuss nutzt" copy="Ziele sind keine Fixkosten. Erst mit einem Zieldatum berechnet Geldraum, welcher Betrag aus deinem Überschuss monatlich nötig wäre." />
+          <ViewHeader id="goals-title" eyebrow="Ziele & Projekte" title="Wofür du deinen Überschuss nutzt" copy="Ziele sind keine Fixkosten. Erst mit einem Zieldatum berechnet Njora, welcher Betrag aus deinem Überschuss monatlich nötig wäre." />
           <div className="summary-grid"><SummaryCard label="Überschuss vor Zielen" value={metrics.available} tone={metrics.available < 0 ? "negative" : "coral"} /><SummaryCard label="Bedarf für Terminziele" value={metrics.goalNeed} tone={metrics.goalNeed > metrics.available ? "negative" : "sage"} /></div>
           <div className="goal-grid">{active.goals.map((goal) => {
             const progress = goal.target > 0 ? Math.min((goal.saved / goal.target) * 100, 100) : 0;
@@ -775,14 +775,14 @@ export default function Home() {
         </section>}
 
         {activeView === "more" && <section className="view" aria-labelledby="more-title">
-          <ViewHeader id="more-title" eyebrow="Account & Einstellungen" title="Dein persönlicher Geldraum" copy={cloudUser?.local ? "Lokale Datenhaltung und die Pflege deines Finanzplans an einem Ort." : "Synchronisierung, Datenschutz und die Pflege deines Finanzplans an einem Ort."} />
+          <ViewHeader id="more-title" eyebrow="Account & Einstellungen" title="Dein persönlicher Bereich" copy={cloudUser?.local ? "Lokale Datenhaltung und die Pflege deines Finanzplans an einem Ort." : "Synchronisierung, Datenschutz und die Pflege deines Finanzplans an einem Ort."} />
           <article className="detail-card annual-card"><div className="section-title compact"><div><p className="eyebrow">Jahreskosten</p><h2>Unregelmäßig, aber planbar</h2></div><span>{euro(metrics.annualTotal)} im Jahr</span></div><div className="month-strip">{months.map((month, index) => {
             const sum = active.annualCosts.filter((item) => item.month === index).reduce((total, item) => total + item.amount, 0);
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
           })}</div><div className="annual-list">{upcomingAnnual.map((item) => <article key={item.id}><span>{months[item.month]}</span><div><strong>{item.name}</strong><small>aus der Monatsrücklage</small></div><b>{euro(item.amount)}</b></article>)}<button className="annual-add" type="button" onClick={() => openFocusedEditor("annual", "annual")}><span>+</span><div><strong>Jahreskosten ergänzen</strong><small>Fälligkeit und Betrag eintragen</small></div></button></div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("annual")}>Jahreskosten ändern</button></article>
-          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">G</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
-          <article className="install-card"><span className="install-icon" aria-hidden="true">⇧</span><div><strong>Als App auf dem iPhone</strong><small>In Safari „Teilen“ öffnen und „Zum Home-Bildschirm“ wählen. Geldraum startet danach ohne Browserleiste.</small></div></article>
-          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "G"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.displayName}</strong><small>{cloudUser?.local ? "Keine Anmeldung erforderlich" : cloudUser?.email}</small></div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Geldraum-Cloud."}</p><label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
+          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
+          <article className="install-card"><span className="install-icon" aria-hidden="true">⇧</span><div><strong>Als App auf dem iPhone</strong><small>In Safari „Teilen“ öffnen und „Zum Home-Bildschirm“ wählen. Njora startet danach ohne Browserleiste.</small></div></article>
+          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.displayName}</strong><small>{cloudUser?.local ? "Keine Anmeldung erforderlich" : cloudUser?.email}</small></div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p><label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
           <article className="privacy-card"><span>{cloudUser?.local ? "Lokale Entwicklung" : "Dein persönlicher Bereich"}</span><p>{cloudUser?.local ? "Auf localhost ist keine Anmeldung nötig. Die Daten bleiben in der lokalen Entwicklungsdatenbank und werden nicht mit einem Online-Account synchronisiert." : "Deine Finanzdaten werden deinem angemeldeten Account zugeordnet und zwischen deinen Geräten synchronisiert. Eine Bankverbindung ist nicht erforderlich."}</p></article>
         </section>}
       </div>
@@ -795,7 +795,7 @@ export default function Home() {
         <MobileNavButton icon="●" label="Account" active={activeView === "more"} onClick={() => navigate("more")} />
       </nav>
 
-      <footer><span>Geldraum</span><p>{cloudUser?.local ? "Lokal gespeichert · ohne Anmeldung" : "Persönlich synchronisiert · ohne Kontoanbindung"}</p><span>Heute klar. Morgen frei.</span></footer>
+      <footer><span>Njora</span><p>{cloudUser?.local ? "Lokal gespeichert · ohne Anmeldung" : "Persönlich synchronisiert · ohne Kontoanbindung"}</p><span>Verstehe, was war. Gestalte, was kommt.</span></footer>
 
       {showLegacyPrompt && legacyPlan && <div className="modal-backdrop"><section className="migration-card" role="dialog" aria-modal="true" aria-labelledby="migration-title"><span className="migration-icon">↗</span><p className="eyebrow">Lokale Daten gefunden</p><h2 id="migration-title">Gehört dieser Finanzplan dir?</h2><p>{cloudUser?.local ? "Auf diesem Gerät liegt ein früherer lokaler Plan. Du kannst ihn jetzt in die lokale Entwicklungsdatenbank übernehmen." : "Auf diesem Gerät liegt ein früherer lokaler Plan. Erst mit deiner Bestätigung wird er deinem persönlichen Account zugeordnet und online synchronisiert."}</p><div><button className="secondary-button" type="button" onClick={() => setShowLegacyPrompt(false)}>Neu beginnen</button><button className="primary-button" type="button" onClick={importLegacyPlan} disabled={syncStatus === "saving"}>Ja, sicher übernehmen <b>→</b></button></div><small>{cloudUser?.local ? "Nach der Übernahme werden die alten lokalen Browserschlüssel entfernt." : "Nach erfolgreicher Übernahme werden die alten lokalen Schlüssel entfernt."}</small></section></div>}
 
@@ -808,8 +808,8 @@ export default function Home() {
         <form onSubmit={finishOnboarding} noValidate>
           <div className="onboarding-content">
             {onboardingStep === 0 && <>
-              <p className="eyebrow">Willkommen bei Geldraum</p><h2 id="onboarding-title">Wie möchtest du deinen Finanzplan nennen?</h2><p className="onboarding-intro">Der Name erscheint nur in deinem persönlichen Bereich. Lege außerdem fest, wie oft du deine Kontostände prüfen möchtest.</p>
-              <div className="onboarding-fields two"><label><FieldTitle required>Profilname</FieldTitle><input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Geldraum" /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
+              <p className="eyebrow">Willkommen bei Njora</p><h2 id="onboarding-title">Wie möchtest du deinen Finanzplan nennen?</h2><p className="onboarding-intro">Der Name erscheint nur in deinem persönlichen Bereich. Lege außerdem fest, wie oft du deine Kontostände prüfen möchtest.</p>
+              <div className="onboarding-fields two"><label><FieldTitle required>Profilname</FieldTitle><input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Finanzplan" /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
             </>}
 
             {onboardingStep === 1 && <>
@@ -838,7 +838,7 @@ export default function Home() {
             </>}
 
             {onboardingStep === 5 && <>
-              <p className="eyebrow">Ziele & Abschluss</p><h2 id="onboarding-title">Wofür möchtest du Raum schaffen?</h2><p className="onboarding-intro">Ziele sind optional. Danach ist dein Geldraum bereit; Ersparnisse und Wertpapiere kannst du später in Ruhe ergänzen.</p>
+              <p className="eyebrow">Ziele & Abschluss</p><h2 id="onboarding-title">Wofür möchtest du Raum schaffen?</h2><p className="onboarding-intro">Ziele sind optional. Danach ist dein Finanzplan bereit; Ersparnisse und Wertpapiere kannst du später in Ruhe ergänzen.</p>
               <div className="optional-note"><b>Optional</b><span>Ohne Ziel kannst du die Einrichtung direkt abschließen.</span></div>
               <div className="onboarding-list">{draft.goals.map((item, index) => <div className="onboarding-row goal" key={item.id}><label><FieldTitle>Ziel</FieldTitle><input value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label><FieldTitle>Zielbetrag</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.target || ""} onChange={(e) => updateList("goals", index, { target: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Schon gespart</FieldTitle><span className="currency-input"><input inputMode="decimal" value={item.saved || ""} onChange={(e) => updateList("goals", index, { saved: numberValue(e.target.value) })} placeholder="0" /><b>€</b></span></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>
@@ -847,7 +847,7 @@ export default function Home() {
           </div>
 
           {onboardingError && <p className="onboarding-error" role="alert">{onboardingError}</p>}
-          <div className="onboarding-actions"><button className="secondary-button" type="button" onClick={previousOnboardingStep} disabled={onboardingStep === 0}>Zurück</button><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : onboardingStep < onboardingSteps.length - 1 ? "Du kannst Angaben später ändern." : "Bereit für deinen Überblick."}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{onboardingStep < onboardingSteps.length - 1 ? <>Weiter <b>→</b></> : <>Geldraum starten <b>→</b></>}</button></div>
+          <div className="onboarding-actions"><button className="secondary-button" type="button" onClick={previousOnboardingStep} disabled={onboardingStep === 0}>Zurück</button><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : onboardingStep < onboardingSteps.length - 1 ? "Du kannst Angaben später ändern." : "Bereit für deinen Überblick."}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{onboardingStep < onboardingSteps.length - 1 ? <>Weiter <b>→</b></> : <>Njora starten <b>→</b></>}</button></div>
         </form>
       </section></div>}
 
@@ -910,7 +910,7 @@ export default function Home() {
             {!editorTarget && <div className="saving-add-actions"><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }] })}>Wertpapier</AddButton><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "dayMoney", balance: 0 }] })}>Sparform</AddButton></div>}
           </EditorSection>}
 
-          {!editorScope && <details className="data-import"><summary>Daten aus einer Geldraum-Sicherung importieren</summary><textarea aria-label="Geldraum-Daten" value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="Geldraum-JSON hier einfügen" /><button type="button" onClick={importPlan}>Sicherung importieren</button></details>}
+          {!editorScope && <details className="data-import"><summary>Daten aus einer Njora-Sicherung importieren</summary><textarea aria-label="Njora-Daten" value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="Njora-JSON hier einfügen" /><button type="button" onClick={importPlan}>Sicherung importieren</button></details>}
 
           <div className="editor-actions"><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : cloudUser?.local ? "Lokal gespeichert · ohne Anmeldung" : "Persönlich synchronisiert · ohne Kontoanbindung"}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b>→</b></button></div>
         </form>
@@ -1031,7 +1031,7 @@ function SecurityAutocomplete({ id, value, onChange, onSelect }: { id: string; v
 }
 
 function Brand() {
-  return <span className="brand-lockup"><span className="brand-mark" aria-hidden="true"><i /></span><span className="brand-name">Geldraum</span></span>;
+  return <span className="brand-lockup" role="img" aria-label="Njora"><img className="brand-mark" src="/njora-mark.png" alt="" /><img className="brand-wordmark" src="/njora-wordmark.png" alt="" /></span>;
 }
 
 function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
