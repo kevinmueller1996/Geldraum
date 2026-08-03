@@ -44,4 +44,3 @@ next-env.d.ts
 /work/
 
 # Local OpenAI Sites project metadata
-/.openai/hosting.json
