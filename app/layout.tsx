@@ -1,11 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Sans, Newsreader } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import PwaRegistration from "./pwa-registration";
-
-const sans = DM_Sans({ variable: "--font-sans", subsets: ["latin"] });
-const serif = Newsreader({ variable: "--font-serif", subsets: ["latin"], style: ["normal", "italic"] });
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -34,9 +30,9 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f4efe7",
+  themeColor: "#f5f0e8",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="de"><body className={`${sans.variable} ${serif.variable}`}>{children}<PwaRegistration /></body></html>;
+  return <html lang="de"><body>{children}<PwaRegistration /></body></html>;
 }

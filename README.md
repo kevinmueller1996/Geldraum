@@ -30,20 +30,41 @@ neutrale D1-Bindung `DB`.
 
 ## Njora E-Mail-/Passwort-Login
 
-Njora uses an app-owned D1 authentication layer instead of an external
-identity provider:
+Njora verwendet eine eigene D1-Authentifizierung statt eines externen
+Identity-Providers:
 
-- normalized email addresses are represented by a SHA-256 user id and are not
-  stored in plaintext;
-- passwords are stored as salted bcrypt hashes with work factor 11;
-- sessions use random tokens while only their hashes are persisted;
-- the browser receives an HttpOnly, SameSite cookie;
-- repeated failed login attempts are temporarily locked;
-- deleting an account also removes credentials, sessions, activity metadata,
-  and the finance plan.
+- Passwörter werden als gesalzene bcrypt-Hashes mit Work-Factor 11 gespeichert;
+- Sitzungen und E-Mail-Aktionstokens sind zufällig, in D1 liegt nur ihr Hash;
+- der Browser erhält ein `HttpOnly`-, `SameSite`- und in Produktion
+  `Secure`-Cookie mit `__Host-`-Präfix;
+- wiederholte falsche Logins werden zeitweise gesperrt;
+- Bestätigungslinks sind 24 Stunden, Reset-Links 30 Minuten gültig und nur
+  einmal nutzbar;
+- beim Löschen eines Accounts werden Zugangsdaten, Sitzungen,
+  Aktivitätsmetadaten und Finanzplan entfernt.
+
+Die normalisierte E-Mail-Adresse wird für Anmeldung, Verifikation und
+Passwort-Reset gespeichert. In der Admin-Ansicht wird weiterhin nur die
+maskierte beziehungsweise pseudonymisierte Darstellung ausgegeben.
 
 Existing plans remain attached when a previous tester registers with the same
 email address, because the deterministic user id is unchanged.
+
+### E-Mail-Verifizierung aktivieren
+
+Der Versand erfolgt über die Resend-HTTP-API. Diese Werte müssen im
+Cloudflare-Backend als Secrets beziehungsweise Environment Variables gesetzt
+werden, da Vercel die Account-Routen derzeit dorthin weiterleitet:
+
+- `RESEND_API_KEY`
+- `AUTH_EMAIL_FROM`, zum Beispiel `Njora <konto@njora.de>`
+- `AUTH_PUBLIC_ORIGIN=https://njora.vercel.app`
+- `AUTH_REQUIRE_EMAIL_VERIFICATION=1`
+
+Vor dem Aktivieren müssen Absenderdomain, SPF, DKIM und DMARC eingerichtet
+sein. Ohne vollständig konfigurierten Versand lehnt Njora neue Registrierungen
+bei aktivierter Verifizierung bewusst ab, statt unbestätigte Konten
+freizuschalten. Die Vorlage `.env.example` enthält keine Secrets.
 
 ## Deployment auf Vercel
 
@@ -64,6 +85,11 @@ folgende Environment Variables in Vercel gesetzt werden:
 
 Die Werte gehören ausschließlich in die Vercel-Projekteinstellungen und
 dürfen nicht in GitHub committed werden.
+
+Wenn Vercel weiterhin über das Cloudflare-Backend arbeitet, muss zusätzlich
+`GELDRAUM_BACKEND_ORIGIN` explizit auf dessen HTTPS-Origin zeigen. Ohne diesen
+Wert oder ohne eine vollständige direkte D1-Konfiguration schlagen API-Aufrufe
+bewusst geschlossen fehl; es gibt keinen stillen Produktions-Fallback.
 
 ## Befehle
 

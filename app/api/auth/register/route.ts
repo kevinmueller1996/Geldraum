@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeEmail, PasswordAuthError, registerPasswordAccount, setSessionCookie, validPassword } from "../../../password-auth";
+import { authEmailConfigured, sendAuthEmail } from "../../../auth-email";
+import { emailVerificationRequired, normalizeEmail, PasswordAuthError, registerPasswordAccount, requestEmailVerification, setSessionCookie, validPassword } from "../../../password-auth";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
+const VERIFICATION_MESSAGE = "Wenn die Registrierung möglich ist, erhältst du eine E-Mail mit den nächsten Schritten.";
 
 function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
@@ -10,7 +12,7 @@ function json(data: unknown, status = 200) {
 
 function validRequest(request: NextRequest) {
   const origin = request.headers.get("origin");
-  return (!origin || origin === new URL(request.url).origin)
+  return origin === new URL(request.url).origin
     && request.headers.get("content-type")?.toLowerCase().startsWith("application/json");
 }
 
@@ -22,8 +24,23 @@ export async function POST(request: NextRequest) {
     const email = normalizeEmail(body.email);
     if (!email) return json({ error: "Bitte gib eine gültige E-Mail-Adresse ein." }, 400);
     if (!validPassword(body.password)) return json({ error: "Das Passwort muss zwischen 10 und 72 Zeichen lang sein." }, 400);
+    if (emailVerificationRequired() && !authEmailConfigured()) {
+      console.error("Password registration failed Email verification is required but email delivery is not configured");
+      return json({ error: "Die E-Mail-Bestätigung ist noch nicht vollständig eingerichtet." }, 503);
+    }
     const result = await registerPasswordAccount(email, body.password);
-    if ("error" in result) return json({ error: "Für diese E-Mail-Adresse besteht bereits ein Passwortkonto." }, 409);
+    if ("error" in result) {
+      if (emailVerificationRequired()) {
+        const verification = await requestEmailVerification(email);
+        if (verification && "email" in verification) await sendAuthEmail(verification.email, verification.token, "verify_email");
+        return json({ verificationRequired: true, message: VERIFICATION_MESSAGE }, 202);
+      }
+      return json({ error: "Für diese E-Mail-Adresse besteht bereits ein Passwortkonto." }, 409);
+    }
+    if (result.verificationRequired) {
+      await sendAuthEmail(result.email, result.verificationToken, "verify_email");
+      return json({ verificationRequired: true, message: VERIFICATION_MESSAGE }, 202);
+    }
     const response = json({ authenticated: true, user: { displayName: result.emailMask, email: result.emailMask } }, 201);
     setSessionCookie(response, result.token, request);
     return response;

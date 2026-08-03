@@ -11,7 +11,7 @@ function json(data: unknown, status = 200) {
 export async function POST(request: NextRequest) {
   if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   const origin = request.headers.get("origin");
-  if ((origin && origin !== new URL(request.url).origin) || !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+  if (origin !== new URL(request.url).origin || !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return json({ error: "Unzulässige Anfrage." }, 403);
   }
   try {
@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     const result = await loginPasswordAccount(email, body.password);
     if ("error" in result) {
       if (result.error === "locked") return json({ error: "Zu viele Anmeldeversuche. Bitte versuche es in 15 Minuten erneut." }, 429);
+      if (result.error === "unverified") return json({ error: "Bitte bestätige zuerst deine E-Mail-Adresse.", code: "email_unverified" }, 403);
       return json({ error: "E-Mail-Adresse oder Passwort ist nicht korrekt." }, 401);
     }
     const response = json({ authenticated: true, user: { displayName: result.emailMask, email: result.emailMask } });

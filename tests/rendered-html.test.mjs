@@ -109,7 +109,7 @@ test("renders Njora locally without requiring authentication", async () => {
     assert.equal(manifestResponse.status, 200);
     const manifest = await manifestResponse.json();
     assert.equal(manifest.display, "standalone");
-    assert.equal(manifest.orientation, "portrait-primary");
+    assert.equal(manifest.orientation, undefined);
 
     const workerResponse = await fetch(`${baseUrl}/sw.js`);
     assert.equal(workerResponse.status, 200);
@@ -119,7 +119,7 @@ test("renders Njora locally without requiring authentication", async () => {
 });
 
 test("keeps finance plans and market quotes behind password sessions", async () => {
-  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, viteConfig] = await Promise.all([
+  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, viteConfig, authEmail, verifyRoute, resetRoute, resetPage, manifest] = await Promise.all([
     readFile(new URL("../app/api/account/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/testers/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/auth/route.ts", import.meta.url), "utf8"),
@@ -135,6 +135,11 @@ test("keeps finance plans and market quotes behind password sessions", async () 
     readFile(new URL("../app/local-host.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/auth-email.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/verify-email/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/reset-password/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/passwort-zuruecksetzen/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
   ]);
 
   assert.match(viteConfig, /readFileSync/);
@@ -144,6 +149,7 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(schema, /authCredentials/);
   assert.match(schema, /authSessions/);
   assert.match(schema, /authAttempts/);
+  assert.match(schema, /authActionTokens/);
   assert.match(route, /getSessionIdentity\(request\)/);
   assert.match(route, /isLocalHostname\(hostname\)/);
   assert.match(route, /local: identity\.local/);
@@ -180,13 +186,32 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(passwordAuth, /sameSite: "lax"/);
   assert.match(passwordAuth, /LOGIN_MAX_FAILURES = 5/);
   assert.match(passwordAuth, /auth_sessions/);
+  assert.match(passwordAuth, /auth_action_tokens/);
+  assert.match(passwordAuth, /email_verified_at/);
+  assert.match(passwordAuth, /__Host-njora_session/);
+  assert.match(passwordAuth, /LEGACY_SESSION_COOKIE/);
+  assert.match(passwordAuth, /crypto\.getRandomValues\(new Uint8Array\(32\)\)/);
+  assert.match(passwordAuth, /VERIFY_EMAIL_SECONDS = 60 \* 60 \* 24/);
+  assert.match(passwordAuth, /RESET_PASSWORD_SECONDS = 60 \* 30/);
+  assert.match(passwordAuth, /process\.env\.NODE_ENV === "production"/);
   assert.match(passwordAuth, /bcryptCompare/);
   assert.doesNotMatch(passwordAuth, /oai-authenticated-user|ChatGPT/);
   assert.match(loginRoute, /loginPasswordAccount/);
   assert.match(registerRoute, /registerPasswordAccount/);
+  assert.match(registerRoute, /emailVerificationRequired/);
+  assert.match(registerRoute, /authEmailConfigured/);
   assert.match(logoutRoute, /destroySession/);
   assert.match(loginPage, /autocomplete="current-password"|current-password/);
   assert.match(loginPage, /Mindestens 10 Zeichen/);
+  assert.match(loginPage, /Passwort vergessen/);
+  assert.match(loginPage, /Bestätigungs-E-Mail erneut senden/);
+  assert.match(authEmail, /api\.resend\.com\/emails/);
+  assert.match(authEmail, /Idempotency-Key/);
+  assert.match(authEmail, /AUTH_PUBLIC_ORIGIN/);
+  assert.match(verifyRoute, /confirmEmailVerification/);
+  assert.match(verifyRoute, /export async function POST/);
+  assert.match(resetRoute, /resetPasswordWithToken/);
+  assert.match(resetPage, /window\.history\.replaceState/);
   assert.match(localHost, /normalized === "localhost"/);
   assert.match(localHost, /normalized\.endsWith\("\.localhost"\)/);
   assert.match(localHost, /normalized === "127\.0\.0\.1"/);
@@ -200,6 +225,8 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(layout, /viewportFit: "cover"/);
   assert.match(layout, /appleWebApp: \{ capable: true/);
   assert.match(layout, /PwaRegistration/);
+  assert.doesNotMatch(layout, /next\/font\/google/);
+  assert.doesNotMatch(manifest, /"orientation"/);
   assert.match(page, /Diese lokalen Daten gehören mir|Gehört dieser Finanzplan dir/);
   assert.match(page, /Kurzer Fragebogen · etwa 3 Minuten/);
   assert.match(page, /Schritt \{onboardingStep \+ 1\} von/);
@@ -239,8 +266,11 @@ test("provides a native Next.js build and server-only D1 adapter for Vercel", as
   assert.match(adapter, /cache: "no-store"/);
   assert.doesNotMatch(adapter, /Bearer\s+[A-Za-z0-9_-]{20,}/);
   assert.match(proxy, /needsCloudflareBackendProxy/);
-  assert.match(proxy, /klarbudget-kevin-2026\.alpher5\.chatgpt\.site/);
+  assert.match(proxy, /GELDRAUM_BACKEND_ORIGIN is required/);
   assert.match(proxy, /incomingOrigin !== incomingUrl\.origin/);
+  assert.match(proxy, /Incomplete Cloudflare D1 configuration/);
+  assert.match(proxy, /contentLength > 600_000/);
+  assert.match(proxy, /__Host-njora_session/);
   assert.match(proxy, /getSetCookie/);
   assert.match(registerRoute, /if \(needsCloudflareBackendProxy\(\)\) return proxyApiRequest\(request\)/);
   assert.match(accountRoute, /if \(needsCloudflareBackendProxy\(\)\) return proxyApiRequest\(request\)/);

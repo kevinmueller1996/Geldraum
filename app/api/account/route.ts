@@ -45,7 +45,7 @@ function json(data: unknown, status = 200) {
 
 function isSameOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
-  return !origin || origin === new URL(request.url).origin;
+  return origin === new URL(request.url).origin;
 }
 
 async function requestIdentity(request: NextRequest): Promise<Identity | null> {
@@ -190,6 +190,7 @@ export async function DELETE(request: NextRequest) {
       db.prepare("DELETE FROM finance_plans WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM user_activity WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").bind(id),
+      db.prepare("DELETE FROM auth_action_tokens WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM auth_credentials WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM auth_attempts WHERE email_hash = ?").bind(id),
       db.prepare("DELETE FROM users WHERE id = ?").bind(id),

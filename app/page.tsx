@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { isLocalHostname } from "./local-host";
 
 type IncomeSource = { id: string; name: string; amount: number; annual: boolean; month?: number };
@@ -649,7 +650,7 @@ export default function Home() {
   }
 
   if (!ready) return <main className="loading" aria-label="Njora wird geladen"><span className="loading-mark" /></main>;
-  if (authStatus === "anonymous") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Deine Finanzen. Deine Möglichkeiten.</p><h1>Verstehe, was war.<br /><em>Gestalte, was kommt.</em></h1><p>Kontostände, Monatsplan, Kredite, Ziele und Ersparnisse – sicher getrennt in deinem persönlichen Bereich.</p><a className="auth-button" href="/login">Mit E-Mail anmelden <b>→</b></a><small>Dein Passwort wird verschlüsselt gehasht; deine Finanzdaten bleiben deinem Konto zugeordnet.</small></section><aside className="auth-visual" aria-hidden="true"><span>Aktueller Spielraum</span><strong>+ 1.540 €</strong><div><i /><i /><i /></div><p>Ein ruhiger Blick auf das, was heute zählt.</p></aside></main>;
+  if (authStatus === "anonymous") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Deine Finanzen. Deine Möglichkeiten.</p><h1>Verstehe, was war.<br /><em>Gestalte, was kommt.</em></h1><p>Kontostände, Monatsplan, Kredite, Ziele und Ersparnisse – sicher getrennt in deinem persönlichen Bereich.</p><a className="auth-button" href="/login">Mit E-Mail anmelden <b>→</b></a><small>Dein Passwort wird verschlüsselt gehasht; deine Finanzdaten bleiben deinem Konto zugeordnet.</small></section><aside className="auth-visual login-visual" aria-hidden="true"><div className="brand-story-lockup"><img src="/njora-mark.png" width="260" height="260" alt="" /><img src="/njora-wordmark.png" width="300" height="94" alt="" /></div><div className="brand-story-rule" /><div className="brand-story-copy"><strong>Verstehe, was war.</strong><em>Gestalte, was kommt.</em><span>Dein persönlicher Finanzüberblick</span></div></aside></main>;
   if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
 
   const currentMonth = new Date().getMonth();
@@ -741,7 +742,7 @@ export default function Home() {
               return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{euro(item.value)}<small>{percent}%</small></b></div>;
             })}</div>
           </article>
-          <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ borderTopColor: group.color }} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)}</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
+          <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)}</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
         </section>}
 
         {activeView === "loans" && <section className="view" aria-labelledby="loans-title">
@@ -1031,7 +1032,7 @@ function SecurityAutocomplete({ id, value, onChange, onSelect }: { id: string; v
 }
 
 function Brand() {
-  return <span className="brand-lockup" role="img" aria-label="Njora"><img className="brand-mark" src="/njora-mark.png" alt="" /><img className="brand-wordmark" src="/njora-wordmark.png" alt="" /></span>;
+  return <span className="brand-lockup" role="img" aria-label="Njora"><img className="brand-mark" src="/njora-mark.png" width="42" height="42" alt="" /><img className="brand-wordmark" src="/njora-wordmark.png" width="112" height="35" alt="" /></span>;
 }
 
 function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -1039,7 +1040,7 @@ function NavButton({ active, onClick, children }: { active: boolean; onClick: ()
 }
 
 function MobileNavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) {
-  return <button className={active ? "active" : ""} type="button" onClick={onClick}><span>{icon}</span><small>{label}</small></button>;
+  return <button aria-label={label} className={active ? "active" : ""} type="button" onClick={onClick}><span aria-hidden="true">{icon}</span><small>{label}</small></button>;
 }
 
 function ViewHeader({ id, eyebrow, title, copy }: { id: string; eyebrow: string; title: string; copy: string }) {

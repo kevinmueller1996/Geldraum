@@ -28,6 +28,8 @@ export const userActivity = sqliteTable("user_activity", {
 export const authCredentials = sqliteTable("auth_credentials", {
   userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   emailMask: text("email_mask").notNull(),
+  emailAddress: text("email_address"),
+  emailVerifiedAt: text("email_verified_at"),
   passwordSalt: text("password_salt").notNull(),
   passwordHash: text("password_hash").notNull(),
   passwordIterations: integer("password_iterations").notNull(),
@@ -51,3 +53,15 @@ export const authAttempts = sqliteTable("auth_attempts", {
   windowStartedAt: text("window_started_at").notNull(),
   lockedUntil: text("locked_until"),
 });
+
+export const authActionTokens = sqliteTable("auth_action_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  purpose: text("purpose", { enum: ["verify_email", "password_reset"] }).notNull(),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  consumedAt: text("consumed_at"),
+}, (table) => [
+  index("auth_action_tokens_user_purpose_idx").on(table.userId, table.purpose),
+  index("auth_action_tokens_expires_at_idx").on(table.expiresAt),
+]);
