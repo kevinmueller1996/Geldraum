@@ -83,7 +83,7 @@ export default function LoginPage() {
     }
   }
 
-  return <main className="auth-shell login-shell">
+  return <main className={`auth-shell login-shell ${mode === "register" ? "registration-mode" : "login-mode"}`}>
     <section className="auth-card login-card">
       {/* vinext currently renders next/link with a duplicate React instance in development. */}
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
