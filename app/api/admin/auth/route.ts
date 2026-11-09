@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   const runtimeEnv = env as typeof env & { GELDRAUM_ADMIN_TOKEN?: string; GELDRAUM_ADMIN_USER_ID?: string };
   const expectedToken = runtimeEnv.GELDRAUM_ADMIN_TOKEN;
   const expectedUserId = runtimeEnv.GELDRAUM_ADMIN_USER_ID;
-  const providedToken = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  const providedToken = request.headers.get("x-njora-admin-token") ?? "";
   if (!expectedToken || !expectedUserId || !providedToken || !(await equalSecret(providedToken, expectedToken))) {
     return json({ error: "Nicht autorisiert." }, 401);
   }

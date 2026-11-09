@@ -48,8 +48,8 @@ export async function proxyApiRequest(request: Request) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }
-    const authorization = request.headers.get("authorization");
-    if (authorization && incomingUrl.pathname.startsWith("/api/admin/")) headers.set("authorization", authorization);
+    const adminToken = request.headers.get("x-njora-admin-token");
+    if (adminToken && incomingUrl.pathname.startsWith("/api/admin/")) headers.set("x-njora-admin-token", adminToken);
     headers.set("origin", origin.origin);
 
     const upstream = await fetch(target, {

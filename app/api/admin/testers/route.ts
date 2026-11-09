@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
   if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   const runtimeEnv = env as typeof env & { GELDRAUM_ADMIN_TOKEN?: string };
   const expected = runtimeEnv.GELDRAUM_ADMIN_TOKEN;
-  const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  const provided = request.headers.get("x-njora-admin-token") ?? "";
   if (!expected || !provided || !(await validToken(provided, expected))) {
     return json({ error: "Nicht autorisiert." }, 401);
   }

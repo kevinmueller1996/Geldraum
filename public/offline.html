@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f0e8" />
+    <title>Njora – gerade offline</title>
+    <style>
+      :root { color-scheme:light; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#34201b; background:#f5f0e8; }
+      * { box-sizing:border-box; }
+      body { min-height:100dvh; margin:0; padding:max(28px,env(safe-area-inset-top)) 22px max(28px,env(safe-area-inset-bottom)); display:grid; place-items:center; background:radial-gradient(circle at 75% 15%,#f3d7cb 0,transparent 34%),#f5f0e8; }
+      main { width:min(100%,430px); padding:34px 28px; border:1px solid rgba(77,35,30,.12); border-radius:28px; background:rgba(255,253,249,.84); box-shadow:0 24px 70px rgba(77,35,30,.1); }
+      img { width:64px; height:64px; object-fit:contain; mix-blend-mode:multiply; }
+      p:first-of-type { margin:30px 0 8px; color:#c46f5a; font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+      h1 { margin:0; max-width:9ch; font-family:Georgia,serif; font-size:48px; line-height:.98; font-weight:500; letter-spacing:-.04em; }
+      p:last-of-type { margin:20px 0 28px; color:rgba(52,32,27,.65); line-height:1.6; }
+      button { width:100%; min-height:52px; border:0; border-radius:999px; color:#fff9f2; background:#4d231e; font:inherit; font-weight:750; cursor:pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/njora-mark.png" alt="Njora" />
+      <p>Keine Verbindung</p>
+      <h1>Deine Daten bleiben geschützt.</h1>
+      <p>Njora speichert deinen persönlichen Finanzplan nicht unverschlüsselt im Offline-Cache. Sobald du wieder online bist, kannst du wie gewohnt weitermachen.</p>
+      <button type="button" onclick="location.reload()">Erneut verbinden</button>
+    </main>
+  </body>
+</html>

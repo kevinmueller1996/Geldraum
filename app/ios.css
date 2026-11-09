@@ -1,0 +1,87 @@
+.native-app .marketing-page > :not(.marketing-header, .landing-hero) {
+  display: none;
+}
+
+.native-app .marketing-header {
+  grid-template-columns: 1fr;
+  width: min(100% - 40px, 480px);
+  min-height: calc(64px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+}
+
+.native-app .marketing-header > :not(.marketing-brand),
+.native-app .landing-hero > .hero-copy {
+  display: none;
+}
+
+.native-app .landing-hero {
+  display: block;
+  width: min(100% - 40px, 480px);
+  padding: clamp(20px, 3.8vh, 38px) 0 calc(24px + env(safe-area-inset-bottom));
+}
+
+.native-app .landing-auth-card {
+  position: static;
+  width: 100%;
+  padding: clamp(20px, 6vw, 32px);
+}
+
+.native-app .landing-auth-card h2 {
+  font-size: clamp(32px, 9vw, 44px);
+}
+
+.native-app .landing-auth-card .auth-tabs button,
+.native-app .landing-auth-card .login-link-button {
+  min-height: 44px;
+}
+
+.native-app .landing-auth-card .login-form input {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.native-app .landing-auth-card .login-form input::placeholder {
+  color: #74645c;
+  opacity: 1;
+}
+
+.native-app .landing-auth-card > small {
+  font-size: 12px;
+}
+
+@media (max-width: 759px) {
+  .profile-button span {
+    font-size: 14px;
+  }
+
+  .home-view .balance-hero {
+    min-height: 220px;
+    gap: 12px;
+  }
+
+  .home-view .balance-hero strong {
+    font-size: clamp(36px, 10vw, 50px);
+    line-height: 1.06;
+  }
+
+  .home-view .forecast-card {
+    color: var(--ink);
+    background: #eddfd5;
+    border: 1px solid rgba(77, 35, 30, .11);
+  }
+
+  .home-view .forecast-card p,
+  .home-view .month-pulse p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .home-view .specials-empty-label {
+    font-size: clamp(18px, 5vw, 23px);
+    font-weight: 650;
+  }
+
+  .bottom-nav button:not(.active) {
+    color: #765a51;
+  }
+}

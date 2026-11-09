@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { isLocalHostname } from "../local-host";
+import LegalLinks from "../legal-links";
 
 type Mode = "login" | "register";
 
@@ -48,8 +50,11 @@ export default function LoginPage() {
   const [notice, setNotice] = useState("");
   const [needsVerification, setNeedsVerification] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [local, setLocal] = useState(false);
+  const showPassword = mode === "login" || local;
 
   useEffect(() => {
+    setLocal(isLocalHostname(window.location.hostname));
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "1") window.location.replace("/");
     if (params.get("start") === "register") setMode("register");
@@ -60,7 +65,7 @@ export default function LoginPage() {
     setError("");
     setNotice("");
     setNeedsVerification(false);
-    if (mode === "register" && password !== confirmation) {
+    if (mode === "register" && showPassword && password !== confirmation) {
       setError("Die beiden Passwörter stimmen nicht überein.");
       return;
     }
@@ -69,7 +74,7 @@ export default function LoginPage() {
       const response = await fetch(`/api/auth/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(showPassword ? { email, password } : { email }),
       });
       const data = await response.json() as { error?: string; code?: string; verificationRequired?: boolean; message?: string };
       if (!response.ok) {
@@ -134,7 +139,7 @@ export default function LoginPage() {
         <p className="marketing-eyebrow">Dein persönlicher Finanzüberblick</p>
         <h1>Verstehe, was war.<br /><em>Gestalte, was kommt.</em></h1>
         <p className="hero-intro">Njora bringt Kontostände, laufende Kosten, Jahresausgaben, Kredite und Sparziele in eine ruhige Übersicht. Ohne Bankzugriff – du entscheidest, welche Werte du einträgst.</p>
-        <div className="hero-actions"><button type="button" onClick={() => openAccess("register")}>Testzugang erstellen <span>→</span></button><a href="#produkt">Produkt ansehen</a></div>
+        <div className="hero-actions"><button type="button" onClick={() => openAccess("register")}>Konto erstellen <span>→</span></button><a href="#produkt">Produkt ansehen</a></div>
         <ul className="proof-chips"><li>Keine IBAN erforderlich</li><li>Daten exportierbar</li><li>Jederzeit löschbar</li></ul>
         <ProductOverview />
       </div>
@@ -142,22 +147,23 @@ export default function LoginPage() {
       <aside className="landing-auth-card" id="zugang" aria-labelledby="access-title">
         <p className="marketing-eyebrow">Dein persönlicher Bereich</p>
         <h2 id="access-title">{mode === "login" ? "Willkommen zurück." : "In wenigen Minuten startklar."}</h2>
-        <p>{mode === "login" ? "Melde dich an und öffne deinen persönlichen Finanzüberblick." : "Erstelle deinen geschützten Testzugang. Deinen Finanzplan richtest du anschließend Schritt für Schritt ein."}</p>
+        <p>{mode === "login" ? "Melde dich an und öffne deinen persönlichen Finanzüberblick." : "Bestätige deine E-Mail-Adresse. Danach legst du dein Passwort fest und richtest deinen Finanzplan ein."}</p>
         <div className="auth-tabs" aria-label="Anmeldung oder Registrierung">
           <button type="button" aria-pressed={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Anmelden</button>
           <button type="button" aria-pressed={mode === "register"} className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Konto erstellen</button>
         </div>
         <form className="login-form" onSubmit={submit}>
-          <label>E-Mail-Adresse<input type="email" autoComplete="email" inputMode="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} placeholder="name@beispiel.de" /></label>
-          <label>Passwort<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={10} maxLength={72} placeholder="Mindestens 10 Zeichen" /></label>
-          {mode === "register" && <label>Passwort wiederholen<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required minLength={10} maxLength={72} placeholder="Passwort erneut eingeben" /></label>}
+          <label>E-Mail-Adresse<input type="email" name="username" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} placeholder="name@beispiel.de" /></label>
+          {showPassword && <label>Passwort<input type="password" name="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={10} maxLength={72} placeholder="Mindestens 10 Zeichen" /></label>}
+          {mode === "register" && showPassword && <label>Passwort wiederholen<input type="password" name="password-confirmation" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required minLength={10} maxLength={72} placeholder="Passwort erneut eingeben" /></label>}
           {error && <p className="login-error" role="alert">{error}</p>}
           {notice && <p className="login-notice" role="status">{notice}</p>}
           {needsVerification && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("resend-verification")}>Bestätigungs-E-Mail erneut senden</button>}
-          <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Sicher anmelden" : "Testzugang erstellen"}<b>→</b></button>
+          <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Sicher anmelden" : local ? "Konto erstellen" : "Bestätigungslink senden"}<b>→</b></button>
           {mode === "login" && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("forgot-password")}>Passwort vergessen?</button>}
         </form>
-        <small>Dein Passwort wird niemals im Klartext gespeichert. Njora befindet sich aktuell in der Testphase.</small>
+        <small>Dein Passwort wird als Hash gespeichert.</small>
+        <LegalLinks />
       </aside>
     </section>
 
@@ -192,8 +198,8 @@ export default function LoginPage() {
 
     <section className="landing-section test-cta-section">
       <img src="/njora-mark.png" width="130" height="130" alt="" />
-      <p className="marketing-eyebrow">Njora mitgestalten</p><h2>Mehr Überblick beginnt<br /><em>mit dem ersten Eintrag.</em></h2><p>Erstelle einen Testzugang und probiere Njora mit deinen eigenen Zahlen aus. Während der Testphase können sich Funktionen und Oberfläche noch weiterentwickeln.</p>
-      <div className="hero-actions centered-actions"><button type="button" onClick={() => openAccess("register")}>Testzugang erstellen <span>→</span></button><button className="text-action" type="button" onClick={() => openAccess("login")}>Schon registriert? Anmelden</button></div>
+      <p className="marketing-eyebrow">Njora mitgestalten</p><h2>Mehr Überblick beginnt<br /><em>mit dem ersten Eintrag.</em></h2><p>Erstelle dein Konto und richte deinen Finanzplan mit deinen eigenen Zahlen ein.</p>
+      <div className="hero-actions centered-actions"><button type="button" onClick={() => openAccess("register")}>Konto erstellen <span>→</span></button><button className="text-action" type="button" onClick={() => openAccess("login")}>Schon registriert? Anmelden</button></div>
     </section>
 
     <section className="landing-section faq-section" id="faq">
@@ -203,11 +209,11 @@ export default function LoginPage() {
         <details><summary>Welche Daten brauche ich für den Start?<span>+</span></summary><p>Ein Profilname, mindestens ein Kontostand und ein monatliches Einkommen reichen aus. Weitere Angaben sind optional und können später ergänzt werden.</p></details>
         <details><summary>Wie entstehen die Prognosen?<span>+</span></summary><p>Njora berechnet sie aus deinen eingetragenen Einnahmen, Ausgaben, Buchungstagen, Jahreskosten und Verpflichtungen.</p></details>
         <details><summary>Kann ich meine Daten mitnehmen oder löschen?<span>+</span></summary><p>Ja. Du kannst deinen Finanzplan exportieren und deinen Account einschließlich der zugehörigen Finanzdaten löschen.</p></details>
-        <details><summary>Wann wird die E-Mail-Adresse bestätigt?<span>+</span></summary><p>Njora befindet sich derzeit in der Testphase. Die technische E-Mail-Bestätigung ist vorbereitet und wird vor dem öffentlichen Marktstart verpflichtend aktiviert.</p></details>
+        <details><summary>Wann wird die E-Mail-Adresse bestätigt?<span>+</span></summary><p>Bei der Registrierung senden wir dir einen Bestätigungslink. Über diesen Link legst du dein Passwort fest.</p></details>
         <details><summary>Ersetzt Njora eine Finanzberatung?<span>+</span></summary><p>Nein. Njora ist ein persönliches Planungs- und Übersichtswerkzeug.</p></details>
       </div>
     </section>
 
-    <footer className="marketing-footer"><a className="marketing-brand" href="#start"><img src="/njora-mark.png" width="34" height="34" alt="" /><img src="/njora-wordmark.png" width="105" height="20" alt="Njora" /></a><p>Verstehe, was war. <em>Gestalte, was kommt.</em></p><small>© {new Date().getFullYear()} Njora · Persönlicher Finanzüberblick in der Testphase</small></footer>
+    <footer className="marketing-footer"><a className="marketing-brand" href="#start"><img src="/njora-mark.png" width="34" height="34" alt="" /><img src="/njora-wordmark.png" width="105" height="20" alt="Njora" /></a><p>Verstehe, was war. <em>Gestalte, was kommt.</em></p><small>© {new Date().getFullYear()} Njora · Persönlicher Finanzüberblick</small></footer>
   </main>;
 }

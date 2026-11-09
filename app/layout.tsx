@@ -1,13 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
+import "./ios.css";
+import NativeAppBridge from "./native-app-bridge";
 import PwaRegistration from "./pwa-registration";
 
-export async function generateMetadata(): Promise<Metadata> {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost";
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const socialImage = `${protocol}://${host}/og.png`;
+export function generateMetadata(): Metadata {
+  const socialImage = "https://njora.de/og.png";
 
   return {
     title: "Njora – Verstehe, was war. Gestalte, was kommt.",
@@ -33,6 +32,7 @@ export const viewport: Viewport = {
   themeColor: "#f5f0e8",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="de"><body>{children}<PwaRegistration /></body></html>;
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const userAgent = (await headers()).get("user-agent") ?? "";
+  return <html lang="de" className={userAgent.includes("Njora-iOS/") ? "native-app" : undefined}><body>{children}<NativeAppBridge /><PwaRegistration /></body></html>;
 }

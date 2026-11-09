@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authPublicOrigin } from "../../../auth-email";
-import { confirmEmailVerification, setSessionCookie } from "../../../password-auth";
+import { confirmEmailVerification, setSessionCookie, validPassword } from "../../../password-auth";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +22,11 @@ export async function POST(request: NextRequest) {
   if (origin !== new URL(request.url).origin || !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return NextResponse.json({ error: "Unzulässige Anfrage." }, { status: 403 });
   }
-  const body = await request.json() as { token?: unknown };
-  const result = typeof body.token === "string" ? await confirmEmailVerification(body.token) : null;
+  const body = await request.json().catch(() => null) as { token?: unknown; password?: unknown } | null;
+  if (!validPassword(body?.password)) {
+    return NextResponse.json({ error: "Das Passwort muss zwischen 10 und 72 Zeichen lang sein." }, { status: 400 });
+  }
+  const result = typeof body?.token === "string" ? await confirmEmailVerification(body.token, body.password) : null;
   if (!result) return NextResponse.json({ error: "Der Link ist ungültig oder abgelaufen." }, { status: 400 });
   const response = NextResponse.json({ authenticated: true }, { headers: { "Cache-Control": "no-store" } });
   setSessionCookie(response, result.token, request);

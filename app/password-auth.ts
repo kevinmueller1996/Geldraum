@@ -8,6 +8,7 @@ const LEGACY_SESSION_COOKIE = "geldraum_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const PASSWORD_COST = 11;
 const PASSWORD_SCHEME = "bcrypt";
+const PENDING_PASSWORD_SCHEME = "pending-email";
 const DUMMY_PASSWORD_HASH = "$2b$11$rf0UBpb2Zjnp4JsyWYrA9.wy1IgG87VOy85GYQ19B1DTE8YzRRtKG";
 const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
 const LOGIN_MAX_FAILURES = 5;
@@ -87,12 +88,6 @@ type CredentialRow = {
   password_salt: string;
   password_hash: string;
   password_iterations: number;
-};
-
-type AttemptRow = {
-  failed_count: number;
-  window_started_at: string;
-  locked_until: string | null;
 };
 
 type PasswordVerification =
@@ -189,24 +184,19 @@ async function createActionToken(userIdValue: string, purpose: EmailPurpose) {
   const db = await ensureAuthSchema();
   const now = new Date();
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1_000).toISOString();
-  const recent = await db.prepare(`SELECT COUNT(*) AS count FROM auth_action_tokens
-    WHERE user_id = ? AND purpose = ? AND created_at > ?`)
-    .bind(userIdValue, purpose, hourAgo).first<{ count: number }>();
-  if ((recent?.count ?? 0) >= EMAIL_ACTION_LIMIT_PER_HOUR) return { error: "rate_limited" as const };
-
   const rawToken = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = bytesToBase64Url(await sha256(rawToken));
   const ttl = purpose === "verify_email" ? VERIFY_EMAIL_SECONDS : RESET_PASSWORD_SECONDS;
-  await db.batch([
+  const [, inserted] = await db.batch([
     db.prepare("DELETE FROM auth_action_tokens WHERE expires_at <= ? OR (consumed_at IS NOT NULL AND created_at <= ?)")
       .bind(now.toISOString(), hourAgo),
-    db.prepare(`UPDATE auth_action_tokens SET consumed_at = ?
-      WHERE user_id = ? AND purpose = ? AND consumed_at IS NULL`)
-      .bind(now.toISOString(), userIdValue, purpose),
     db.prepare(`INSERT INTO auth_action_tokens (token_hash, user_id, purpose, created_at, expires_at, consumed_at)
-      VALUES (?, ?, ?, ?, ?, NULL)`)
-      .bind(tokenHash, userIdValue, purpose, now.toISOString(), new Date(now.getTime() + ttl * 1_000).toISOString()),
+      SELECT ?, ?, ?, ?, ?, NULL
+      WHERE (SELECT COUNT(*) FROM auth_action_tokens WHERE user_id = ? AND purpose = ? AND created_at > ?) < ?`)
+      .bind(tokenHash, userIdValue, purpose, now.toISOString(), new Date(now.getTime() + ttl * 1_000).toISOString(),
+        userIdValue, purpose, hourAgo, EMAIL_ACTION_LIMIT_PER_HOUR),
   ]);
+  if (!inserted.meta.changes) return { error: "rate_limited" as const };
   return { token: rawToken };
 }
 
@@ -249,7 +239,7 @@ export function clearSessionCookie(response: NextResponse, request: NextRequest)
   }
 }
 
-export async function registerPasswordAccount(email: string, password: string) {
+export async function registerPasswordAccount(email: string, password: string | undefined, requiresVerification: boolean) {
   let db: D1Database;
   try {
     db = await ensureAuthSchema();
@@ -262,13 +252,13 @@ export async function registerPasswordAccount(email: string, password: string) {
 
   let passwordHash: string;
   try {
-    passwordHash = await bcryptHash(password, PASSWORD_COST);
+    if (!requiresVerification && !password) throw new Error("A password is required");
+    passwordHash = requiresVerification ? DUMMY_PASSWORD_HASH : await bcryptHash(password!, PASSWORD_COST);
   } catch (error) {
     throw new PasswordAuthError("hash", error);
   }
   const emailMask = maskEmail(email);
   const now = new Date().toISOString();
-  const requiresVerification = emailVerificationRequired();
   try {
     await db.batch([
       db.prepare(`INSERT INTO users (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)
@@ -276,7 +266,7 @@ export async function registerPasswordAccount(email: string, password: string) {
         .bind(id, emailMask, now, now),
       db.prepare(`INSERT INTO auth_credentials (user_id, email_mask, email_address, email_verified_at, password_salt, password_hash, password_iterations, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(id, emailMask, email, requiresVerification ? null : now, PASSWORD_SCHEME, passwordHash, PASSWORD_COST, now, now),
+        .bind(id, emailMask, email, requiresVerification ? null : now, requiresVerification ? PENDING_PASSWORD_SCHEME : PASSWORD_SCHEME, passwordHash, PASSWORD_COST, now, now),
       db.prepare("DELETE FROM auth_attempts WHERE email_hash = ?").bind(id),
     ]);
   } catch (error) {
@@ -294,30 +284,34 @@ export async function registerPasswordAccount(email: string, password: string) {
   }
 }
 
-async function recordFailure(db: D1Database, emailHash: string, attempt: AttemptRow | null) {
+async function recordFailure(db: D1Database, emailHash: string) {
   const now = Date.now();
-  const windowStart = attempt ? Date.parse(attempt.window_started_at) : 0;
-  const inWindow = Number.isFinite(windowStart) && now - windowStart <= LOGIN_WINDOW_MS;
-  const failedCount = inWindow ? attempt!.failed_count + 1 : 1;
-  const windowStartedAt = new Date(inWindow ? windowStart : now).toISOString();
-  const lockedUntil = failedCount >= LOGIN_MAX_FAILURES ? new Date(now + LOGIN_WINDOW_MS).toISOString() : null;
-  await db.prepare(`INSERT INTO auth_attempts (email_hash, failed_count, window_started_at, locked_until) VALUES (?, ?, ?, ?)
-    ON CONFLICT(email_hash) DO UPDATE SET failed_count = excluded.failed_count, window_started_at = excluded.window_started_at, locked_until = excluded.locked_until`)
-    .bind(emailHash, failedCount, windowStartedAt, lockedUntil).run();
+  const windowStart = new Date(now - LOGIN_WINDOW_MS).toISOString();
+  const currentTime = new Date(now).toISOString();
+  const lockedUntil = new Date(now + LOGIN_WINDOW_MS).toISOString();
+  await db.prepare(`INSERT INTO auth_attempts (email_hash, failed_count, window_started_at, locked_until)
+    VALUES (?, 1, ?, NULL)
+    ON CONFLICT(email_hash) DO UPDATE SET
+      failed_count = CASE WHEN window_started_at >= ? THEN failed_count + 1 ELSE 1 END,
+      window_started_at = CASE WHEN window_started_at >= ? THEN window_started_at ELSE excluded.window_started_at END,
+      locked_until = CASE WHEN window_started_at >= ? AND failed_count + 1 >= ? THEN ? ELSE NULL END
+    WHERE locked_until IS NULL OR locked_until <= ?`)
+    .bind(emailHash, currentTime, windowStart, windowStart, windowStart, LOGIN_MAX_FAILURES, lockedUntil, currentTime)
+    .run();
 }
 
 export async function verifyPasswordAccount(email: string, password: string): Promise<PasswordVerification> {
   const db = await ensureAuthSchema();
   const id = await userId(email);
-  const attempt = await db.prepare("SELECT failed_count, window_started_at, locked_until FROM auth_attempts WHERE email_hash = ?")
-    .bind(id).first<AttemptRow>();
+  const attempt = await db.prepare("SELECT locked_until FROM auth_attempts WHERE email_hash = ?")
+    .bind(id).first<{ locked_until: string | null }>();
   if (attempt?.locked_until && Date.parse(attempt.locked_until) > Date.now()) return { error: "locked" as const };
 
   const credential = await db.prepare(`SELECT user_id, email_mask, email_address, email_verified_at, password_salt, password_hash, password_iterations
     FROM auth_credentials WHERE user_id = ?`).bind(id).first<CredentialRow>();
   const matches = await bcryptCompare(password, credential?.password_hash ?? DUMMY_PASSWORD_HASH);
   if (!credential || credential.password_salt !== PASSWORD_SCHEME || !matches) {
-    await recordFailure(db, id, attempt);
+    await recordFailure(db, id);
     return { error: "invalid" as const };
   }
 
@@ -343,14 +337,16 @@ export async function requestEmailVerification(email: string) {
   return { email, token: action.token };
 }
 
-export async function confirmEmailVerification(rawToken: string) {
+export async function confirmEmailVerification(rawToken: string, password: string) {
   const action = await findActionToken(rawToken, "verify_email");
   if (!action) return null;
+  const passwordHash = await bcryptHash(password, PASSWORD_COST);
   const results = await action.db.batch([
-    action.db.prepare(`UPDATE auth_credentials SET email_verified_at = ?, updated_at = ?
-      WHERE user_id = ? AND EXISTS (SELECT 1 FROM auth_action_tokens
+    action.db.prepare(`UPDATE auth_credentials SET email_verified_at = ?, updated_at = ?,
+      password_hash = ?, password_salt = ?, password_iterations = ?
+      WHERE user_id = ? AND email_verified_at IS NULL AND EXISTS (SELECT 1 FROM auth_action_tokens
         WHERE token_hash = ? AND purpose = 'verify_email' AND consumed_at IS NULL AND expires_at > ?)`)
-      .bind(action.now, action.now, action.userId, action.tokenHash, action.now),
+      .bind(action.now, action.now, passwordHash, PASSWORD_SCHEME, PASSWORD_COST, action.userId, action.tokenHash, action.now),
     action.db.prepare(`UPDATE auth_action_tokens SET consumed_at = ?
       WHERE user_id = ? AND purpose = 'verify_email' AND token_hash != ? AND consumed_at IS NULL
         AND EXISTS (SELECT 1 FROM auth_action_tokens WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?)`)
@@ -416,9 +412,9 @@ export async function getSessionIdentity(request: NextRequest): Promise<SessionI
     FROM auth_sessions AS sessions
     JOIN users ON users.id = sessions.user_id
     JOIN auth_credentials AS credentials ON credentials.user_id = sessions.user_id
-    WHERE sessions.token_hash = ? AND sessions.expires_at > ?
+    WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND credentials.password_salt = ?
       AND (? = 0 OR credentials.email_verified_at IS NOT NULL)`)
-    .bind(tokenHash, new Date().toISOString(), emailVerificationRequired() ? 1 : 0)
+    .bind(tokenHash, new Date().toISOString(), PASSWORD_SCHEME, emailVerificationRequired() ? 1 : 0)
     .first<{ user_id: string; display_name: string; email_mask: string }>();
   if (!row) return null;
   return { id: row.user_id, displayName: row.display_name, emailMask: row.email_mask, local: false };

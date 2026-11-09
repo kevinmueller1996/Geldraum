@@ -1,8 +1,19 @@
 import type { NextConfig } from "next";
-import path from "node:path";
 
-const vercelWorkersShim = path.resolve(process.cwd(), "app/vercel/cloudflare-workers.ts");
+const vercelWorkersShim = `${process.cwd()}/app/vercel/cloudflare-workers.ts`;
 const isVercelBuild = process.env.VERCEL === "1";
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
 
 const nextConfig: NextConfig = {
   ...(isVercelBuild ? {
@@ -23,6 +34,7 @@ const nextConfig: NextConfig = {
     return [{
       source: "/(.*)",
       headers: [
+        ...(process.env.NODE_ENV === "production" ? [{ key: "Content-Security-Policy", value: contentSecurityPolicy }] : []),
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "X-Frame-Options", value: "DENY" },
         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

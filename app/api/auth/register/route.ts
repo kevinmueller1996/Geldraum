@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isLocalHostname } from "../../../local-host";
 import { authEmailConfigured, sendAuthEmail } from "../../../auth-email";
 import { emailVerificationRequired, normalizeEmail, PasswordAuthError, registerPasswordAccount, requestEmailVerification, setSessionCookie, validPassword } from "../../../password-auth";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
@@ -23,14 +24,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as { email?: unknown; password?: unknown };
     const email = normalizeEmail(body.email);
     if (!email) return json({ error: "Bitte gib eine gültige E-Mail-Adresse ein." }, 400);
-    if (!validPassword(body.password)) return json({ error: "Das Passwort muss zwischen 10 und 72 Zeichen lang sein." }, 400);
-    if (emailVerificationRequired() && !authEmailConfigured()) {
+    const requiresVerification = !isLocalHostname(request.nextUrl.hostname) || emailVerificationRequired();
+    const password = validPassword(body.password) ? body.password : undefined;
+    if (!requiresVerification && !password) return json({ error: "Das Passwort muss zwischen 10 und 72 Zeichen lang sein." }, 400);
+    if (requiresVerification && !authEmailConfigured()) {
       console.error("Password registration failed Email verification is required but email delivery is not configured");
-      return json({ error: "Die E-Mail-Bestätigung ist noch nicht vollständig eingerichtet." }, 503);
+      return json({ error: "Neue Konten können gerade nicht bestätigt werden. Bitte versuche es später erneut." }, 503);
     }
-    const result = await registerPasswordAccount(email, body.password);
+    const result = await registerPasswordAccount(email, password, requiresVerification);
     if ("error" in result) {
-      if (emailVerificationRequired()) {
+      if (requiresVerification) {
         const verification = await requestEmailVerification(email);
         if (verification && "email" in verification) await sendAuthEmail(verification.email, verification.token, "verify_email");
         return json({ verificationRequired: true, message: VERIFICATION_MESSAGE }, 202);

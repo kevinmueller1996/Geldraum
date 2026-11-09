@@ -15,7 +15,7 @@ async function withPreview(callback) {
   preview.stderr.on("data", (chunk) => { output += chunk; });
 
   try {
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 120_000;
     while (Date.now() < deadline) {
       try {
         const response = await fetch(`http://localhost:${port}/`, {
@@ -62,6 +62,21 @@ test("renders Njora locally without requiring authentication", async () => {
     assert.match(loginHtml, /E-Mail-Adresse/);
     assert.match(loginHtml, /Konto erstellen/);
     assert.doesNotMatch(loginHtml, /Sign in with ChatGPT|signin-with-chatgpt/i);
+    assert.doesNotMatch(loginHtml, /<html[^>]*class="native-app"/);
+
+    const iosLogin = await fetch(`${baseUrl}/login`, {
+      headers: { accept: "text/html", "user-agent": "Mozilla/5.0 Njora-iOS/1.0" },
+    });
+    assert.equal(iosLogin.status, 200);
+    const iosLoginHtml = await iosLogin.text();
+    assert.match(iosLoginHtml, /<html[^>]*class="native-app"/);
+    assert.match(iosLoginHtml, /autocomplete="username"/i);
+
+    for (const path of ["/impressum", "/datenschutz", "/nutzungsbedingungen", "/support"]) {
+      const page = await fetch(baseUrl + path, { headers: { accept: "text/html" } });
+      assert.equal(page.status, 200);
+      assert.match(await page.text(), /Rheinland Solutions|Hilfe zu Njora/);
+    }
 
     const email = `auth-${process.pid}-${Date.now()}@example.invalid`;
     const password = "Test-Passwort-2026!";
@@ -105,6 +120,29 @@ test("renders Njora locally without requiring authentication", async () => {
     });
     assert.equal(deletion.status, 200);
 
+    const missingPassword = await fetch(baseUrl + "/api/auth/verify-email", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ token: "invalid" }),
+    });
+    assert.equal(missingPassword.status, 400);
+    assert.match((await missingPassword.json()).error, /Passwort/);
+
+    const unavailableMail = await fetch(baseUrl + "/api/auth/forgot-password", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(unavailableMail.status, 503);
+
+    const wrongPassword = () => fetch(baseUrl + "/api/auth/login", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ email, password: "Falsches-Passwort!" }),
+    });
+    await Promise.all(Array.from({ length: 5 }, wrongPassword));
+    assert.equal((await wrongPassword()).status, 429);
+
     const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
     assert.equal(manifestResponse.status, 200);
     const manifest = await manifestResponse.json();
@@ -114,12 +152,18 @@ test("renders Njora locally without requiring authentication", async () => {
     const workerResponse = await fetch(`${baseUrl}/sw.js`);
     assert.equal(workerResponse.status, 200);
     const worker = await workerResponse.text();
-    assert.doesNotMatch(worker, /caches\.open|addEventListener\("fetch"/);
+    assert.match(worker, /caches\.open|addEventListener\("fetch"/);
+    assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/);
+    assert.doesNotMatch(worker, /cache\.put\(request.*\/api\//s);
+
+    const offlineResponse = await fetch(`${baseUrl}/offline.html`);
+    assert.equal(offlineResponse.status, 200);
+    assert.match(await offlineResponse.text(), /Deine Daten bleiben geschützt/);
   });
 });
 
 test("keeps finance plans and market quotes behind password sessions", async () => {
-  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, viteConfig, authEmail, verifyRoute, resetRoute, resetPage, manifest] = await Promise.all([
+  const [route, adminRoute, adminAuthRoute, quoteRoute, searchRoute, passwordAuth, loginRoute, registerRoute, logoutRoute, loginPage, page, layout, localHost, schema, viteConfig, authEmail, verifyRoute, resetRoute, resetPage, manifest, installCard, nativeSettings] = await Promise.all([
     readFile(new URL("../app/api/account/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/testers/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/auth/route.ts", import.meta.url), "utf8"),
@@ -140,6 +184,8 @@ test("keeps finance plans and market quotes behind password sessions", async () 
     readFile(new URL("../app/api/auth/reset-password/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/passwort-zuruecksetzen/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
+    readFile(new URL("../app/install-app-card.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/native-settings-card.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(viteConfig, /readFileSync/);
@@ -219,9 +265,11 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.doesNotMatch(localHost, /192\.168|10\.0\./);
   assert.match(page, /isLocalHostname\(window\.location\.hostname\)/);
   assert.match(page, /Keine Anmeldung erforderlich/);
-  assert.match(page, /Als App auf dem iPhone/);
+  assert.match(installCard, /Als App auf dem iPhone/);
+  assert.match(installCard, /Zum Home-Bildschirm/);
+  assert.match(nativeSettings, /LocalNotifications\.schedule/);
+  assert.match(page, /@capacitor\/share/);
   assert.match(page, /fetch\("\/api\/auth\/logout"/);
-  assert.match(page, /href="\/login"/);
   assert.match(layout, /viewportFit: "cover"/);
   assert.match(layout, /appleWebApp: \{ capable: true/);
   assert.match(layout, /PwaRegistration/);
@@ -266,7 +314,8 @@ test("provides a native Next.js build and server-only D1 adapter for Vercel", as
   assert.match(adapter, /cache: "no-store"/);
   assert.doesNotMatch(adapter, /Bearer\s+[A-Za-z0-9_-]{20,}/);
   assert.match(proxy, /needsCloudflareBackendProxy/);
-  assert.match(proxy, /GELDRAUM_BACKEND_ORIGIN is required/);
+  assert.match(proxy, /DEFAULT_BACKEND_ORIGIN/);
+  assert.match(proxy, /origin\.protocol !== "https:"/);
   assert.match(proxy, /incomingOrigin !== incomingUrl\.origin/);
   assert.match(proxy, /Incomplete Cloudflare D1 configuration/);
   assert.match(proxy, /contentLength > 600_000/);

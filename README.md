@@ -26,7 +26,36 @@ neutrale D1-Bindung `DB`.
 - `app/` enthält Oberfläche, Login und API-Routen.
 - `db/` und `drizzle/` enthalten das Schema und die Migrationen.
 - `public/` enthält PWA-Dateien und die Njora-Markenassets.
+- `ios/` enthält das mit Capacitor erzeugte Xcode-Projekt.
+- `capacitor.config.ts` verbindet den ersten internen iOS-Build mit der gehosteten Njora-App.
 - `.openai/hosting.example.json` ist die neutrale lokale Vorlage.
+
+## iOS und TestFlight
+
+Das iOS-Projekt verwendet Capacitor 8, das finale Njora-App-Icon und einen
+markengerechten Startbildschirm. In der App stehen zusätzlich die native
+iOS-Teilen-Funktion für Datensicherungen und lokale Check-in-Erinnerungen zur
+Verfügung.
+
+```bash
+npm run ios:sync
+npm run ios:open
+```
+
+Beim ersten Öffnen in Xcode muss unter `Signing & Capabilities` das eigene
+Apple-Developer-Team ausgewählt werden. Die Bundle-ID lautet
+`de.njora.finanzueberblick` und kann vor dem ersten App-Store-Eintrag noch
+geändert werden.
+
+Der erste interne TestFlight-Build lädt die veröffentlichte Njora-Web-App über
+HTTPS. Das bewahrt die bestehende HttpOnly-Cookie-Anmeldung und verhindert,
+dass Zugangstokens ungeschützt in einer lokalen WebView-Ablage landen. Vor einer
+öffentlichen App-Store-Einreichung sollte der mobile Client fest in das App-
+Paket aufgenommen und über eine eigene tokenbasierte Mobile-API angebunden
+werden. So ist der Build unabhängig von einer Remote-Webseite und erfüllt die
+Anforderung an eigenständige App-Funktionalität deutlich besser.
+
+Die vollständige Übergabe steht in `docs/ios-release-checklist.md`.
 
 ## Njora E-Mail-/Passwort-Login
 
@@ -97,6 +126,9 @@ bewusst geschlossen fehl; es gibt keinen stillen Produktions-Fallback.
 - `npm run build`: Produktions-Build prüfen
 - `npm test`: Build und Integrationsprüfungen ausführen
 - `npm run db:generate`: Migrationen nach Schemaänderungen erzeugen
+- `npm run ios:sync`: Web- und Plugin-Konfiguration ins Xcode-Projekt übernehmen
+- `npm run ios:open`: das Njora-Projekt in Xcode öffnen
+- `npm run ios:run`: Njora im Simulator oder auf einem verbundenen iPhone starten
 
 ## Learn More
 

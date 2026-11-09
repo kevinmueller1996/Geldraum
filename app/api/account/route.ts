@@ -160,8 +160,10 @@ export async function PUT(request: NextRequest) {
     const { db, id, now } = await upsertUser(identity);
     const existing = await db.prepare("SELECT revision FROM finance_plans WHERE user_id = ?").bind(id).first<{ revision: number }>();
     if (!existing) {
-      await db.prepare("INSERT INTO finance_plans (user_id, plan_json, schema_version, revision, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)")
+      const inserted = await db.prepare(`INSERT INTO finance_plans (user_id, plan_json, schema_version, revision, created_at, updated_at)
+        VALUES (?, ?, 1, 1, ?, ?) ON CONFLICT(user_id) DO NOTHING`)
         .bind(id, planJson, now, now).run();
+      if (!inserted.meta.changes) return json({ error: "Der Finanzplan wurde zwischenzeitlich geändert." }, 409);
       return json({ saved: true, revision: 1, updatedAt: now });
     }
 

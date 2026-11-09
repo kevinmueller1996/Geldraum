@@ -17,7 +17,7 @@ export function authEmailConfigured() {
 }
 
 export function authPublicOrigin() {
-  const value = mailEnv().AUTH_PUBLIC_ORIGIN?.trim() || "https://njora.vercel.app";
+  const value = mailEnv().AUTH_PUBLIC_ORIGIN?.trim() || "https://njora.de";
   const origin = new URL(value);
   if (origin.protocol !== "https:" && origin.hostname !== "localhost") throw new Error("AUTH_PUBLIC_ORIGIN must use HTTPS");
   return origin;
@@ -48,7 +48,7 @@ export async function sendAuthEmail(to: string, token: string, purpose: AuthMail
   url.hash = `token=${encodeURIComponent(token)}`;
   const action = purpose === "verify_email" ? "E-Mail-Adresse bestätigen" : "Passwort neu setzen";
   const intro = purpose === "verify_email"
-    ? "Bestätige deine E-Mail-Adresse, bevor dein Njora-Konto und bestehende Finanzdaten freigeschaltet werden."
+    ? "Bestätige deine E-Mail-Adresse und wähle dein Passwort, um dein Njora-Konto zu öffnen."
     : "Über diesen einmalig nutzbaren Link kannst du ein neues Passwort für dein Njora-Konto festlegen.";
   const expiry = purpose === "verify_email" ? "24 Stunden" : "30 Minuten";
   const safeUrl = escapeHtml(url.toString());

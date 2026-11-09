@@ -529,11 +529,40 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 html { min-height:100%; background:var(--cream); -webkit-text-size-adjust:100%; }
 body { min-height:100%; overscroll-behavior-y:none; }
 button,input,select,textarea { touch-action:manipulation; }
-.install-card { margin-top:11px; min-height:82px; padding:15px; display:grid; grid-template-columns:44px minmax(0,1fr); align-items:center; gap:13px; border:1px solid var(--line); border-radius:20px; background:rgba(255,253,249,.76); }
+.install-card { width:100%; margin-top:11px; min-height:82px; padding:15px; display:grid; grid-template-columns:44px minmax(0,1fr) auto; align-items:center; gap:13px; border:1px solid var(--line); border-radius:20px; color:var(--ink); background:rgba(255,253,249,.76); cursor:pointer; text-align:left; }
+.install-card:hover { border-color:rgba(77,35,30,.24); background:var(--paper); }
+.install-card:disabled { cursor:default; }
+.install-card.installed { grid-template-columns:44px minmax(0,1fr); }
 .install-icon { width:44px; height:44px; display:grid; place-items:center; border-radius:14px; color:#fff9f2; background:var(--brand); font-size:20px; font-weight:800; }
-.install-card>div { min-width:0; display:grid; gap:5px; }
+.install-card>span:nth-child(2) { min-width:0; display:grid; gap:5px; }
 .install-card strong { font-size:13px; }
 .install-card small { color:var(--muted); font-size:10px; line-height:1.45; }
+.install-card>b { color:var(--coral); font-size:25px; font-weight:500; }
+.install-backdrop { z-index:50; }
+.install-dialog { position:relative; width:min(520px,100%); padding:34px; border-radius:28px; background:var(--paper); box-shadow:0 30px 90px rgba(29,12,10,.32); }
+.install-dialog>img { width:58px; height:58px; display:block; object-fit:contain; mix-blend-mode:multiply; }
+.install-dialog .eyebrow { margin-top:26px; }
+.install-dialog h2 { max-width:12ch; margin:8px 0 24px; font-family:var(--font-serif); font-size:clamp(35px,8vw,48px); line-height:1; font-weight:500; letter-spacing:-.035em; }
+.install-dialog ol { margin:0 0 25px; padding:0; display:grid; gap:10px; list-style:none; }
+.install-dialog li { padding:12px; display:grid; grid-template-columns:38px 1fr; align-items:center; gap:12px; border-radius:14px; background:var(--surface-muted); }
+.install-dialog li>span { width:38px; height:38px; display:grid; place-items:center; border-radius:50%; color:white; background:var(--brand); font-size:12px; font-weight:850; }
+.install-dialog li>div { display:grid; gap:3px; }
+.install-dialog li strong { font-size:12px; }
+.install-dialog li small { color:var(--muted); font-size:10px; line-height:1.4; }
+.dialog-close { position:absolute; top:18px; right:18px; width:40px; height:40px; border:1px solid var(--line); border-radius:50%; color:var(--brand); background:transparent; cursor:pointer; font-size:23px; line-height:1; }
+.native-settings-card { margin-top:11px; padding:20px; display:grid; gap:14px; border-radius:20px; color:#fff9f2; background:var(--brand-dark); box-shadow:0 16px 34px rgba(77,35,30,.13); }
+.native-app-badge { width:max-content; padding:6px 9px; border-radius:999px; color:var(--brand-dark); background:var(--peach); font-size:9px; font-weight:850; letter-spacing:.08em; text-transform:uppercase; }
+.native-settings-card>div:nth-of-type(1) { display:grid; gap:5px; }
+.native-settings-card strong { font-family:var(--font-serif); font-size:23px; font-weight:500; }
+.native-settings-card small { max-width:52ch; color:rgba(255,249,242,.68); font-size:11px; line-height:1.5; }
+.native-settings-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.native-settings-actions button { min-height:42px; padding:10px 14px; border:1px solid rgba(255,255,255,.18); border-radius:12px; color:#fff9f2; background:rgba(255,255,255,.08); cursor:pointer; font-size:10px; font-weight:800; }
+.native-settings-actions button:first-child { color:var(--brand-dark); border-color:var(--peach); background:var(--peach); }
+.native-settings-actions button:disabled { cursor:wait; opacity:.55; }
+.native-settings-card>p { margin:0; color:var(--peach); font-size:10px; line-height:1.45; }
+.offline-banner { position:fixed; z-index:100; left:50%; bottom:calc(84px + env(safe-area-inset-bottom)); width:min(520px,calc(100% - 28px)); min-height:46px; padding:11px 15px; display:flex; align-items:center; justify-content:center; gap:8px; transform:translateX(-50%); border:1px solid rgba(255,255,255,.15); border-radius:15px; color:#fff9f2; background:rgba(77,35,30,.96); box-shadow:0 16px 40px rgba(52,32,27,.22); font-size:11px; font-weight:700; text-align:center; }
+.offline-banner span { color:var(--peach); }
+.native-app .install-card { display:none; }
 
 @media (max-width:759px) {
   .page-shell { padding-bottom:calc(94px + env(safe-area-inset-bottom)); }
@@ -569,6 +598,8 @@ button,input,select,textarea { touch-action:manipulation; }
   .bottom-nav button small { font-size:10px; }
   .sync-banner { top:calc(64px + env(safe-area-inset-top)); margin-inline:10px; }
   .modal-backdrop { padding-top:env(safe-area-inset-top); }
+  .install-backdrop { place-items:end center; padding:env(safe-area-inset-top) 0 0; }
+  .install-dialog { width:100%; max-height:calc(96dvh - env(safe-area-inset-top)); padding:28px 20px calc(22px + env(safe-area-inset-bottom)); overflow:auto; border-radius:28px 28px 0 0; }
   .editor-card,.checkin-card,.migration-card,.savings-card { max-height:calc(96dvh - env(safe-area-inset-top)); overscroll-behavior:contain; border-radius:26px 26px 0 0; }
   .editor-header { position:sticky; top:-27px; z-index:5; margin:0 -2px; padding:0 2px 14px; background:linear-gradient(var(--paper) 82%,rgba(255,253,249,0)); }
   .close-button { width:44px; height:44px; background:var(--paper); }
@@ -1146,3 +1177,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   .marketing-footer { width:calc(100% - 32px); padding:28px 0 38px; display:grid; gap:18px; text-align:center; }
   .marketing-footer .marketing-brand { margin:auto; }
 }
+
+.legal-page { width:min(700px, calc(100% - 40px)); margin:auto; padding:calc(30px + env(safe-area-inset-top)) 0 calc(40px + env(safe-area-inset-bottom)); }
+.legal-page article { padding:clamp(22px, 5vw, 44px); margin:26px 0 18px; border:1px solid rgba(74,43,36,.14); border-radius:var(--radius-card); background:var(--paper); }
+.legal-page h1 { font-size:clamp(32px, 7vw, 54px); margin:0 0 22px; }
+.legal-page h2 { font-size:18px; margin:24px 0 6px; }
+.legal-page p,.legal-page address { line-height:1.65; overflow-wrap:anywhere; }
+.legal-page address { font-style:normal; }
+.legal-page a,.legal-links a { color:var(--brand-dark); text-decoration:underline; text-underline-offset:.15em; }
+.legal-page .brand-lockup { text-decoration:none; }
+.legal-links { display:flex; gap:0 14px; flex-wrap:wrap; align-items:center; margin-top:12px; font-size:12px; }
+.legal-links a { min-height:36px; display:inline-flex; align-items:center; }
