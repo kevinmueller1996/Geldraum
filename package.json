@@ -13,9 +13,7 @@
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern work --ignore-pattern ios --ignore-pattern capacitor-web",
     "db:generate": "drizzle-kit generate",
-    "ios:sync": "cap sync ios",
-    "ios:open": "cap open ios",
-    "ios:run": "cap run ios"
+    "ios:open": "open ios/App/App.xcodeproj"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.1",

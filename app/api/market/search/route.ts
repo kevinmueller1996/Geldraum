@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isRequestAuthenticated } from "../../../password-auth";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,7 @@ async function providerRequest<T>(url: URL): Promise<T> {
 }
 
 export async function GET(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!await isAuthenticated(request)) return json({ authenticated: false }, 401);
   const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   if (query.length < 2 || query.length > 64) return json({ suggestions: [] });
