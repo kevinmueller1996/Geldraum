@@ -27,35 +27,32 @@ neutrale D1-Bindung `DB`.
 - `db/` und `drizzle/` enthalten das Schema und die Migrationen.
 - `public/` enthält PWA-Dateien und die Njora-Markenassets.
 - `ios/` enthält das mit Capacitor erzeugte Xcode-Projekt.
-- `capacitor.config.ts` verbindet den ersten internen iOS-Build mit der gehosteten Njora-App.
+- `ios/App/App.xcodeproj` öffnet die native iOS-App in Xcode.
 - `.openai/hosting.example.json` ist die neutrale lokale Vorlage.
 
 ## iOS und TestFlight
 
-Das iOS-Projekt verwendet Capacitor 8, das finale Njora-App-Icon und einen
-markengerechten Startbildschirm. In der App stehen zusätzlich die native
-iOS-Teilen-Funktion für Datensicherungen und lokale Check-in-Erinnerungen zur
-Verfügung.
+Die iPhone-App verwendet SwiftUI und Swift Charts. Die Oberfläche und die
+Bedienlogik liegen im App-Paket. Mit der Njora-Schnittstelle auf `njora.de`
+teilt sich die App bestehende Nutzerkonten und Finanzpläne mit der Web-App.
+Die App verwahrt ihre Sitzung im iOS-Schlüsselbund.
 
-```bash
-npm run ios:sync
-npm run ios:open
-```
+Öffnen mit `npm run ios:open` oder direkt über `ios/App/App.xcodeproj`.
+Schema: `App`. Ziel: iOS 16 oder neuer. Die Bundle-ID
+`de.njora.finanzueberblick` bleibt für den bestehenden App-Store-Eintrag gleich.
 
-Beim ersten Öffnen in Xcode muss unter `Signing & Capabilities` das eigene
-Apple-Developer-Team ausgewählt werden. Die Bundle-ID lautet
-`de.njora.finanzueberblick` und kann vor dem ersten App-Store-Eintrag noch
-geändert werden.
+E-Mail-Bestätigungen und Passwort-Resets funktionieren in der App über
+„Link aus E-Mail öffnen“ und durch Einfügen des vollständigen Links.
+Automatische Weiterleitung aus Mail ist eine optionale spätere Ergänzung.
 
-Der erste interne TestFlight-Build lädt die veröffentlichte Njora-Web-App über
-HTTPS. Das bewahrt die bestehende HttpOnly-Cookie-Anmeldung und verhindert,
-dass Zugangstokens ungeschützt in einer lokalen WebView-Ablage landen. Vor einer
-öffentlichen App-Store-Einreichung sollte der mobile Client fest in das App-
-Paket aufgenommen und über eine eigene tokenbasierte Mobile-API angebunden
-werden. So ist der Build unabhängig von einer Remote-Webseite und erfüllt die
-Anforderung an eigenständige App-Funktionalität deutlich besser.
+Zum Prüfen in Xcode: Anmeldung mit einem Testkonto, Monatsplan bearbeiten,
+auf der Website gegenprüfen und den Plan in der App neu laden. Wertpapiersuche,
+Kursabruf, Sicherungen in Dateien und lokale Erinnerungen separat testen.
+Ein Debug-Build kann mit `-njora-demo` ohne Login starten. Dabei werden
+keine echten Konten oder Finanzpläne verwendet.
 
-Die vollständige Übergabe steht in `docs/ios-release-checklist.md`.
+Vor TestFlight den iPhone-Build archivieren und in App Store Connect prüfen,
+dass der Build ohne Web-Oberfläche im bestehenden Njora-Eintrag erscheint.
 
 ## Njora E-Mail-/Passwort-Login
 

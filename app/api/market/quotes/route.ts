@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isRequestAuthenticated } from "../../../password-auth";
+import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,7 @@ async function providerQuote(symbol: string): Promise<RawQuote> {
 }
 
 export async function POST(request: NextRequest) {
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!isSameOrigin(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return json({ error: "JSON erwartet." }, 415);
   if (!await isAuthenticated(request)) return json({ authenticated: false }, 401);
