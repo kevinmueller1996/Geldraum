@@ -1,3 +1,4 @@
+import { normalizePlanCategories } from "../../recurring-costs";
 import { isPlan } from "../../plan-validation";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
@@ -97,7 +98,12 @@ async function upsertUser(identity: Identity, recordAccess = false) {
 }
 
 export async function GET(request: NextRequest) {
-  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
+  if (needsCloudflareBackendProxy()) {
+    const response = await proxyApiRequest(request);
+    if (response.status !== 200 || !response.headers.get("content-type")?.includes("application/json")) return response;
+    const payload = await response.json();
+    return NextResponse.json({ ...payload, plan: normalizePlanCategories(payload.plan) }, { headers: response.headers });
+  }
   const identity = await requestIdentity(request);
   if (!identity) return json({ authenticated: false }, 401);
 
@@ -107,7 +113,7 @@ export async function GET(request: NextRequest) {
     return json({
       authenticated: true,
       user: { displayName: identity.displayName, email: identity.emailMask, local: identity.local },
-      plan: result ? JSON.parse(result.plan_json) : null,
+      plan: result ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
       revision: result?.revision ?? null,
       updatedAt: result?.updated_at ?? null,
     });

@@ -12,7 +12,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, frequencies, monthlyExpense, isExpenseDue, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency } from "./recurring-costs";
+import { byDueDate, byTargetDate, standardExpenseCategories as categories, frequencies, monthlyExpense, isExpenseDue, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency } from "./recurring-costs";
 
 type Commitment = { id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -47,7 +47,6 @@ const STORAGE_KEY = "klarbudget-plan-v3";
 const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
 const OLD_STORAGE_KEY = "klarbudget-profile";
 const months = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-const categories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Sonstige"];
 const onboardingSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Kredite", "Ziele"] as const;
 const savingKindLabels: Record<SavingKind, string> = {
   security: "Aktie oder ETF",

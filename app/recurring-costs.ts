@@ -1,3 +1,45 @@
+export const standardExpenseCategories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Sonstige"];
+
+export function expenseCategoryResolver() {
+  const known = [...standardExpenseCategories, "Unterhaltung"];
+  const labels = new Map(known.map(name => [name.toLocaleLowerCase("de"), name]));
+  return (raw: string) => {
+    const label = raw.normalize("NFC").replace(/[\u00ad\u200b\u2060\ufeff]/gu, "").trim().replace(/\s+/gu, " ") || "Sonstige";
+    const key = label.toLocaleLowerCase("de");
+    if (key.replaceAll(" ", "") === "unterhaltung") return "Unterhaltung";
+    const display = labels.get(key) ?? label;
+    labels.set(key, display);
+    return display;
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Keep the original storage layout so older clients can read the same plan.
+export function normalizePlanCategories(plan: unknown) {
+  if (!isRecord(plan)) return plan;
+  const category = expenseCategoryResolver();
+  const result = { ...plan };
+  for (const section of ["expenses", "annualCosts"]) {
+    const entries = plan[section];
+    if (!Array.isArray(entries)) continue;
+    result[section] = entries.map(entry => isRecord(entry) && typeof entry.category === "string"
+      ? { ...entry, category: category(entry.category) }
+      : entry);
+  }
+  if (isRecord(plan.categoryColors)) {
+    const colors = new Map<string, unknown>();
+    for (const [label, color] of Object.entries(plan.categoryColors)) {
+      const canonical = category(label);
+      if (canonical === label || !colors.has(canonical)) colors.set(canonical, color);
+    }
+    result.categoryColors = Object.fromEntries(colors);
+  }
+  return result;
+}
+
 export const frequencies = { monthly: "Monatlich", quarterly: "Quartalsweise", annual: "Jährlich" } as const;
 export type Frequency = keyof typeof frequencies;
 
@@ -27,14 +69,8 @@ export function unifiedExpenses(expenses: Expense[], annualCosts: AnnualCost[]):
     used.add(id);
     return { ...item, id, category: item.category || "Sonstige", frequency: "annual" as const };
   });
-  const labels = new Map<string, string>();
-  return [...expenses, ...legacy].map(item => {
-    const name = item.category.trim().replace(/\s+/g, " ") || "Sonstige";
-    const key = name.toLocaleLowerCase("de");
-    const category = labels.get(key) ?? name;
-    labels.set(key, category);
-    return { ...item, category };
-  });
+  const category = expenseCategoryResolver();
+  return [...expenses, ...legacy].map(item => ({ ...item, category: category(item.category) }));
 }
 
 // Keep large existing plans compatible with the shared storage limits.

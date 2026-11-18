@@ -88,3 +88,23 @@ test("legacy annual costs remain editable with colliding IDs and at the storage 
   assert.equal(stored.expenses.length, 250);
   assert.deepEqual(unifiedExpenses(stored.expenses, stored.annualCosts), merged);
 });
+
+test("the account response and expense picker agree on one Unterhaltung label without losing either cost", async () => {
+  const { normalizePlanCategories, unifiedExpenses, monthlyExpense } = await import("../app/recurring-costs.ts");
+  const expenses = [
+    { id: "music", amount: 11, category: "Unterhal\u00adtung" },
+    { id: "cloud", amount: 10, category: "  UNTERHALTUNG\u200b " },
+    { id: "movie", amount: 12, category: "Unter\u00a0haltung", frequency: "annual", month: 2 },
+    { id: "event", amount: 30, category: "Unterhaltung live" },
+  ];
+  const raw = { expenses, annualCosts: [], categoryColors: { "Unterhaltung ": "blue", Unterhaltung: "red" }, revisionHint: 7 };
+  const clean = normalizePlanCategories(raw);
+  assert.deepEqual([...new Set(clean.expenses.map(item => item.category))], ["Unterhaltung", "Unterhaltung live"]);
+  assert.deepEqual(unifiedExpenses(expenses, []), clean.expenses);
+  assert.equal(clean.expenses.slice(0, 3).reduce((sum, item) => sum + monthlyExpense(item), 0), 22);
+  assert.deepEqual(clean.expenses.map(item => item.id), expenses.map(item => item.id));
+  assert.deepEqual(clean.categoryColors, { Unterhaltung: "red" });
+  assert.equal(clean.revisionHint, 7);
+  assert.deepEqual(normalizePlanCategories(clean), clean);
+  assert.equal(normalizePlanCategories(null), null);
+});
