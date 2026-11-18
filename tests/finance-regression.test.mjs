@@ -40,3 +40,17 @@ test("delayed quotes keep the trade time, and missing dates do not masquerade as
   delete meta.regularMarketTime;
   assert.deepEqual(await loadDelayedQuotes(["SAP.DE"]), []);
 });
+
+test("recurring costs keep the instalment separate from the monthly budget and due months", async () => {
+  const { monthlyExpense, isExpenseDue, cardPayment } = await import("../app/recurring-costs.ts");
+  const quarterly = { amount: 300, frequency: "quarterly", month: 10 };
+  const yearly = { amount: 240, frequency: "annual", month: 11 };
+  const months = Array.from({ length: 12 }, (_, month) => month);
+  assert.deepEqual(months.filter((month) => isExpenseDue(quarterly, month)), [1, 4, 7, 10]);
+  assert.deepEqual(months.filter((month) => isExpenseDue(yearly, month)), [11]);
+  assert.equal(monthlyExpense({ amount: 50 }), 50);
+  assert.equal(monthlyExpense(quarterly) + monthlyExpense(yearly), 120);
+  assert.equal(cardPayment({ type: "credit", monthlyPayment: 80, balance: 1000 }), 80);
+  assert.equal(cardPayment({ type: "bank", monthlyPayment: 80 }), 0);
+  assert.equal(cardPayment({ type: "credit" }), 0);
+});

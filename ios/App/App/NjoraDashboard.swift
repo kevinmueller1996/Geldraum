@@ -128,15 +128,15 @@ struct MonthlyPlan: View {
                     NavigationLink(section.title) { PlanSectionView(section: section, store: store) }
                 }
             }
-            let groups = Dictionary(grouping: plan[.expenses]) { $0.fields.text("category", default: "Andere Ausgaben") }
+            let groups = metrics.expensesByCategory
             if !groups.isEmpty {
-                Section("Fixkosten nach Kategorie") {
+                Section("Fixkosten nach Kategorie · pro Monat") {
                     Chart(groups.keys.sorted(), id: \.self) { category in
-                        BarMark(x: .value("Kategorie", category), y: .value("Monatlich", groups[category]?.sum("amount") ?? 0))
+                        BarMark(x: .value("Kategorie", category), y: .value("Monatlich", groups[category] ?? 0))
                             .foregroundStyle(NjoraTheme.accent)
                     }.frame(height: 180)
                     ForEach(groups.keys.sorted(), id: \.self) { category in
-                        LabeledAmount(label: category, amount: groups[category]?.sum("amount") ?? 0)
+                        LabeledAmount(label: category, amount: groups[category] ?? 0)
                     }
                 }
             }
@@ -195,6 +195,7 @@ struct PlanSectionView: View {
     let section: PlanSection
     @ObservedObject var store: NjoraStore
     @State private var selection: PlanItem?
+    @State private var selectedCard: PlanItem?
     @State private var pendingRemoval: PlanItem?
     @State private var checkIn = false
 
@@ -202,6 +203,24 @@ struct PlanSectionView: View {
         if let plan = store.plan {
             let items = plan[section]
             List {
+                if section == .expenses {
+                    let metrics = PlanMetrics(plan: plan)
+                    Section("Monatsdurchschnitt") {
+                        LabeledAmount(label: "Fixkosten gesamt", amount: metrics.expenses, emphasis: true)
+                    }
+                    if !metrics.creditCards.isEmpty {
+                        Section("Kreditkartenraten · monatlich") {
+                            ForEach(metrics.creditCards) { card in
+                                Button { selectedCard = card } label: {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        LabeledAmount(label: card.name, amount: card.cardPayment)
+                                        Text(card.cardPayment > 0 ? card.cardCategory : card.cardCategory + " · Rate festlegen").font(.footnote).foregroundStyle(.secondary)
+                                    }
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
                 if section == .income {
                     let metrics = PlanMetrics(plan: plan)
                     Section("Einkommen gesamt") {
@@ -224,7 +243,7 @@ struct PlanSectionView: View {
                 Section {
                     if items.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text(section.emptyMessage).font(.headline)
+                            Text(section == .expenses && !PlanMetrics(plan: plan).creditCards.isEmpty ? "Keine weiteren Fixkosten" : section.emptyMessage).font(.headline)
                             if section == .history {
                                 if plan[.accounts].isEmpty {
                                     NavigationLink("Konten verwalten") { PlanSectionView(section: .accounts, store: store) }
@@ -277,6 +296,9 @@ struct PlanSectionView: View {
                 }
             }
             .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
+            .sheet(item: $selectedCard) { card in
+                PlanEditor(section: .accounts, item: card, plan: plan, store: store)
+            }
             .sheet(item: $selection) { item in
                 PlanEditor(section: section, item: item, plan: plan, store: store)
             }
@@ -326,7 +348,10 @@ private struct PlanItemRow: View {
         case .income: fields.flag("annual")
             ? (monthNames[safe: fields.integer("month") ?? -1].map { "Jährlich im \($0)" } ?? "Jährlich · Monat offen")
             : "Monatlich"
-        case .expenses: fields.text("category")
+        case .expenses: [fields.text("category"), item.frequency.label,
+            item.frequency == .monthly ? nil : monthNames[safe: fields.integer("month") ?? -1].map { "Fällig im " + $0 + (item.frequency == .quarterly ? " und alle drei Monate" : "") }
+        ].compactMap { $0 }.joined(separator: " · ")
+        case .accounts: fields.text("type") == "credit" ? "\(item.cardCategory) · Monatsrate \(euros(item.cardPayment))" : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
         case .loans: "\(euros(fields.amount("payment"))) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
         case .goals:

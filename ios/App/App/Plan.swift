@@ -128,11 +128,31 @@ struct Plan: Codable, Equatable {
     }
 }
 
+enum ExpenseFrequency: String, CaseIterable {
+    case monthly, quarterly, annual
+
+    var months: Int {
+        switch self { case .monthly: 1; case .quarterly: 3; case .annual: 12 }
+    }
+    var label: String {
+        switch self { case .monthly: "Monatlich"; case .quarterly: "Quartalsweise"; case .annual: "Jährlich" }
+    }
+    func isDue(in month: Int, anchor: Int) -> Bool {
+        (month - anchor).isMultiple(of: months)
+    }
+}
+
+let standardExpenseCategories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Kreditkarten"]
+
 struct PlanItem: Identifiable, Equatable {
     var fields: Record
     init(_ fields: Record) { self.fields = fields }
     var id: String { fields.text("id") }
     var name: String { fields.text("name") }
+    var frequency: ExpenseFrequency { ExpenseFrequency(rawValue: fields.text("frequency")) ?? .monthly }
+    var monthlyExpense: Double { fields.amount("amount") / Double(frequency.months) }
+    var cardPayment: Double { fields.text("type") == "credit" ? max(0, fields.amount("monthlyPayment")) : 0 }
+    var cardCategory: String { fields.text("category", default: "Kreditkarten") }
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
     var savingValue: Double {
         if fields.text("kind") == "security" {
@@ -242,7 +262,15 @@ struct PlanMetrics {
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
-    var expenses: Double { plan[.expenses].sum("amount") }
+    var creditCards: [PlanItem] { plan[.accounts].filter { $0.fields.text("type") == "credit" } }
+    var cardPayments: Double { creditCards.reduce(0) { $0 + $1.cardPayment } }
+    var expenses: Double { plan[.expenses].reduce(cardPayments) { $0 + $1.monthlyExpense } }
+    var expensesByCategory: [String: Double] {
+        var totals: [String: Double] = [:]
+        for item in plan[.expenses] { totals[item.fields.text("category"), default: 0] += item.monthlyExpense }
+        for card in creditCards where card.cardPayment > 0 { totals[card.cardCategory, default: 0] += card.cardPayment }
+        return totals
+    }
     var reserve: Double { plan[.annual].sum("amount") / 12 }
     var payments: Double { plan[.loans].sum("payment") + plan[.loans].sum("extraPayment") }
     var available: Double { income - expenses - reserve - payments }
@@ -253,7 +281,8 @@ struct PlanMetrics {
         let days = calendar.range(of: .day, in: .month, for: today)?.count ?? 30
         let share = Double(max(0, days - day)) / Double(days)
         let remainingExpenses = plan[.expenses].reduce(0.0) { sum, item in
-            let booking = item.fields.integer("bookingDay") ?? 0
+            guard item.frequency.isDue(in: month, anchor: item.fields.integer("month") ?? 0) else { return sum }
+            let booking = min(days, item.fields.integer("bookingDay") ?? 0)
             let fraction = booking == 0 ? share : (booking > day ? 1.0 : 0.0)
             return sum + item.fields.amount("amount") * fraction
         }

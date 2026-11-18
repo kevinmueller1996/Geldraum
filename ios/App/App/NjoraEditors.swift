@@ -122,6 +122,10 @@ struct PlanEditor: View {
                 Text("Konto").tag("bank"); Text("Kreditkarte").tag("credit"); Text("Bargeld").tag("cash")
             }
             amount("Aktueller Stand", key: "balance", signed: true)
+            if item.fields.text("type") == "credit" {
+                amount("Monatliche Kartenrate", key: "monthlyPayment")
+                categoryPicker(default: "Kreditkarten")
+            }
         case .income:
             amount("Betrag", key: "amount", signed: true)
             Toggle("Jährliche Einnahme", isOn: Binding(get: { item.fields.flag("annual") }, set: { value in
@@ -131,8 +135,17 @@ struct PlanEditor: View {
             }))
             if item.fields.flag("annual") { monthPicker() }
         case .expenses:
-            amount("Monatsbetrag", key: "amount", signed: true)
-            PlanField(title: "Kategorie", text: string("category", fallback: "Wohnen"), prompt: "z. B. Wohnen")
+            Picker("Zahlungsrhythmus", selection: Binding(get: { item.frequency }, set: { frequency in
+                item.fields["frequency"] = .string(frequency.rawValue)
+                if frequency != .monthly && item.fields.integer("month") == nil {
+                    item.fields["month"] = .number(Double(PlanMetrics(plan: plan).month))
+                }
+            })) {
+                ForEach(ExpenseFrequency.allCases, id: \.self) { Text($0.label).tag($0) }
+            }.pickerStyle(.menu)
+            amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true)
+            if item.frequency != .monthly { monthPicker() }
+            categoryPicker(default: "Wohnen")
             Picker("Buchungstag", selection: Binding(get: { item.fields.integer("bookingDay") ?? 0 }, set: { item.fields["bookingDay"] = .number(Double($0)) })) {
                 Text("Kein fester Tag").tag(0)
                 ForEach(1...31, id: \.self) { Text("\($0).").tag($0) }
@@ -194,6 +207,14 @@ struct PlanEditor: View {
            keyboard: signed ? .numbersAndPunctuation : integer ? .numberPad : .decimalPad)
     }
 
+    private func categoryPicker(default fallback: String) -> some View {
+        let saved = plan[.expenses].map { $0.fields.text("category") } + plan[.accounts].map { $0.fields.text("category") }
+        let additional = Set(saved + [item.fields.text("category")]).subtracting(standardExpenseCategories).filter { !$0.isEmpty }.sorted()
+        return Picker("Kategorie", selection: string("category", fallback: fallback)) {
+            ForEach(standardExpenseCategories + additional, id: \.self) { Text($0).tag($0) }
+        }.pickerStyle(.menu)
+    }
+
     private func monthPicker() -> some View {
         Picker("Fälligkeitsmonat", selection: Binding(
             get: { item.fields.integer("month") ?? -1 },
@@ -222,7 +243,7 @@ struct PlanEditor: View {
         for (key, value) in amounts {
             guard let number = germanAmount(value),
                   key != "termMonths" || (number >= 0 && number.rounded() == number),
-                  key != "interestRate" || number >= 0 else {
+                  !["interestRate", "monthlyPayment"].contains(key) || number >= 0 else {
                 validation = "Bitte prüfe deine Beträge und Vertragsdaten."; return
             }
             changed.fields[key] = .number(number)

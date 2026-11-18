@@ -12,14 +12,16 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { id: string; name: string; amount: number; annual: boolean; month?: number };
-type Expense = { id: string; name: string; amount: number; category: string; bookingDay?: number };
+import { frequencies, monthlyExpense, isExpenseDue, cardPayment, type Frequency } from "./recurring-costs";
+
+type Expense = { id: string; name: string; amount: number; category: string; frequency?: Frequency; month?: number; bookingDay?: number };
 type AnnualCost = { id: string; name: string; amount: number; month: number };
 type Commitment = { id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
 type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" | "cash" | "other";
 type SavingAsset = { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
 type SecuritySuggestion = { symbol: string; name: string; exchange: string; exchangeName: string; type: "Aktie" | "ETF" | "Fonds" };
-type Account = { id: string; name: string; type: "bank" | "credit" | "cash"; balance: number };
+type Account = { id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
 type View = "home" | "month" | "loans" | "goals" | "more";
 type EditorScope = "accounts" | "income" | "expenses" | "annual" | "specials" | "loans" | "goals" | "savings";
@@ -47,7 +49,7 @@ const STORAGE_KEY = "klarbudget-plan-v3";
 const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
 const OLD_STORAGE_KEY = "klarbudget-profile";
 const months = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-const categories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges"];
+const categories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Kreditkarten"];
 const onboardingSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Jahresplanung", "Ziele"] as const;
 const savingKindLabels: Record<SavingKind, string> = {
   security: "Aktie oder ETF",
@@ -331,13 +333,16 @@ export default function Home() {
   }, [authStatus, checkingIn, editing, onboardingStep, plan, savingsOpen, showLegacyPrompt]);
 
   const active = plan ?? demoPlan;
+  const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category),
+    ...draft.accounts.map((item) => item.category).filter((value): value is string => Boolean(value))])];
   const metrics = useMemo(() => {
     const now = new Date();
     const income = active.incomes.filter((item) => !item.annual).reduce((sum, item) => sum + item.amount, 0);
     const annualIncome = active.incomes.filter((item) => item.annual).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualIncome = active.incomes.filter((item) => item.annual && item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualCosts = active.annualCosts.filter((item) => item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
-    const expenses = active.expenses.reduce((sum, item) => sum + item.amount, 0);
+    const cardPayments = active.accounts.reduce((sum, account) => sum + cardPayment(account), 0);
+    const expenses = active.expenses.reduce((sum, item) => sum + monthlyExpense(item), cardPayments);
     const annualTotal = active.annualCosts.reduce((sum, item) => sum + item.amount, 0);
     const annualReserve = annualTotal / 12;
     const payments = active.commitments.reduce((sum, item) => sum + item.payment + (item.extraPayment ?? 0), 0);
@@ -357,19 +362,20 @@ export default function Home() {
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const remainingShare = Math.max(daysInMonth - now.getDate(), 0) / daysInMonth;
     const remainingExpenses = active.expenses.reduce((sum, item) => {
-      if (item.bookingDay) return sum + (item.bookingDay > now.getDate() ? item.amount : 0);
+      if (!isExpenseDue(item, now.getMonth())) return sum;
+      if (item.bookingDay) return sum + (Math.min(item.bookingDay, daysInMonth) > now.getDate() ? item.amount : 0);
       return sum + item.amount * remainingShare;
     }, 0);
     const forecast = netBalance + (income + currentAnnualIncome) * remainingShare - remainingExpenses - (payments + currentAnnualCosts) * remainingShare;
     const totalDebt = active.commitments.reduce((sum, item) => sum + item.balance, 0);
     const plannedOutflow = expenses + annualReserve + payments;
-    return { income, annualIncome, currentAnnualIncome, currentAnnualCosts, expenses, annualTotal, annualReserve, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt, plannedOutflow };
+    return { income, annualIncome, currentAnnualIncome, currentAnnualCosts, cardPayments, expenses, annualTotal, annualReserve, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt, plannedOutflow };
   }, [active]);
 
-  const groupedExpenses = useMemo(() => categories.map((category) => ({
+  const groupedExpenses = useMemo(() => [...new Set(active.expenses.map((item) => item.category))].map((category) => ({
     category,
-    value: active.expenses.filter((item) => item.category === category).reduce((sum, item) => sum + item.amount, 0),
-    color: active.categoryColors[category] ?? defaultCategoryColors[category],
+    value: active.expenses.filter((item) => item.category === category).reduce((sum, item) => sum + monthlyExpense(item), 0),
+    color: active.categoryColors[category] ?? defaultCategoryColors[category] ?? "#938178",
   })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value), [active.expenses, active.categoryColors]);
 
   const savingsMetrics = useMemo(() => {
@@ -701,15 +707,21 @@ export default function Home() {
     ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: item.amount, type: "income" as const })),
     ...active.annualCosts.filter((item) => item.month === currentMonth).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
   ].sort((a, b) => b.amount - a.amount);
+  const monthlyCategories = new Map(groupedExpenses.map((item) => [item.category, item.value]));
+  for (const card of active.accounts) {
+    if (cardPayment(card) <= 0) continue;
+    const category = card.category ?? "Kreditkarten";
+    monthlyCategories.set(category, (monthlyCategories.get(category) ?? 0) + cardPayment(card));
+  }
   const monthOutflows = [
-    ...groupedExpenses.map((item) => ({ label: item.category, value: item.value, color: item.color })),
+    ...Array.from(monthlyCategories, ([label, value]) => ({ label, value, color: active.categoryColors[label] ?? defaultCategoryColors[label] ?? "#9279a5" })),
     ...(metrics.payments ? [{ label: "Kreditraten", value: metrics.payments, color: "#f2b1a5" }] : []),
     ...(metrics.annualReserve ? [{ label: "Jahresrücklage", value: metrics.annualReserve, color: "#e5ba58" }] : []),
   ].sort((a, b) => b.value - a.value);
   const editorCopy: Record<EditorScope, { eyebrow: string; title: string; intro: string }> = {
     accounts: { eyebrow: "Konten & Karten", title: "Konten bearbeiten", intro: "Passe ausschließlich deine Konten und Karten an. Aktuelle Stände pflegst du weiterhin am schnellsten über den Check-in." },
     income: { eyebrow: "Einkommen", title: "Einkommen bearbeiten", intro: "Pflege hier ausschließlich deine monatlichen und jährlichen Einkommensquellen. Jahreszuflüsse erscheinen nur in ihrem hinterlegten Monat." },
-    expenses: { eyebrow: "Monatsplan", title: "Fixkosten bearbeiten", intro: "Hier änderst du nur deine wiederkehrenden monatlichen Ausgaben und deren Kategorien." },
+    expenses: { eyebrow: "Monatsplan", title: "Fixkosten bearbeiten", intro: "Wähle Betrag, Kategorie und Zahlungsrhythmus deiner Fixkosten." },
     annual: { eyebrow: "Jahresplanung", title: "Jahreskosten bearbeiten", intro: "Pflege unregelmäßige Kosten mit Betrag und Fälligkeitsmonat – Njora berechnet daraus die Monatsrücklage." },
     specials: { eyebrow: "Sonderposten", title: "Unregelmäßig, aber planbar", intro: "Pflege jährliche Einnahmen und Ausgaben mit ihrem jeweiligen Monat. So weißt du frühzeitig, was besonders wird." },
     loans: { eyebrow: "Verbindlichkeiten", title: "Kredite bearbeiten", intro: "Passe Restschuld und Rate an oder ergänze optionale Vertragsdetails für eine genauere Prognose." },
@@ -788,7 +800,13 @@ export default function Home() {
               return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{euro(item.value)}<small>{percent}%</small></b></div>;
             })}</div>
           </article>
-          <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)}</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
+          <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)} / Monat</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}<small>{frequencies[item.frequency ?? "monthly"]}{item.frequency && item.frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}</small>{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
+          {active.accounts.some((account) => account.type === "credit") && <article className="detail-card">
+            <div className="section-title compact"><h2>Kreditkartenraten</h2><button className="edit-chip" type="button" onClick={() => openFocusedEditor("accounts")}>Karten bearbeiten</button></div>
+            {active.accounts.filter((account) => account.type === "credit").map((card) => <div className="detail-row" key={card.id}>
+              <span>{card.name}<small>{card.category ?? "Kreditkarten"}</small></span><b>{cardPayment(card) > 0 ? euro(cardPayment(card)) + " / Monat" : "Keine Rate festgelegt"}</b>
+            </div>)}
+          </article>}
         </section>}
 
         {activeView === "loans" && <section className="view" aria-labelledby="loans-title">
@@ -863,7 +881,10 @@ export default function Home() {
 
             {onboardingStep === 1 && <>
               <p className="eyebrow">Konten & Karten</p><h2 id="onboarding-title">Wo liegt dein Geld heute?</h2><p className="onboarding-intro">Nur Name und aktueller Stand – eine Bankverbindung oder IBAN ist nicht nötig.</p>
-              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <div className="payment-fields">
+                <label>Monatliche Kartenrate (€)<DecimalInput value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
+                <label>Kategorie<select value={item.category ?? "Kreditkarten"} onChange={(event) => updateList("accounts", index, { category: event.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
+              </div>}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
             </>}
 
@@ -874,9 +895,9 @@ export default function Home() {
             </>}
 
             {onboardingStep === 3 && <>
-              <p className="eyebrow">Monatliche Ausgaben</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
+              <p className="eyebrow">Fixkosten</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
               <div className="optional-note"><b>Optional</b><span>Du kannst direkt weitergehen.</span></div>
-              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
             </>}
 
@@ -908,7 +929,10 @@ export default function Home() {
           {!editorScope && <div className="editor-section basis-grid"><label>Profilname<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Budget" required /></label><label>Check-in-Rhythmus<select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="daily">täglich</option><option value="weekly">wöchentlich</option></select></label></div>}
 
           {(!editorScope || editorScope === "accounts") && <EditorSection id="editor-accounts" title="Konten & Karten" subtitle="Nur der aktuelle Stand – keine Bankverbindung nötig">
-            {draft.accounts.map((item, index) => <div className="editor-row four" key={item.id}><input aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /><DecimalInput aria-label="Aktueller Stand" value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /><select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select><RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
+            {draft.accounts.map((item, index) => <div className="editor-row four" key={item.id}><input aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /><DecimalInput aria-label="Aktueller Stand" value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /><select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select>{item.type === "credit" && <div className="payment-fields">
+                <label>Monatliche Kartenrate (€)<DecimalInput value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
+                <label>Kategorie<select value={item.category ?? "Kreditkarten"} onChange={(event) => updateList("accounts", index, { category: event.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
+              </div>}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
             <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
           </EditorSection>}
 
@@ -922,9 +946,9 @@ export default function Home() {
             <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: true, month: currentMonth }] })}>Jährliche Einnahme</AddButton>
           </EditorSection>}
 
-          {(!editorScope || editorScope === "expenses") && <EditorSection id="editor-expenses" title="Monatliche Ausgaben" subtitle="Nach Lebensbereichen statt als ein großer Block">
+          {(!editorScope || editorScope === "expenses") && <EditorSection id="editor-expenses" title="Fixkosten" subtitle="Nach Lebensbereichen statt als ein großer Block">
             {editorTarget && !editorTarget.startsWith("item:") && <div className="category-color-editor"><div><span className="category-color-preview" style={{ backgroundColor: draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget] }} /><span><strong>Kategoriefarbe</strong><small>Für Diagramm und Monatsübersicht</small></span></div><label><input aria-label={`Farbe für ${editorTarget}`} type="color" value={draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget]} onChange={(e) => setDraft({ ...draft, categoryColors: { ...draft.categoryColors, [editorTarget]: e.target.value } })} /></label></div>}
-            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /><DecimalInput aria-label="Monatsbetrag" value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="monatlich" /><select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select><input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
+            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /><DecimalInput aria-label="Betrag je Zahlung" value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="Betrag je Zahlung" /><select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select><input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
             {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget && categories.includes(editorTarget) ? editorTarget : "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>}
           </EditorSection>}
 
@@ -1121,6 +1145,18 @@ function SummaryCard({ label, value, tone = "" }: { label: string; value: number
 
 function EditorSection({ id, title, subtitle, children }: { id?: string; title: string; subtitle: string; children: React.ReactNode }) {
   return <section id={id} className="editor-section"><div className="editor-section-head"><div><h3>{title}</h3><p>{subtitle}</p></div></div>{children}</section>;
+}
+
+function ExpenseScheduleFields({ item, update }: { item: Expense; update: (patch: Partial<Expense>) => void }) {
+  return <div className="payment-fields">
+    <label>Zahlungsrhythmus<select value={item.frequency ?? "monthly"} onChange={(event) => {
+      const frequency = event.target.value as Frequency;
+      update({ frequency, month: frequency === "monthly" ? undefined : item.month ?? new Date().getMonth() });
+    }}>{Object.entries(frequencies).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+    {item.frequency && item.frequency !== "monthly" && <label>Fälligkeitsmonat<select value={item.month ?? 0} onChange={(event) => update({ month: Number(event.target.value) })}>
+      {months.map((label, index) => <option key={label} value={index}>{label}</option>)}
+    </select></label>}
+  </div>;
 }
 
 function FieldTitle({ required = false, children }: { required?: boolean; children: React.ReactNode }) {
