@@ -116,8 +116,7 @@ struct MonthlyPlan: View {
         List {
             Section("Im Monat verfügbar") {
                 LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
-                LabeledAmount(label: "Fixkosten", amount: -metrics.expenses)
-                LabeledAmount(label: "Kreditraten", amount: -metrics.payments)
+                LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
             }
             Section("Plan bearbeiten") {
                 ForEach([PlanSection.income, .expenses]) { section in
@@ -257,7 +256,7 @@ private struct FinancialTitle: View {
 private extension PlanMetrics {
     func titleTotal(for section: PlanSection) -> (amount: Double?, caption: String) {
         switch section {
-        case .expenses: (expenses, "Ø pro Monat")
+        case .expenses: (fixedCosts, "Ø pro Monat")
         case .income: (incomeThisMonth, "im " + monthNames[month])
         case .annual: (plan[.annual].sum("amount"), "pro Jahr")
         case .accounts: (net, "Nettostand")
@@ -273,6 +272,7 @@ struct PlanSectionView: View {
     let section: PlanSection
     @ObservedObject var store: NjoraStore
     @State private var selection: PlanItem?
+    @State private var selectedLoan: PlanItem?
     @State private var pendingRemoval: PlanItem?
     @State private var checkIn = false
 
@@ -281,6 +281,7 @@ struct PlanSectionView: View {
             let items = plan.entriesByDueDate(in: section)
             let metrics = PlanMetrics(plan: plan)
             let total = metrics.titleTotal(for: section)
+            let loans = section == .expenses ? metrics.loansWithPayments : []
             List {
                 if section == .income {
                     Section {
@@ -296,8 +297,20 @@ struct PlanSectionView: View {
                         Text("Quelle und Handelszeit stehen am Kurs. Kurse von Yahoo Finance sind zeitverzögert.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                if !loans.isEmpty {
+                    Section("Kreditraten · monatlich") {
+                        ForEach(loans) { loan in
+                            Button { selectedLoan = loan } label: {
+                                LabeledAmount(label: loan.name, amount: loan.monthlyLoanPayment)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Kredit bearbeiten")
+                        }
+                    }
+                }
                 Section {
-                    if items.isEmpty {
+                    if items.isEmpty && loans.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(section.emptyMessage).font(.headline)
                             if section == .history {
@@ -353,6 +366,9 @@ struct PlanSectionView: View {
                 }
             }
             .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
+            .sheet(item: $selectedLoan) { loan in
+                PlanEditor(section: .loans, item: loan, plan: plan, store: store)
+            }
             .sheet(item: $selection) { item in
                 PlanEditor(section: section, item: item, plan: plan, store: store)
             }
@@ -408,7 +424,7 @@ private struct PlanItemRow: View {
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? "Kreditkarte" : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
-        case .loans: "\(euros(fields.amount("payment"))) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
+        case .loans: "\(euros(item.monthlyLoanPayment)) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"

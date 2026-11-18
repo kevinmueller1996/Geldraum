@@ -1,6 +1,10 @@
+export function monthlyLoanPayment(item: { payment: number; extraPayment?: number }) {
+  return Math.max(0, item.payment + (item.extraPayment ?? 0));
+}
+
 export function loanProjection(item: { balance: number; payment: number; interestRate?: number; extraPayment?: number; termMonths?: number }) {
   const monthlyRate = Math.max(item.interestRate ?? 0, 0) / 1200;
-  const payment = Math.max(item.payment + (item.extraPayment ?? 0), 0);
+  const payment = monthlyLoanPayment(item);
   const balanceAfter = (monthsAhead: number) => {
     if (!monthlyRate) return Math.max(item.balance - payment * monthsAhead, 0);
     const growth = Math.expm1(monthsAhead * Math.log1p(monthlyRate));

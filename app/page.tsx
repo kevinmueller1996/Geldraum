@@ -3,7 +3,7 @@
 import { Capacitor } from "@capacitor/core";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import { loanProjection } from "./loan-projection";
+import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { backupPlan } from "./plan-validation";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
@@ -345,17 +345,16 @@ export default function Home() {
     const income = active.incomes.filter((item) => !item.annual).reduce((sum, item) => sum + item.amount, 0);
     const annualIncome = active.incomes.filter((item) => item.annual).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualIncome = active.incomes.filter((item) => item.annual && item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
-    const expenses = active.expenses.reduce((sum, item) => sum + monthlyExpense(item), 0);
-    const payments = active.commitments.reduce((sum, item) => sum + item.payment + (item.extraPayment ?? 0), 0);
+    const payments = active.commitments.reduce((sum, item) => sum + monthlyLoanPayment(item), 0);
+    const fixedCosts = active.expenses.reduce((sum, item) => sum + monthlyExpense(item), payments);
     const goalNeed = active.goals.reduce((sum, item) => sum + goalMonthlyNeed(item), 0);
-    const available = income - expenses - payments;
+    const available = income - fixedCosts;
     const unallocated = available;
-    const baseCosts = expenses + payments;
-    const burden = income > 0 ? Math.round((baseCosts / income) * 100) : 0;
+    const burden = income > 0 ? Math.round((fixedCosts / income) * 100) : 0;
     const bankBalance = active.accounts.filter((item) => item.type !== "credit").reduce((sum, item) => sum + item.balance, 0);
     const creditBalance = active.accounts.filter((item) => item.type === "credit").reduce((sum, item) => sum + item.balance, 0);
     const netBalance = bankBalance - creditBalance;
-    const bufferMonths = baseCosts > 0 ? netBalance / baseCosts : 0;
+    const bufferMonths = fixedCosts > 0 ? netBalance / fixedCosts : 0;
     const currentMonthKey = localDay().slice(0, 7);
     const monthSnapshots = active.snapshots.filter((item) => item.date.startsWith(currentMonthKey)).sort((a, b) => a.date.localeCompare(b.date));
     const snapshotNet = (snapshot: Snapshot) => snapshot.netBalance ?? active.accounts.reduce((sum, account) => sum + (account.type === "credit" ? -(snapshot.balances[account.id] ?? 0) : (snapshot.balances[account.id] ?? 0)), 0);
@@ -369,15 +368,34 @@ export default function Home() {
     }, 0);
     const forecast = netBalance + (income + currentAnnualIncome) * remainingShare - remainingExpenses - payments * remainingShare;
     const totalDebt = active.commitments.reduce((sum, item) => sum + item.balance, 0);
-    const plannedOutflow = expenses + payments;
-    return { income, annualIncome, currentAnnualIncome, expenses, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt, plannedOutflow };
+    return { income, annualIncome, currentAnnualIncome, fixedCosts, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt };
   }, [active]);
 
-  const groupedExpenses = useMemo(() => [...new Set(active.expenses.map((item) => item.category))].map((category) => ({
-    category,
-    value: active.expenses.filter((item) => item.category === category).reduce((sum, item) => sum + monthlyExpense(item), 0),
-    color: active.categoryColors[category] ?? defaultCategoryColors[category] ?? "#938178",
-  })).sort((a, b) => b.value - a.value || a.category.localeCompare(b.category, "de")), [active.expenses, active.categoryColors]);
+  const groupedExpenses = useMemo(() => {
+    const groups = new Map<string, { category: string; value: number; color: string; expenses: Expense[]; loans: Commitment[] }>();
+    function groupFor(label: string) {
+      const category = label.toLocaleLowerCase("de") === "kreditraten" ? "Kreditraten" : label;
+      const existing = groups.get(category);
+      if (existing) return existing;
+      const color = active.categoryColors[category] ?? defaultCategoryColors[category] ?? (category === "Kreditraten" ? "#f2b1a5" : "#938178");
+      const group = { category, value: 0, color, expenses: [] as Expense[], loans: [] as Commitment[] };
+      groups.set(category, group);
+      return group;
+    }
+    for (const item of active.expenses) {
+      const group = groupFor(item.category);
+      group.expenses.push(item);
+      group.value += monthlyExpense(item);
+    }
+    for (const loan of active.commitments) {
+      const payment = monthlyLoanPayment(loan);
+      if (!payment) continue;
+      const group = groupFor("Kreditraten");
+      group.loans.push(loan);
+      group.value += payment;
+    }
+    return [...groups.values()].sort((a, b) => b.value - a.value || a.category.localeCompare(b.category, "de"));
+  }, [active.expenses, active.commitments, active.categoryColors]);
 
   const savingsMetrics = useMemo(() => {
     const items = active.savings.map((item) => ({ ...item, value: savingValue(item) })).sort((a, b) => b.value - a.value);
@@ -706,10 +724,7 @@ export default function Home() {
     ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: item.amount, type: "income" as const })),
     ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
   ];
-  const monthOutflows = [
-    ...groupedExpenses.map(({ category: label, value, color }) => ({ label, value, color })),
-    ...(metrics.payments ? [{ label: "Kreditraten", value: metrics.payments, color: "#f2b1a5" }] : []),
-  ].sort((a, b) => b.value - a.value);
+  const monthOutflows = groupedExpenses.map(({ category: label, value, color }) => ({ label, value, color }));
   const editorCopy: Record<EditorScope, { eyebrow: string; title: string; intro: string }> = {
     accounts: { eyebrow: "Konten & Karten", title: "Konten bearbeiten", intro: "Passe ausschließlich deine Konten und Karten an. Aktuelle Stände pflegst du weiterhin am schnellsten über den Check-in." },
     income: { eyebrow: "Einkommen", title: "Einkommen bearbeiten", intro: "Pflege hier ausschließlich deine monatlichen und jährlichen Einkommensquellen. Jahreszuflüsse erscheinen nur in ihrem hinterlegten Monat." },
@@ -782,17 +797,36 @@ export default function Home() {
 
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
-          <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} /><SummaryCard label="Geplante Abflüsse" value={metrics.plannedOutflow} tone="coral" /></div>
+          <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} /><SummaryCard label="Geplante Abflüsse" value={metrics.fixedCosts} tone="coral" /></div>
           <article className="detail-card flow-detail">
-            <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Dein Monatsbudget</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.plannedOutflow / metrics.income) * 100) : 0}% verplant</span></div></div>
-            <div className="stacked-bar" aria-label="Verteilung der geplanten Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${metrics.plannedOutflow ? (item.value / metrics.plannedOutflow) * 100 : 0}%`, backgroundColor: item.color }} key={item.label} />)}</div>
+            <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Dein Monatsbudget</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.fixedCosts / metrics.income) * 100) : 0}% verplant</span></div></div>
+            <div className="stacked-bar" aria-label="Verteilung der geplanten Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${metrics.fixedCosts ? (item.value / metrics.fixedCosts) * 100 : 0}%`, backgroundColor: item.color }} key={item.label} />)}</div>
             <div className="flow-list">{monthOutflows.map((item) => {
-              const percent = metrics.plannedOutflow ? Math.round((item.value / metrics.plannedOutflow) * 100) : 0;
+              const percent = metrics.fixedCosts ? Math.round((item.value / metrics.fixedCosts) * 100) : 0;
               return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{euro(item.value)}<small>{percent}%</small></b></div>;
             })}</div>
           </article>
-          <div className="section-title financial-heading"><h2>Fixkosten</h2><TitleAmount value={metrics.expenses} label="Ø pro Monat" /></div>
-          <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)} / Monat</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}<small>{frequencies[item.frequency ?? "monthly"]}{item.frequency && item.frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}</small>{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
+          <div className="section-title financial-heading"><h2>Fixkosten</h2><TitleAmount value={metrics.fixedCosts} label="Ø pro Monat" /></div>
+          <div className="category-details">
+            {groupedExpenses.map(group => (
+              <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}>
+                <div className="category-head">
+                  <div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div>
+                  <div><strong>{euro(group.value)} / Monat</strong>
+                    {group.expenses.length > 0 && <button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.expenses[0].category)}>Ändern</button>}
+                  </div>
+                </div>
+                {group.expenses.map(item => <div className="detail-row" key={`expense-${item.id}`}>
+                  <span>{item.name}<small>{frequencies[item.frequency ?? "monthly"]}{item.frequency && item.frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}</small>{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b>
+                </div>)}
+                {group.loans.map(loan => <div className="detail-row" key={`loan-${loan.id}`}>
+                  <span>{loan.name}<small>Monatliche Kreditrate</small></span>
+                  <b>{euro(monthlyLoanPayment(loan))}</b>
+                  <button className="edit-chip" type="button" aria-label={`${loan.name} bearbeiten`} onClick={() => openFocusedEditor("loans", undefined, loan.id)}>Ändern</button>
+                </div>)}
+              </article>
+            ))}
+            <button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
         </section>}
 
         {activeView === "loans" && <section className="view" aria-labelledby="loans-title">

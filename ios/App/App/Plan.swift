@@ -212,6 +212,7 @@ struct PlanItem: Identifiable, Equatable {
     var id: String { fields.text("id") }
     var name: String { fields.text("name") }
     var frequency: ExpenseFrequency { ExpenseFrequency(rawValue: fields.text("frequency")) ?? .monthly }
+    var monthlyLoanPayment: Double { max(0, fields.amount("payment") + fields.amount("extraPayment")) }
     var monthlyExpense: Double { fields.amount("amount") / Double(frequency.months) }
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
     var savingValue: Double {
@@ -223,7 +224,7 @@ struct PlanItem: Identifiable, Equatable {
 
     func balanceAfter(months: Int) -> Double {
         let rate = max(0, fields.amount("interestRate")) / 1_200
-        let payment = max(0, fields.amount("payment") + fields.amount("extraPayment"))
+        let payment = monthlyLoanPayment
         let balance = fields.amount("balance")
         guard rate > 0 else { return max(0, balance - payment * Double(months)) }
         let growth = expm1(Double(months) * log1p(rate))
@@ -322,7 +323,7 @@ struct PlanMetrics {
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
-    var expenses: Double { plan[.expenses].reduce(0) { $0 + $1.monthlyExpense } }
+    var fixedCosts: Double { plan[.expenses].reduce(payments) { $0 + $1.monthlyExpense } }
     var rankedCategories: [(name: String, amount: Double)] {
         var totals: [String: Double] = [:]
         var labels: [String: String] = [:]
@@ -333,13 +334,18 @@ struct PlanMetrics {
             if labels[key] == nil { labels[key] = name }
             totals[key, default: 0] += item.monthlyExpense
         }
+        if payments > 0 {
+            labels["kreditraten"] = "Kreditraten"
+            totals["kreditraten", default: 0] += payments
+        }
         return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value) }.sorted {
             if $0.amount != $1.amount { return $0.amount > $1.amount }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
-    var payments: Double { plan[.loans].sum("payment") + plan[.loans].sum("extraPayment") }
-    var available: Double { income - expenses - payments }
+    var loansWithPayments: [PlanItem] { plan[.loans].filter { $0.monthlyLoanPayment > 0 } }
+    var payments: Double { plan[.loans].reduce(0) { $0 + $1.monthlyLoanPayment } }
+    var available: Double { income - fixedCosts }
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
     var specialCosts: [PlanItem] {
         plan.entriesByDueDate(in: .expenses).filter {
