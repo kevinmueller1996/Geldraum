@@ -1199,3 +1199,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   gap: .75rem;
 }
 .payment-fields label { display: grid; gap: .3rem; min-width: 0; }
+
+.financial-heading { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; }
+.financial-heading :is(h1,h2), .mobile-greeting > div:first-child { min-width:0; overflow-wrap:anywhere; }
+.title-amount, .heading-actions { display:grid; justify-items:end; text-align:right; }
+.title-amount { gap:.15rem; flex:0 1 auto; min-width:0; }
+.title-amount strong { font-size:clamp(1.1rem, 3.2vw, 1.8rem); line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.title-amount small { font-size:.78rem; line-height:1.4; }
+.heading-actions { gap:.35rem; }

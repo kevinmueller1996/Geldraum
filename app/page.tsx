@@ -777,20 +777,20 @@ export default function Home() {
 
       <div className="app-content">
         {activeView === "home" && <section className="view home-view" aria-labelledby="home-title">
-          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Hallo {active.name}.</h1></div><span className={`mini-status ${updateDue ? "due" : ""}`}>{daysSinceUpdate === 0 ? "Heute aktualisiert" : updateDue ? "Check-in fällig" : "Aktuell"}</span></div>
+          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Hallo {active.name}.</h1></div><TitleAmount value={metrics.netBalance} label="Kontostand" /></div>
           <button className="balance-hero" type="button" onClick={openCheckIn} aria-label="Konten und Karten aktualisieren">
-            <div><p>Aktueller Kontostand</p><strong>{euro(metrics.netBalance, true)}</strong><span>{euro(metrics.bankBalance, true)} verfügbar · {euro(metrics.creditBalance, true)} Karten</span><small className="balance-updated">Zuletzt aktualisiert · {lastUpdateLabel}</small></div>
+            <div><span className={`mini-status ${updateDue ? "due" : ""}`}>{daysSinceUpdate === 0 ? "Heute aktualisiert" : updateDue ? "Check-in fällig" : "Aktuell"}</span><span>{euro(metrics.bankBalance, true)} verfügbar · {euro(metrics.creditBalance, true)} Karten</span><small className="balance-updated">Zuletzt aktualisiert · {lastUpdateLabel}</small></div>
             <div className="balance-orbit"><span>{active.accounts.length}</span><small>öffnen →</small></div>
           </button>
           <div className="forecast-grid">
             <article className="forecast-card"><span>Prognose zum Monatsende</span><strong className={metrics.forecast < 0 ? "negative" : ""}>{euro(metrics.forecast)}</strong><p>Auf Basis deiner geplanten Einnahmen und Ausgaben.</p></article>
             <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} aria-label={`Sonderposten im ${currentMonthName} anzeigen und bearbeiten`}><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen →</p></button>
           </div>
-          <article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article>
+          <article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article>
         </section>}
 
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
-          <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
+          <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
           <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} /><SummaryCard label="Geplante Abflüsse" value={metrics.plannedOutflow} tone="coral" /></div>
           <article className="detail-card flow-detail">
             <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Dein Monatsbudget</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.plannedOutflow / metrics.income) * 100) : 0}% verplant</span></div></div>
@@ -800,9 +800,10 @@ export default function Home() {
               return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{euro(item.value)}<small>{percent}%</small></b></div>;
             })}</div>
           </article>
+          <div className="section-title financial-heading"><h2>Fixkosten</h2><TitleAmount value={metrics.expenses} label="Ø pro Monat" /></div>
           <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)} / Monat</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}<small>{frequencies[item.frequency ?? "monthly"]}{item.frequency && item.frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}</small>{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
           {active.accounts.some((account) => account.type === "credit") && <article className="detail-card">
-            <div className="section-title compact"><h2>Kreditkartenraten</h2><button className="edit-chip" type="button" onClick={() => openFocusedEditor("accounts")}>Karten bearbeiten</button></div>
+            <div className="section-title compact"><h2>Kreditkartenraten</h2><div className="heading-actions"><TitleAmount value={metrics.cardPayments} label="pro Monat" /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("accounts")}>Karten bearbeiten</button></div></div>
             {active.accounts.filter((account) => account.type === "credit").map((card) => <div className="detail-row" key={card.id}>
               <span>{card.name}<small>{card.category ?? "Kreditkarten"}</small></span><b>{cardPayment(card) > 0 ? euro(cardPayment(card)) + " / Monat" : "Keine Rate festgelegt"}</b>
             </div>)}
@@ -810,8 +811,8 @@ export default function Home() {
         </section>}
 
         {activeView === "loans" && <section className="view" aria-labelledby="loans-title">
-          <ViewHeader id="loans-title" eyebrow="Verbindlichkeiten" title="Alle Kredite im Blick" copy="Restschuld, Monatsrate und rechnerische Laufzeit gebündelt an einem Ort." />
-          <div className="summary-grid"><SummaryCard label="Restschuld gesamt" value={metrics.totalDebt} /><SummaryCard label="Raten pro Monat" value={metrics.payments} tone="coral" /></div>
+          <ViewHeader id="loans-title" eyebrow="Verbindlichkeiten" title="Alle Kredite im Blick" total={{ value: metrics.totalDebt, label: "Restschuld" }} copy="Restschuld, Monatsrate und rechnerische Laufzeit gebündelt an einem Ort." />
+          <div className="summary-grid"><SummaryCard label="Raten pro Monat" value={metrics.payments} tone="coral" /></div>
           <div className="loan-grid">{active.commitments.map((item) => {
             const projection = loanProjection(item);
             const share = metrics.totalDebt ? Math.round((item.balance / metrics.totalDebt) * 100) : 0;
@@ -822,7 +823,7 @@ export default function Home() {
         </section>}
 
         {activeView === "goals" && <section className="view" aria-labelledby="goals-title">
-          <ViewHeader id="goals-title" eyebrow="Ziele & Projekte" title="Wofür du deinen Überschuss nutzt" copy="Ziele sind keine Fixkosten. Erst mit einem Zieldatum berechnet Njora, welcher Betrag aus deinem Überschuss monatlich nötig wäre." />
+          <ViewHeader id="goals-title" eyebrow="Ziele & Projekte" title="Wofür du deinen Überschuss nutzt" total={{ value: active.goals.reduce((sum, goal) => sum + goal.saved, 0), label: "Bereits gespart" }} copy="Ziele sind keine Fixkosten. Erst mit einem Zieldatum berechnet Njora, welcher Betrag aus deinem Überschuss monatlich nötig wäre." />
           <div className="summary-grid"><SummaryCard label="Überschuss vor Zielen" value={metrics.available} tone={metrics.available < 0 ? "negative" : "coral"} /><SummaryCard label="Bedarf für Terminziele" value={metrics.goalNeed} tone={metrics.goalNeed > metrics.available ? "negative" : "sage"} /></div>
           <div className="goal-grid">{active.goals.map((goal) => {
             const progress = goal.target > 0 ? Math.min((goal.saved / goal.target) * 100, 100) : 0;
@@ -831,8 +832,7 @@ export default function Home() {
             return <article className="goal-card" key={goal.id}><div className="goal-card-header"><div><span>{goal.name}</span><b>{Math.round(progress)}%</b></div><button className="edit-chip" type="button" onClick={() => openFocusedEditor("goals", undefined, goal.id)}>Ändern</button></div><strong>{euro(goal.saved)} <small>von {euro(goal.target)}</small></strong><div className="goal-progress"><i style={{ width: `${progress}%` }} /></div><div className="goal-meta"><span>{remaining ? `${euro(remaining)} offen` : "Ziel erreicht"}</span><span>{goal.targetDate ? `${euro(monthlyNeed)} nötig / Monat` : "flexibel aus Überschuss"}</span></div></article>;
           })}<button className="add-card" type="button" onClick={() => openFocusedEditor("goals", "goal")}><span>+</span><strong>Neues Ziel hinzufügen</strong><small>Zielbetrag und optionales Zieldatum festlegen</small></button></div>
           <button className="savings-overview-card" type="button" onClick={openSavings} aria-label="Depot und Ersparnisse öffnen">
-            <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><span>Übersicht öffnen →</span></div>
-            <strong>{euro(savingsMetrics.total)}</strong>
+            <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
             {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
             <small>{savingsMetrics.latestQuote ? `Letzter Kursabgleich ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Wertpapiere werden nach Symbol und Stückzahl bewertet"}</small>
           </button>
@@ -1008,8 +1008,8 @@ export default function Home() {
       </section></div>}
 
       {savingsOpen && <div className="modal-backdrop"><section className="savings-card" role="dialog" aria-modal="true" aria-labelledby="savings-title">
-        <div className="editor-header"><div><p className="eyebrow">Vermögen & Depot</p><h2 id="savings-title">Deine Ersparnisse</h2></div><button type="button" className="close-button" onClick={() => setSavingsOpen(false)} aria-label="Schließen">×</button></div>
-        <div className="savings-total"><span>Gesamtwert</span><strong>{euro(savingsMetrics.total)}</strong><small>Getrennt vom Kontostand und Monatsforecast</small></div>
+        <div className="editor-header"><div><p className="eyebrow">Vermögen & Depot</p><h2 id="savings-title">Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /><button type="button" className="close-button" onClick={() => setSavingsOpen(false)} aria-label="Schließen">×</button></div>
+        <p>Getrennt vom Kontostand und der Monatsprognose.</p>
         <div className="savings-toolbar"><button className="secondary-button" type="button" onClick={refreshQuotes} disabled={quoteStatus === "loading"}>{quoteStatus === "loading" ? "Kurse werden geladen …" : "Wertpapierkurse aktualisieren"}</button><div><button type="button" onClick={() => openFocusedEditor("savings", "security")}>+ Wertpapier</button><button type="button" onClick={() => openFocusedEditor("savings", "saving")}>+ Sparform</button></div></div>
         {saveNotice}
           {quoteMessage && <p className={`quote-status ${quoteStatus}`} role="status">{quoteMessage}</p>}
@@ -1135,8 +1135,16 @@ function MobileNavButton({ icon, label, active, onClick }: { icon: string; label
   return <button aria-label={label} className={active ? "active" : ""} type="button" onClick={onClick}><span aria-hidden="true">{icon}</span><small>{label}</small></button>;
 }
 
-function ViewHeader({ id, eyebrow, title, copy }: { id: string; eyebrow: string; title: string; copy: string }) {
-  return <header className="view-header"><p className="eyebrow">{eyebrow}</p><h1 id={id}>{title}</h1><p>{copy}</p></header>;
+type HeadingAmount = { value: number; label: string };
+
+function TitleAmount({ value, label }: HeadingAmount) {
+  return <div className="title-amount"><strong>{exactEuros.format(value)}</strong><small>{label}</small></div>;
+}
+
+function ViewHeader({ id, eyebrow, title, copy, total }: { id: string; eyebrow: string; title: string; copy: string; total?: HeadingAmount }) {
+  return <header className="view-header"><p className="eyebrow">{eyebrow}</p>
+    <div className="financial-heading"><h1 id={id}>{title}</h1>{total && <TitleAmount {...total} />}</div>
+    <p>{copy}</p></header>;
 }
 
 function SummaryCard({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {

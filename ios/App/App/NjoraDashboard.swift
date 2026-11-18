@@ -9,12 +9,12 @@ struct Dashboard: View {
             TabView {
                 NavigationStack {
                     Overview(plan: plan, store: store)
-                        .navigationTitle("Heute")
+                        .financialTitle("Heute", amount: PlanMetrics(plan: plan).net, caption: "Kontostand")
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                 }.tabItem { Label("Heute", systemImage: "sun.max") }
                 NavigationStack {
                     MonthlyPlan(plan: plan, store: store)
-                        .navigationTitle("Monatsplan")
+                        .financialTitle("Monatsplan", amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                 }.tabItem { Label("Monatsplan", systemImage: "calendar") }
                 NavigationStack {
@@ -65,8 +65,6 @@ struct Overview: View {
                     .font(.system(.largeTitle, design: .serif, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("AKTUELLER KONTOSTAND").font(.caption.weight(.semibold)).tracking(1.4)
-                    Text(euros(metrics.net)).font(.system(.largeTitle, design: .serif, weight: .semibold)).monospacedDigit()
                     Button {
                         checkIn = true
                     } label: {
@@ -121,7 +119,6 @@ struct MonthlyPlan: View {
                 LabeledAmount(label: "Fixkosten", amount: -metrics.expenses)
                 LabeledAmount(label: "Rücklage für Jahreskosten", amount: -metrics.reserve)
                 LabeledAmount(label: "Kreditraten", amount: -metrics.payments)
-                LabeledAmount(label: "Spielraum", amount: metrics.available, emphasis: true)
             }
             Section("Plan bearbeiten") {
                 ForEach([PlanSection.income, .expenses, .annual]) { section in
@@ -185,9 +182,81 @@ struct LabeledAmount: View {
 }
 
 extension View {
+    fileprivate func financialTitle(_ title: String, amount: Double?, caption: String) -> some View {
+        self.navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                FinancialTitle(title: title, amount: amount, caption: caption)
+                    .padding(.horizontal, 18).padding(.vertical, 8)
+                    .background(NjoraTheme.paper)
+            }
+    }
+
     func njoraCard() -> some View {
         self.padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(NjoraTheme.card, in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct FinancialTitle: View {
+    let title: String
+    let amount: Double?
+    let caption: String
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    heading
+                    total.frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    heading.fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    total.layoutPriority(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var heading: some View {
+        Text(title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("njora.financialTitle")
+    }
+    private var total: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(amount.map(euros) ?? "–").font(.title2.weight(.semibold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.75)
+            Text(caption).font(.caption).foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.trailing)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(caption).accessibilityValue(amount.map(euros) ?? "Kein Eintrag")
+        .accessibilityIdentifier("njora.financialTotal")
+    }
+}
+
+private extension PlanMetrics {
+    func titleTotal(for section: PlanSection) -> (amount: Double?, caption: String) {
+        switch section {
+        case .expenses: (expenses, "Ø pro Monat")
+        case .income: (incomeThisMonth, "im " + monthNames[month])
+        case .annual: (plan[.annual].sum("amount"), "pro Jahr")
+        case .accounts: (net, "Nettostand")
+        case .loans: (plan[.loans].sum("balance"), "Restschuld")
+        case .goals: (plan[.goals].sum("saved"), "bereits gespart")
+        case .savings: (plan[.savings].reduce(0) { $0 + $1.savingValue }, "Gesamtwert")
+        case .history: (plan[.history].max { $0.fields.text("date") < $1.fields.text("date") }.map { net(for: $0) }, "letzter Check-in")
+        }
     }
 }
 
@@ -202,12 +271,10 @@ struct PlanSectionView: View {
     var body: some View {
         if let plan = store.plan {
             let items = plan[section]
+            let metrics = PlanMetrics(plan: plan)
+            let total = metrics.titleTotal(for: section)
             List {
                 if section == .expenses {
-                    let metrics = PlanMetrics(plan: plan)
-                    Section("Monatsdurchschnitt") {
-                        LabeledAmount(label: "Fixkosten gesamt", amount: metrics.expenses, emphasis: true)
-                    }
                     if !metrics.creditCards.isEmpty {
                         Section("Kreditkartenraten · monatlich") {
                             ForEach(metrics.creditCards) { card in
@@ -222,22 +289,17 @@ struct PlanSectionView: View {
                     }
                 }
                 if section == .income {
-                    let metrics = PlanMetrics(plan: plan)
-                    Section("Einkommen gesamt") {
-                        LabeledAmount(label: "Im \(monthNames[metrics.month])", amount: metrics.incomeThisMonth, emphasis: true)
+                    Section {
                         LabeledAmount(label: "Pro Jahr", amount: metrics.incomePerYear)
                     }
                 }
                 if section == .history, !items.isEmpty {
                     Section("Kontostände im Verlauf") { BalanceChart(plan: plan) }
                 }
-                if section == .savings, !items.isEmpty {
-                    Section("Gesamt") {
-                        LabeledAmount(label: "Ersparnisse & Depot", amount: items.reduce(0) { $0 + $1.savingValue }, emphasis: true)
-                        if items.contains(where: { $0.fields.text("kind") == "security" }) {
-                            Button("Wertpapierkurse aktualisieren") { Task { await store.refreshQuotes() } }.disabled(store.busy)
-                            Text("Quelle und Handelszeit stehen am Kurs. Kurse von Yahoo Finance sind zeitverzögert.").font(.footnote).foregroundStyle(.secondary)
-                        }
+                if section == .savings, items.contains(where: { $0.fields.text("kind") == "security" }) {
+                    Section {
+                        Button("Wertpapierkurse aktualisieren") { Task { await store.refreshQuotes() } }.disabled(store.busy)
+                        Text("Quelle und Handelszeit stehen am Kurs. Kurse von Yahoo Finance sind zeitverzögert.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
                 Section {
@@ -281,7 +343,7 @@ struct PlanSectionView: View {
             }
             .scrollContentBackground(.hidden).background(NjoraTheme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
-            .navigationTitle(section.title)
+            .financialTitle(section.title, amount: total.amount, caption: total.caption)
             .task {
                 if section == .savings { await store.refreshQuotes(ifNeeded: true) }
             }
