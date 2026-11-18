@@ -1,3 +1,4 @@
+import { parseAmount } from "./amount";
 import { useState, type ComponentPropsWithoutRef } from "react";
 
 type DecimalInputProps = Omit<ComponentPropsWithoutRef<"input">, "type" | "inputMode" | "value" | "onChange"> & {
@@ -16,16 +17,14 @@ export default function DecimalInput({ value, onValueChange, onBlur, ...props }:
       value={draft ?? (value ? String(value).replace(".", ",") : "")}
       onChange={(event) => {
         const entered = event.target.value.trim();
-        if (!/^-?\d*(?:[.,]\d*)?$/.test(entered)) return;
-
-        const parsed = /^-?[.,]?$/.test(entered) ? 0 : Number(entered.replace(",", "."));
-        if (!Number.isFinite(parsed)) return;
-
+        const parsed = parseAmount(entered);
         setDraft(entered);
+        event.currentTarget.setCustomValidity(parsed === null ? "Bitte gib einen gültigen Betrag ein." : "");
+        if (parsed === null) return;
         onValueChange(parsed);
       }}
       onBlur={(event) => {
-        setDraft(null);
+        if (event.currentTarget.validity.valid) setDraft(null);
         onBlur?.(event);
       }}
     />

@@ -27,35 +27,32 @@ neutrale D1-Bindung `DB`.
 - `db/` und `drizzle/` enthalten das Schema und die Migrationen.
 - `public/` enthält PWA-Dateien und die Njora-Markenassets.
 - `ios/` enthält das mit Capacitor erzeugte Xcode-Projekt.
-- `capacitor.config.ts` verbindet den ersten internen iOS-Build mit der gehosteten Njora-App.
+- `ios/App/App.xcodeproj` öffnet die native iOS-App in Xcode.
 - `.openai/hosting.example.json` ist die neutrale lokale Vorlage.
 
 ## iOS und TestFlight
 
-Das iOS-Projekt verwendet Capacitor 8, das finale Njora-App-Icon und einen
-markengerechten Startbildschirm. In der App stehen zusätzlich die native
-iOS-Teilen-Funktion für Datensicherungen und lokale Check-in-Erinnerungen zur
-Verfügung.
+Die iPhone-App verwendet SwiftUI und Swift Charts. Die Oberfläche und die
+Bedienlogik liegen im App-Paket. Mit der Njora-Schnittstelle auf `njora.de`
+teilt sich die App bestehende Nutzerkonten und Finanzpläne mit der Web-App.
+Die App verwahrt ihre Sitzung im iOS-Schlüsselbund.
 
-```bash
-npm run ios:sync
-npm run ios:open
-```
+Öffnen mit `npm run ios:open` oder direkt über `ios/App/App.xcodeproj`.
+Schema: `App`. Ziel: iOS 16 oder neuer. Die Bundle-ID
+`de.njora.finanzueberblick` bleibt für den bestehenden App-Store-Eintrag gleich.
 
-Beim ersten Öffnen in Xcode muss unter `Signing & Capabilities` das eigene
-Apple-Developer-Team ausgewählt werden. Die Bundle-ID lautet
-`de.njora.finanzueberblick` und kann vor dem ersten App-Store-Eintrag noch
-geändert werden.
+E-Mail-Bestätigungen und Passwort-Resets funktionieren in der App über
+„Link aus E-Mail öffnen“ und durch Einfügen des vollständigen Links.
+Automatische Weiterleitung aus Mail ist eine optionale spätere Ergänzung.
 
-Der erste interne TestFlight-Build lädt die veröffentlichte Njora-Web-App über
-HTTPS. Das bewahrt die bestehende HttpOnly-Cookie-Anmeldung und verhindert,
-dass Zugangstokens ungeschützt in einer lokalen WebView-Ablage landen. Vor einer
-öffentlichen App-Store-Einreichung sollte der mobile Client fest in das App-
-Paket aufgenommen und über eine eigene tokenbasierte Mobile-API angebunden
-werden. So ist der Build unabhängig von einer Remote-Webseite und erfüllt die
-Anforderung an eigenständige App-Funktionalität deutlich besser.
+Zum Prüfen in Xcode: Anmeldung mit einem Testkonto, Monatsplan bearbeiten,
+auf der Website gegenprüfen und den Plan in der App neu laden. Wertpapiersuche,
+Kursabruf, Sicherungen in Dateien und lokale Erinnerungen separat testen.
+Ein Debug-Build kann mit `-njora-demo` ohne Login starten. Dabei werden
+keine echten Konten oder Finanzpläne verwendet.
 
-Die vollständige Übergabe steht in `docs/ios-release-checklist.md`.
+Vor TestFlight den iPhone-Build archivieren und in App Store Connect prüfen,
+dass der Build ohne Web-Oberfläche im bestehenden Njora-Eintrag erscheint.
 
 ## Njora E-Mail-/Passwort-Login
 
@@ -119,6 +116,33 @@ Wenn Vercel weiterhin über das Cloudflare-Backend arbeitet, muss zusätzlich
 `GELDRAUM_BACKEND_ORIGIN` explizit auf dessen HTTPS-Origin zeigen. Ohne diesen
 Wert oder ohne eine vollständige direkte D1-Konfiguration schlagen API-Aufrufe
 bewusst geschlossen fehl; es gibt keinen stillen Produktions-Fallback.
+
+## gettex-Kurse aktivieren
+
+Ohne konfigurierten gettex-Zugang verwendet Njora für die Suche und für herkömmliche Börsensymbole den bisherigen Yahoo-Finance-Abruf. Solche Kurse erscheinen mit Anbieter und Handelszeit als zeitverzögert. Fehlgeschlagene Abrufe lassen den letzten gespeicherten Kurs bestehen.
+
+Mit freigeschaltetem Zugang ruft Njora den letzten gettex-Handel über dxFeed REST ab. Web und iOS nutzen
+dasselbe Backend. Für den Betrieb muss der bereitgestellte Zugang die Nutzung
+von gettex-Echtzeitdaten für externe Anzeige, Depotbewertung und die Speicherung
+des jeweils letzten Kurses im Finanzplan abdecken.
+
+- `NJORA_DXFEED_GETTEX_IPF_URL` ist die HTTPS-URL des gettex-spezifischen IPF-
+  Snapshots mit `SYMBOL`, `ISIN`, `CURRENCY`, `OPOL` bzw. `EXCHANGES` und
+  abschließendem `##COMPLETE`. `DESCRIPTION`, `LOCAL_SYMBOL` und `CFI` verbessern
+  Suche und Klassifizierung.
+- `NJORA_DXFEED_GETTEX_EVENTS_URL` ist die HTTPS-URL des zugehörigen Echtzeit-
+  Endpunkts `events.json`. Beide URLs müssen unter `*.dxfeed.com` liegen.
+- `NJORA_DXFEED_AUTHORIZATION` ist der vom Anbieter unterstützte HTTP-Auth-Wert
+  einschließlich `Basic` oder `Bearer`. Nur als Secret im ausführenden Backend
+  hinterlegen. Bei Weiterleitung aus Vercel ist das das Cloudflare-Backend.
+
+Vor der Aktivierung einen Aktien- und ETF-Abruf während des Handels testen.
+Dabei die gelieferten Handelssymbole, den gettex-Handelsplatz, die Kurswährung
+und den Zeitstempel mit dem freigeschalteten Feed abgleichen. Bestehende
+Positionen mit abweichenden Börsensymbolen über die Suche mit ihrer ISIN erneut
+auswählen, falls sie auf gettex umgestellt werden sollen.
+
+`node --test tests/gettex.test.mjs` prüft den Abruf mit Beispieldaten.
 
 ## Befehle
 
