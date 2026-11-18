@@ -56,34 +56,37 @@ struct Overview: View {
     let plan: Plan
     @ObservedObject var store: NjoraStore
     @State private var checkIn = false
+    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                BrandMark()
-                Text("Hallo \(plan.name).")
-                    .font(.system(.largeTitle, design: .serif, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
-                VStack(alignment: .leading, spacing: 12) {
-                    Button {
-                        checkIn = true
-                    } label: {
-                        Label("Kontostände aktualisieren", systemImage: "arrow.clockwise").fontWeight(.semibold)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(plan[.accounts].isEmpty)
-                    if plan[.accounts].isEmpty {
-                        NavigationLink("Erstes Konto anlegen") { PlanSectionView(section: .accounts, store: store) }
-                    }
-                }.njoraCard()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Monatlicher Spielraum").font(.headline)
+                    Text(euros(metrics.available))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .monospacedDigit()
+                    Text("Regelmäßiges Einkommen abzüglich Fixkosten")
+                        .font(.footnote)
+                }
+                .foregroundStyle(NjoraTheme.paper)
+                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                .background(NjoraTheme.accent, in: RoundedRectangle(cornerRadius: 18))
+                .accessibilityElement(children: .combine)
 
-                VStack(alignment: .leading, spacing: 12) {
-                    LabeledAmount(label: "Prognose zum Monatsende", amount: metrics.forecast, emphasis: true)
-                    Text("Schätzung aus deinen geplanten Ein- und Ausgaben.").font(.footnote).foregroundStyle(.secondary)
-                    Divider()
-                    LabeledAmount(label: "Einkommen im \(monthNames[metrics.month])", amount: metrics.incomeThisMonth)
-                    LabeledAmount(label: "Monatlicher Spielraum", amount: metrics.available)
-                }.njoraCard()
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
+                    metric("Einkommen im " + monthNames[metrics.month], amount: metrics.incomeThisMonth)
+                    metric("Fixkosten · Ø pro Monat", amount: metrics.fixedCosts)
+                    metric("Prognose zum Monatsende", amount: metrics.forecast)
+                    metric("Offene Kreditschuld", amount: plan[.loans].sum("balance"))
+                }
+                if plan[.accounts].isEmpty {
+                    NavigationLink("Erstes Konto anlegen") { PlanSectionView(section: .accounts, store: store) }
+                } else {
+                    Button { checkIn = true } label: {
+                        Label("Kontostände aktualisieren", systemImage: "arrow.clockwise")
+                    }.buttonStyle(.bordered)
+                }
 
                 if !metrics.annualIncome.isEmpty || !metrics.specialCosts.isEmpty {
                     VStack(alignment: .leading, spacing: 11) {
@@ -106,6 +109,18 @@ struct Overview: View {
         .refreshable { await store.refresh(in: .overview) }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
     }
+    private func metric(_ title: String, amount: Double) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+                .frame(minHeight: 40, alignment: .topLeading)
+            Text(euros(amount)).font(.title3.weight(.semibold)).monospacedDigit()
+                .foregroundStyle(amount < 0 ? Color.red : Color.primary)
+                .lineLimit(1).minimumScaleFactor(0.65)
+        }
+        .njoraCard()
+        .accessibilityElement(children: .combine)
+    }
+
 }
 
 struct MonthlyPlan: View {
@@ -301,8 +316,10 @@ struct PlanSectionView: View {
                     Section("Kreditraten · monatlich") {
                         ForEach(loans) { loan in
                             Button { selectedLoan = loan } label: {
-                                LabeledAmount(label: loan.name, amount: loan.monthlyLoanPayment)
-                                    .contentShape(Rectangle())
+                                VStack(alignment: .leading, spacing: 4) {
+                                    LabeledAmount(label: loan.name, amount: loan.monthlyLoanPayment)
+                                    Text(loan.loanCategory).font(.footnote).foregroundStyle(.secondary)
+                                }.contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityHint("Kredit bearbeiten")
@@ -424,7 +441,7 @@ private struct PlanItemRow: View {
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? "Kreditkarte" : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
-        case .loans: "\(euros(item.monthlyLoanPayment)) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
+        case .loans: "\(item.loanCategory) · \(euros(item.monthlyLoanPayment)) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"

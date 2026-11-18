@@ -212,6 +212,10 @@ struct PlanItem: Identifiable, Equatable {
     var id: String { fields.text("id") }
     var name: String { fields.text("name") }
     var frequency: ExpenseFrequency { ExpenseFrequency(rawValue: fields.text("frequency")) ?? .monthly }
+    var loanCategory: String {
+        let name = fields.text("category").trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Kreditraten" : name
+    }
     var monthlyLoanPayment: Double { max(0, fields.amount("payment") + fields.amount("extraPayment")) }
     var monthlyExpense: Double { fields.amount("amount") / Double(frequency.months) }
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
@@ -327,17 +331,15 @@ struct PlanMetrics {
     var rankedCategories: [(name: String, amount: Double)] {
         var totals: [String: Double] = [:]
         var labels: [String: String] = [:]
-        for item in plan[.expenses] {
-            let label = item.fields.text("category").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        func add(_ category: String, amount: Double) {
+            let label = category.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
             let name = label.isEmpty ? "Sonstige" : label
             let key = name.lowercased()
             if labels[key] == nil { labels[key] = name }
-            totals[key, default: 0] += item.monthlyExpense
+            totals[key, default: 0] += amount
         }
-        if payments > 0 {
-            labels["kreditraten"] = "Kreditraten"
-            totals["kreditraten", default: 0] += payments
-        }
+        for item in plan[.expenses] { add(item.fields.text("category"), amount: item.monthlyExpense) }
+        for loan in loansWithPayments { add(loan.loanCategory, amount: loan.monthlyLoanPayment) }
         return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value) }.sorted {
             if $0.amount != $1.amount { return $0.amount > $1.amount }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending

@@ -218,6 +218,7 @@ struct PlanEditor: View {
             amount("Jahresbetrag", key: "amount", signed: true)
             monthPicker()
         case .loans:
+            categoryPicker(default: "Kreditraten")
             amount("Restschuld", key: "balance")
             amount("Monatsrate", key: "payment")
             amount("Jahreszins", key: "interestRate", unit: "%")
@@ -272,10 +273,16 @@ struct PlanEditor: View {
     }
 
     private func categoryPicker(default fallback: String) -> some View {
-        let saved = plan[.expenses].map { $0.fields.text("category") }
-        let additional = Set(saved + [item.fields.text("category")]).subtracting(standardExpenseCategories).filter { !$0.isEmpty }.sorted()
-        return Picker("Kategorie", selection: string("category", fallback: fallback)) {
-            ForEach(standardExpenseCategories + additional, id: \.self) { Text($0).tag($0) }
+        let base = standardExpenseCategories + (section == .loans ? ["Kreditraten"] : [])
+        let used = plan[.expenses].map { $0.fields.text("category") } + plan[.loans].compactMap { $0.fields["category"]?.string }
+        let selected = section == .loans ? item.loanCategory : item.fields.text("category", default: fallback)
+        var seen = Set<String>()
+        let options = (base + (used + [selected]).sorted()).filter {
+            !$0.isEmpty && seen.insert($0.lowercased()).inserted
+        }
+        let display = options.first { $0.caseInsensitiveCompare(selected) == .orderedSame } ?? fallback
+        return Picker("Kategorie", selection: Binding(get: { display }, set: { item.fields["category"] = .string($0) })) {
+            ForEach(options, id: \.self) { Text($0).tag($0) }
         }.pickerStyle(.menu)
     }
 
@@ -312,7 +319,7 @@ struct PlanEditor: View {
             }
             changed.fields[key] = .number(number)
         }
-        if section == .expenses && changed.fields.text("category").utf16.count > 80 {
+        if (section == .expenses || section == .loans) && changed.fields.text("category").utf16.count > 80 {
             validation = "Die Kategorie darf höchstens 80 Zeichen lang sein."; return
         }
         if section == .savings && changed.fields.text("kind") == "security" {

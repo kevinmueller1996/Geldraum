@@ -108,3 +108,16 @@ test("the account response and expense picker agree on one Unterhaltung label wi
   assert.deepEqual(normalizePlanCategories(clean), clean);
   assert.equal(normalizePlanCategories(null), null);
 });
+
+test("loan categories survive backup and sync and use the same spelling as expenses", async () => {
+  const { normalizePlanCategories } = await import("../app/recurring-costs.ts");
+  const base = { name: "Kategorietest", incomes: [], accounts: [], annualCosts: [], snapshots: [], goals: [],
+    expenses: [{ id: "fuel", name: "Kraftstoff", category: "Mobilität", amount: 80 }],
+    commitments: [{ id: "car", name: "Auto", payment: 180, balance: 6000 }] };
+  assert.ok(backupPlan(base));
+  const assigned = { ...base, commitments: [{ ...base.commitments[0], category: " mobilität " }] };
+  assert.ok(backupPlan(assigned));
+  const result = normalizePlanCategories(assigned);
+  assert.deepEqual(result.commitments[0], { ...base.commitments[0], category: "Mobilität" });
+  assert.equal(backupPlan({ ...base, commitments: [{ ...base.commitments[0], category: 42 }] }), null);
+});

@@ -1,7 +1,7 @@
 export const standardExpenseCategories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Sonstige"];
 
 export function expenseCategoryResolver() {
-  const known = [...standardExpenseCategories, "Unterhaltung"];
+  const known = [...standardExpenseCategories, "Unterhaltung", "Kreditraten"];
   const labels = new Map(known.map(name => [name.toLocaleLowerCase("de"), name]));
   return (raw: string) => {
     const label = raw.normalize("NFC").replace(/[\u00ad\u200b\u2060\ufeff]/gu, "").trim().replace(/\s+/gu, " ") || "Sonstige";
@@ -22,11 +22,11 @@ export function normalizePlanCategories(plan: unknown) {
   if (!isRecord(plan)) return plan;
   const category = expenseCategoryResolver();
   const result = { ...plan };
-  for (const section of ["expenses", "annualCosts"]) {
+  for (const section of ["expenses", "annualCosts", "commitments"]) {
     const entries = plan[section];
     if (!Array.isArray(entries)) continue;
     result[section] = entries.map(entry => isRecord(entry) && typeof entry.category === "string"
-      ? { ...entry, category: category(entry.category) }
+      ? { ...entry, category: category(section === "commitments" && !entry.category.trim() ? "Kreditraten" : entry.category) }
       : entry);
   }
   if (isRecord(plan.categoryColors)) {

@@ -14,7 +14,7 @@ import NativeSettingsCard from "./native-settings-card";
 type IncomeSource = { id: string; name: string; amount: number; annual: boolean; month?: number };
 import { byDueDate, byTargetDate, standardExpenseCategories as categories, frequencies, monthlyExpense, isExpenseDue, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency } from "./recurring-costs";
 
-type Commitment = { id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
+type Commitment = { category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
 type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" | "cash" | "other";
 type SavingAsset = { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
@@ -339,7 +339,7 @@ export default function Home() {
   }, [authStatus, checkingIn, editing, onboardingStep, plan, savingsOpen, showLegacyPrompt]);
 
   const active = useMemo(() => orderedPlan(plan ?? demoPlan), [plan]);
-  const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category)])];
+  const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category), ...draft.commitments.flatMap(item => item.category ? [item.category] : [])])];
   const metrics = useMemo(() => {
     const now = new Date();
     const income = active.incomes.filter((item) => !item.annual).reduce((sum, item) => sum + item.amount, 0);
@@ -390,7 +390,7 @@ export default function Home() {
     for (const loan of active.commitments) {
       const payment = monthlyLoanPayment(loan);
       if (!payment) continue;
-      const group = groupFor("Kreditraten");
+      const group = groupFor(loan.category?.trim() || "Kreditraten");
       group.loans.push(loan);
       group.value += payment;
     }
@@ -405,6 +405,15 @@ export default function Home() {
     const latestQuote = items.filter((item) => item.quoteUpdatedAt).sort((a, b) => (b.quoteUpdatedAt ?? "").localeCompare(a.quoteUpdatedAt ?? ""))[0]?.quoteUpdatedAt;
     return { items, total, securities, reserves, latestQuote };
   }, [active.savings]);
+
+  function loanCategoryField(item: Commitment, index: number) {
+    const options = [...new Set(["Kreditraten", ...categoryOptions])];
+    return <label className="loan-category-field">Kategorie
+      <select value={item.category?.trim() || "Kreditraten"} onChange={event => updateList("commitments", index, { category: event.target.value })}>
+        {options.map(option => <option key={option}>{option}</option>)}
+      </select>
+    </label>;
+  }
 
   function openEditor() {
     setImportPreview(null);
@@ -783,16 +792,25 @@ export default function Home() {
 
       <div className="app-content">
         {activeView === "home" && <section className="view home-view" aria-labelledby="home-title">
-          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Hallo {active.name}.</h1></div><TitleAmount value={metrics.netBalance} label="Kontostand" /></div>
-          <button className="balance-hero" type="button" onClick={openCheckIn} aria-label="Konten und Karten aktualisieren">
-            <div><span className={`mini-status ${updateDue ? "due" : ""}`}>{daysSinceUpdate === 0 ? "Heute aktualisiert" : updateDue ? "Check-in fällig" : "Aktuell"}</span><span>{euro(metrics.bankBalance, true)} verfügbar · {euro(metrics.creditBalance, true)} Karten</span><small className="balance-updated">Zuletzt aktualisiert · {lastUpdateLabel}</small></div>
-            <div className="balance-orbit"><span>{active.accounts.length}</span><small>öffnen →</small></div>
+          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Heute</h1></div><TitleAmount value={metrics.netBalance} label="Kontostand" /></div>
+          <article className="dashboard-balance">
+            <h2>Monatlicher Spielraum</h2>
+            <strong>{exactEuros.format(metrics.available)}</strong>
+            <p>Regelmäßiges Einkommen abzüglich Fixkosten</p>
+          </article>
+          <div className="dashboard-metrics">
+            <button type="button" onClick={() => openFocusedEditor("income")}><span>Einkommen im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
+            <button type="button" onClick={() => navigate("month")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
+            <div><span>Prognose zum Monatsende</span><strong>{exactEuros.format(metrics.forecast)}</strong></div>
+            <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
+          </div>
+          <button type="button" className="dashboard-checkin" onClick={openCheckIn}>
+            <strong>Kontostände aktualisieren</strong><small>{euro(metrics.bankBalance, true)} verfügbar · {euro(metrics.creditBalance, true)} Karten</small><small>{updateDue ? "Check-in fällig · " : ""}{lastUpdateLabel}</small>
           </button>
-          <div className="forecast-grid">
-            <article className="forecast-card"><span>Prognose zum Monatsende</span><strong className={metrics.forecast < 0 ? "negative" : ""}>{euro(metrics.forecast)}</strong><p>Auf Basis deiner geplanten Einnahmen und Ausgaben.</p></article>
+          <div className="dashboard-specials">
             <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} aria-label={`Sonderposten im ${currentMonthName} anzeigen und bearbeiten`}><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen →</p></button>
           </div>
-          <article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article>
+          <details className="dashboard-income"><summary>Einkommen im Detail</summary><article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article></details>
         </section>}
 
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
@@ -836,7 +854,7 @@ export default function Home() {
             const projection = loanProjection(item);
             const share = metrics.totalDebt ? Math.round((item.balance / metrics.totalDebt) * 100) : 0;
             const hasDetails = Boolean(item.interestRate || item.termMonths || item.extraPayment);
-            return <article className="loan-card" key={item.id}><div className="loan-top"><span className="loan-mark">↘</span><button className="edit-chip" type="button" onClick={() => openFocusedEditor("loans", undefined, item.id)}>Ändern</button></div><span className="loan-share">{share}% der Restschuld</span><h2>{item.name}</h2><strong>{euro(item.balance)}</strong><div className="loan-stats"><div><span>Effektive Monatsrate</span><b>{euro(projection.payment)}</b></div><div><span>Restschuld in 12 Mon.</span><b>{euro(projection.balanceIn12Months)}</b></div><div><span>Voraussichtlich offen</span><b>{projection.monthsLeft ? `${projection.monthsLeft} Monate` : "–"}</b></div>{item.interestRate ? <div><span>Zinskosten geschätzt</span><b>{projection.interestCost === null ? "Keine vollständige Tilgung" : marketPrice(projection.interestCost)}</b></div> : null}</div>{item.termMonths && projection.balanceAtTerm > 1 ? <p className="loan-warning">Nach der angegebenen Laufzeit wären noch etwa {euro(projection.balanceAtTerm)} offen.</p> : <p>{hasDetails ? `${item.interestRate || 0}% p. a.${item.extraPayment ? ` · ${euro(item.extraPayment)} extra` : ""}` : "Basisprognose aus Restschuld und Rate."}</p>}</article>;
+            return <article className="loan-card" key={item.id}><div className="loan-top"><span className="loan-mark">↘</span><button className="edit-chip" type="button" onClick={() => openFocusedEditor("loans", undefined, item.id)}>Ändern</button></div><span className="loan-share">{item.category || "Kreditraten"} · {share}% der Restschuld</span><h2>{item.name}</h2><strong>{euro(item.balance)}</strong><div className="loan-stats"><div><span>Effektive Monatsrate</span><b>{euro(projection.payment)}</b></div><div><span>Restschuld in 12 Mon.</span><b>{euro(projection.balanceIn12Months)}</b></div><div><span>Voraussichtlich offen</span><b>{projection.monthsLeft ? `${projection.monthsLeft} Monate` : "–"}</b></div>{item.interestRate ? <div><span>Zinskosten geschätzt</span><b>{projection.interestCost === null ? "Keine vollständige Tilgung" : marketPrice(projection.interestCost)}</b></div> : null}</div>{item.termMonths && projection.balanceAtTerm > 1 ? <p className="loan-warning">Nach der angegebenen Laufzeit wären noch etwa {euro(projection.balanceAtTerm)} offen.</p> : <p>{hasDetails ? `${item.interestRate || 0}% p. a.${item.extraPayment ? ` · ${euro(item.extraPayment)} extra` : ""}` : "Basisprognose aus Restschuld und Rate."}</p>}</article>;
           })}<button className="add-card" type="button" onClick={() => openFocusedEditor("loans", "loan")}><span>+</span><strong>Neuen Kredit anlegen</strong><small>Restschuld und Rate reichen für den Start</small></button></div>
           <article className="principle-card"><span>✦</span><div><p>Njora-Prinzip</p><strong>Restschuld und Monatsbelastung gehören zusammen.</strong><small>So siehst du nicht nur, wie viel offen ist, sondern auch, wie stark die Kredite deinen Alltag binden.</small></div></article>
         </section>}
@@ -920,7 +938,7 @@ export default function Home() {
             {onboardingStep === 4 && <>
               <p className="eyebrow">Kredite</p><h2 id="onboarding-title">Zahlst du einen Kredit zurück?</h2><p className="onboarding-intro">Eine vereinbarte Rate kannst du hier in deinen Monatsplan aufnehmen.</p>
               <div className="onboarding-optional-groups">
-              <section><div className="onboarding-group-head"><div><strong>Kredite & Verpflichtungen</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit</AddButton></div>{draft.commitments.map((item, index) => <div className="onboarding-row loan" key={item.id}><input aria-label="Kreditname" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Autokredit" /><span className="currency-input"><DecimalInput aria-label="Restschuld" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><b>€</b></span><span className="currency-input"><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><b>€</b></span><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>)}</section></div>
+              <section><div className="onboarding-group-head"><div><strong>Kredite & Verpflichtungen</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit</AddButton></div>{draft.commitments.map((item, index) => <div className="onboarding-row loan" key={item.id}><input aria-label="Kreditname" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Autokredit" /><span className="currency-input"><DecimalInput aria-label="Restschuld" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><b>€</b></span><span className="currency-input"><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><b>€</b></span>{loanCategoryField(item, index)}<RemoveButton onClick={() => removeListItem("commitments", index)} /></div>)}</section></div>
             </>}
 
             {onboardingStep === 5 && <>
@@ -967,7 +985,7 @@ export default function Home() {
 
 
           {(!editorScope || editorScope === "loans") && <EditorSection id="editor-loans" title="Kredite & Verpflichtungen" subtitle="Restschuld und Rate reichen aus; Vertragsdetails verbessern die Prognose">
-            {draft.commitments.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="loan-editor-item" key={item.id}><div className="editor-row four"><input aria-label="Verpflichtung" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Immobilienkredit" /><DecimalInput aria-label="Restbetrag" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><RemoveButton onClick={() => removeListItem("commitments", index)} /></div><details className="loan-details" open={Boolean(item.interestRate || item.termMonths || item.extraPayment)}><summary>Optionale Vertragsdetails für genauere Prognose</summary><div><label>Zinssatz p. a.<span className="currency-input"><DecimalInput aria-label="Zinssatz pro Jahr" value={item.interestRate} onValueChange={(value) => updateList("commitments", index, { interestRate: value })} placeholder="z. B. 3,5" /><b>%</b></span></label><label>Restlaufzeit<span className="currency-input"><input aria-label="Restlaufzeit in Monaten" inputMode="numeric" value={item.termMonths || ""} onChange={(e) => updateList("commitments", index, { termMonths: numberValue(e.target.value) })} placeholder="Monate" /><b>M</b></span></label><label>Zusätzliche Monatsrate<span className="currency-input"><DecimalInput aria-label="Zusätzliche monatliche Tilgung" value={item.extraPayment} onValueChange={(value) => updateList("commitments", index, { extraPayment: value })} placeholder="optional" /><b>€</b></span></label></div></details></div>)}
+            {draft.commitments.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="loan-editor-item" key={item.id}><div className="editor-row four"><input aria-label="Verpflichtung" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Immobilienkredit" /><DecimalInput aria-label="Restbetrag" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>{loanCategoryField(item, index)}<details className="loan-details" open={Boolean(item.interestRate || item.termMonths || item.extraPayment)}><summary>Optionale Vertragsdetails für genauere Prognose</summary><div><label>Zinssatz p. a.<span className="currency-input"><DecimalInput aria-label="Zinssatz pro Jahr" value={item.interestRate} onValueChange={(value) => updateList("commitments", index, { interestRate: value })} placeholder="z. B. 3,5" /><b>%</b></span></label><label>Restlaufzeit<span className="currency-input"><input aria-label="Restlaufzeit in Monaten" inputMode="numeric" value={item.termMonths || ""} onChange={(e) => updateList("commitments", index, { termMonths: numberValue(e.target.value) })} placeholder="Monate" /><b>M</b></span></label><label>Zusätzliche Monatsrate<span className="currency-input"><DecimalInput aria-label="Zusätzliche monatliche Tilgung" value={item.extraPayment} onValueChange={(value) => updateList("commitments", index, { extraPayment: value })} placeholder="optional" /><b>€</b></span></label></div></details></div>)}
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit oder Verpflichtung</AddButton>}
           </EditorSection>}
 

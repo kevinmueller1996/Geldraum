@@ -1211,3 +1211,19 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .card-balance-input { position: relative; display: block; min-width: 0; width: 100%; }
 .card-balance-input > span { position: absolute; inset-inline-start: .75rem; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .card-balance-input input { width: 100%; padding-inline-start: 1.8rem; }
+
+.dashboard-balance { padding:clamp(20px, 4vw, 36px); background:var(--brand); color:white; border-radius:var(--radius-card); }
+.dashboard-balance h2, .dashboard-balance p { margin:0; color:inherit; font:inherit; }
+.dashboard-balance h2 { font-weight:650; }
+.dashboard-balance strong { display:block; margin:.3em 0; font-size:clamp(2.15rem,5vw,3.5rem); font-variant-numeric:tabular-nums; line-height:1.1; overflow-wrap:anywhere; }
+.dashboard-balance p, .dashboard-checkin small { font-size:.82rem; }
+.dashboard-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 145px),1fr)); gap:10px; margin:12px 0; }
+.dashboard-metrics > * { min-width:0; padding:18px 15px; display:flex; flex-direction:column; gap:12px; justify-content:space-between; align-items:flex-start; text-align:left; background:var(--paper); border:1px solid var(--line); color:inherit; font:inherit; border-radius:var(--radius-card); }
+.dashboard-metrics span { font-size:.86rem; }
+.dashboard-metrics strong { font-size:clamp(1.1rem,2.4vw,1.55rem); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.dashboard-metrics button, .dashboard-checkin, .dashboard-income summary { cursor:pointer; }
+.dashboard-metrics button:hover, .dashboard-checkin:hover { border-color:var(--coral); }
+.dashboard-checkin { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; width:100%; padding:14px 18px; background:var(--paper); color:inherit; border:1px solid var(--line); border-radius:var(--radius-card); }
+.dashboard-specials { display:grid; margin:16px 0; }
+.dashboard-income summary { padding:12px 0; font-weight:650; }
+.loan-category-field { display:grid; gap:5px; margin:8px 0; }
