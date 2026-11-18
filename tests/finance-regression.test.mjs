@@ -51,8 +51,8 @@ test("delayed quotes keep the trade time, and missing dates do not masquerade as
   assert.deepEqual(await loadDelayedQuotes(["SAP.DE"]), []);
 });
 
-test("recurring costs keep the instalment separate from the monthly budget and due months", async () => {
-  const { monthlyExpense, isExpenseDue, cardPayment } = await import("../app/recurring-costs.ts");
+test("recurring costs use monthly averages and the scheduled due months", async () => {
+  const { monthlyExpense, isExpenseDue } = await import("../app/recurring-costs.ts");
   const quarterly = { amount: 300, frequency: "quarterly", month: 10 };
   const yearly = { amount: 240, frequency: "annual", month: 11 };
   const months = Array.from({ length: 12 }, (_, month) => month);
@@ -60,9 +60,6 @@ test("recurring costs keep the instalment separate from the monthly budget and d
   assert.deepEqual(months.filter((month) => isExpenseDue(yearly, month)), [11]);
   assert.equal(monthlyExpense({ amount: 50 }), 50);
   assert.equal(monthlyExpense(quarterly) + monthlyExpense(yearly), 120);
-  assert.equal(cardPayment({ type: "credit", monthlyPayment: 80, balance: 1000 }), 80);
-  assert.equal(cardPayment({ type: "bank", monthlyPayment: 80 }), 0);
-  assert.equal(cardPayment({ type: "credit" }), 0);
 });
 
 test("dues follow calendar months and booking days, with undated entries last", async () => {
@@ -77,4 +74,17 @@ test("dues follow calendar months and booking days, with undated entries last", 
   assert.deepEqual([11, 3, 0].map((month) => ({month})).sort(byDueDate("annualCosts")).map(x => x.month), [0, 3, 11]);
   assert.deepEqual([{annual:true}, {annual:true, month:0}, {annual:false}].sort(byDueDate("incomes")).map(x=>x.month ?? x.annual), [false,0,true]);
   assert.deepEqual(["", "2027-01-01", "2026-12-31"].map(targetDate => ({targetDate})).sort(byTargetDate).map(x=>x.targetDate), ["2026-12-31", "2027-01-01", ""]);
+});
+
+test("legacy annual costs remain editable with colliding IDs and at the storage limit", async () => {
+  const { unifiedExpenses, storagePlan, monthlyExpense } = await import("../app/recurring-costs.ts");
+  const expenses = Array.from({ length: 250 }, (_, i) => ({ id: String(i), name: "Miete", category: " Wohnen ", amount: 10 }));
+  const annualCosts = [{ id: "1", name: "Wartung", category: "wohnen", month: 3, amount: 120 }];
+  const merged = unifiedExpenses(expenses, annualCosts);
+  assert.equal(new Set(merged.map(x => x.id)).size, 251);
+  assert.equal(merged.at(-1).category, "Wohnen");
+  assert.equal(merged.reduce((sum, item) => sum + monthlyExpense(item), 0), 2510);
+  const stored = storagePlan({ expenses: merged, annualCosts: [] });
+  assert.equal(stored.expenses.length, 250);
+  assert.deepEqual(unifiedExpenses(stored.expenses, stored.annualCosts), merged);
 });

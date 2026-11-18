@@ -1207,3 +1207,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .title-amount strong { font-size:clamp(1.1rem, 3.2vw, 1.8rem); line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .title-amount small { font-size:.78rem; line-height:1.4; }
 .heading-actions { gap:.35rem; }
+
+.card-balance-input { position: relative; display: block; min-width: 0; width: 100%; }
+.card-balance-input > span { position: absolute; inset-inline-start: .75rem; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.card-balance-input input { width: 100%; padding-inline-start: 1.8rem; }

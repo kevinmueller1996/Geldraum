@@ -216,7 +216,7 @@ final class NjoraStore: ObservableObject {
         let reply = try await api.account()
         conflict = false
         user = reply.user
-        plan = reply.plan
+        plan = reply.plan?.unifiedCosts
         revision = reply.revision
         state = reply.plan == nil ? .setup : .ready
     }

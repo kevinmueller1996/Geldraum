@@ -12,8 +12,39 @@ export function isExpenseDue(item: ExpenseSchedule, month: number) {
   return (month - (item.month ?? 0)) % intervalMonths[item.frequency ?? "monthly"] === 0;
 }
 
-export function cardPayment(account: { type: string; monthlyPayment?: number }) {
-  return account.type === "credit" ? Math.max(0, account.monthlyPayment ?? 0) : 0;
+export type Expense = ExpenseSchedule & { id: string; name: string; category: string; bookingDay?: number };
+export type AnnualCost = Omit<Expense, "category" | "month"> & { category?: string; month: number };
+
+export function unifiedExpenses(expenses: Expense[], annualCosts: AnnualCost[]): Expense[] {
+  const used = new Set(expenses.map(item => item.id));
+  const reserved = new Set(annualCosts.map(item => item.id));
+  let suffix = 0;
+  const legacy = annualCosts.map(item => {
+    let id = item.id;
+    if (used.has(id)) {
+      do { id = `legacy-annual-${++suffix}`; } while (used.has(id) || reserved.has(id));
+    }
+    used.add(id);
+    return { ...item, id, category: item.category || "Sonstige", frequency: "annual" as const };
+  });
+  const labels = new Map<string, string>();
+  return [...expenses, ...legacy].map(item => {
+    const name = item.category.trim().replace(/\s+/g, " ") || "Sonstige";
+    const key = name.toLocaleLowerCase("de");
+    const category = labels.get(key) ?? name;
+    labels.set(key, category);
+    return { ...item, category };
+  });
+}
+
+// Keep large existing plans compatible with the shared storage limits.
+export function storagePlan<T extends { expenses: Expense[]; annualCosts: AnnualCost[] }>(plan: T) {
+  const overflow = plan.expenses.length - 250;
+  if (overflow <= 0 || plan.annualCosts.length) return plan;
+  const annualCosts = plan.expenses.filter((item): item is Expense & { month: number } =>
+    item.frequency === "annual" && item.month !== undefined).slice(-overflow);
+  const ids = new Set(annualCosts.map(item => item.id));
+  return { ...plan, annualCosts, expenses: plan.expenses.filter(item => !ids.has(item.id)) };
 }
 
 type DueEntry = { month?: number; bookingDay?: number; annual?: boolean; frequency?: Frequency };

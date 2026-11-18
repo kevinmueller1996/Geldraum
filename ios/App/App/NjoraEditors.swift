@@ -9,6 +9,7 @@ struct PlanField: View {
     var prompt = ""
     var unit = ""
     var keyboard: UIKeyboardType = .default
+    var cardBalance = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -16,17 +17,8 @@ struct PlanField: View {
                 .accessibilityHidden(true)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if unit == "€" {
-                    EuroInput(title: title, text: $text, prompt: prompt, signed: keyboard == .numbersAndPunctuation)
-                    if keyboard == .numbersAndPunctuation {
-                        Button {
-                            if text.hasPrefix("-") { text.removeFirst() }
-                            else { text = "-" + (text.hasPrefix("+") ? String(text.dropFirst()) : text) }
-                        } label: {
-                            Image(systemName: "plus.forwardslash.minus").frame(minWidth: 34, minHeight: 36)
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Vorzeichen wechseln")
-                    }
+                    EuroInput(title: title, text: $text, prompt: prompt,
+                              signed: keyboard == .numbersAndPunctuation, cardBalance: cardBalance)
                 } else {
                     TextField(title, text: $text, prompt: Text(prompt))
                         .keyboardType(keyboard)
@@ -49,6 +41,7 @@ private struct EuroInput: UIViewRepresentable {
     @Binding var text: String
     let prompt: String
     let signed: Bool
+    let cardBalance: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(input: self) }
 
@@ -65,9 +58,25 @@ private struct EuroInput: UIViewRepresentable {
 
     func updateUIView(_ field: UITextField, context: Context) {
         context.coordinator.input = self
-        if field.text != text { field.text = text }
+        let isCredit = cardBalance && text.hasPrefix("-")
+        let visible = isCredit ? String(text.dropFirst()) : text
+        if field.text != visible { field.text = visible }
+        let keyboard: UIKeyboardType = signed && !cardBalance ? .numbersAndPunctuation : .decimalPad
+        if field.keyboardType != keyboard {
+            field.keyboardType = keyboard
+            if field.isFirstResponder { field.reloadInputViews() }
+        }
+        if cardBalance {
+            let prefix = field.leftView as? UILabel ?? UILabel()
+            prefix.font = field.font
+            prefix.text = isCredit ? "+ " : "− "
+            prefix.textColor = .label
+            prefix.sizeToFit()
+            field.leftView = prefix
+        }
+        field.leftViewMode = cardBalance ? .always : .never
         field.placeholder = prompt
-        field.accessibilityLabel = title + " in €"
+        field.accessibilityLabel = title + (cardBalance ? (isCredit ? ", Guthaben in €" : ", offener Betrag in €") : " in €")
         field.accessibilityIdentifier = "field." + title
     }
 
@@ -78,7 +87,9 @@ private struct EuroInput: UIViewRepresentable {
         func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString replacement: String) -> Bool {
             let current = textField.text ?? ""
             guard let selection = Range(range, in: current) else { return false }
-            return acceptsAmountEdit(current.replacingCharacters(in: selection, with: replacement), signed: input.signed)
+            let candidate = current.replacingCharacters(in: selection, with: replacement)
+            if input.cardBalance && candidate.hasPrefix("+") { return false }
+            return acceptsAmountEdit(candidate, signed: input.signed && !input.cardBalance)
         }
 
         @objc func changed(_ field: UITextField) { input.text = field.text ?? "" }
@@ -177,11 +188,8 @@ struct PlanEditor: View {
             Picker("Kontoart", selection: string("type", fallback: "bank")) {
                 Text("Konto").tag("bank"); Text("Kreditkarte").tag("credit"); Text("Bargeld").tag("cash")
             }
-            amount("Aktueller Stand", key: "balance", signed: true)
-            if item.fields.text("type") == "credit" {
-                amount("Monatliche Kartenrate", key: "monthlyPayment")
-                categoryPicker(default: "Kreditkarten")
-            }
+            let card = item.fields.text("type") == "credit"
+            amount(card ? "Offener Kartenbetrag" : "Aktueller Stand", key: "balance", signed: true, cardBalance: card)
         case .income:
             amount("Betrag", key: "amount", signed: true)
             Toggle("Jährliche Einnahme", isOn: Binding(get: { item.fields.flag("annual") }, set: { value in
@@ -251,7 +259,7 @@ struct PlanEditor: View {
         Binding(get: { item.fields.text(key, default: fallback) }, set: { item.fields[key] = .string($0) })
     }
 
-    private func amount(_ title: String, key: String, unit: String = "€", signed: Bool = false, integer: Bool = false) -> some View {
+    private func amount(_ title: String, key: String, unit: String = "€", signed: Bool = false, integer: Bool = false, cardBalance: Bool = false) -> some View {
         PlanField(title: title, text: Binding(
             get: {
                 if let edited = amounts[key] { return edited }
@@ -260,11 +268,11 @@ struct PlanEditor: View {
             },
             set: { amounts[key] = $0 }
         ), prompt: "0", unit: unit,
-           keyboard: signed ? .numbersAndPunctuation : integer ? .numberPad : .decimalPad)
+           keyboard: signed ? .numbersAndPunctuation : integer ? .numberPad : .decimalPad, cardBalance: cardBalance)
     }
 
     private func categoryPicker(default fallback: String) -> some View {
-        let saved = plan[.expenses].map { $0.fields.text("category") } + plan[.accounts].map { $0.fields.text("category") }
+        let saved = plan[.expenses].map { $0.fields.text("category") }
         let additional = Set(saved + [item.fields.text("category")]).subtracting(standardExpenseCategories).filter { !$0.isEmpty }.sorted()
         return Picker("Kategorie", selection: string("category", fallback: fallback)) {
             ForEach(standardExpenseCategories + additional, id: \.self) { Text($0).tag($0) }
@@ -299,7 +307,7 @@ struct PlanEditor: View {
         for (key, value) in amounts {
             guard let number = germanAmount(value),
                   key != "termMonths" || (number >= 0 && number.rounded() == number),
-                  !["interestRate", "monthlyPayment"].contains(key) || number >= 0 else {
+                  key != "interestRate" || number >= 0 else {
                 validation = "Bitte prüfe deine Beträge und Vertragsdaten."; return
             }
             changed.fields[key] = .number(number)
@@ -321,6 +329,10 @@ struct PlanEditor: View {
         validation = ""
         var revised = plan
         revised.save(changed, in: section)
+        if section == .expenses && revised.storagePlan[.expenses].count > PlanSection.expenses.limit {
+            validation = "Der Plan enthält bereits 250 monatliche oder quartalsweise Fixkosten."
+            return
+        }
         let result = revised
         Task { if await store.save(result) { dismiss() } }
     }
@@ -395,7 +407,7 @@ struct CheckInView: View {
                         PlanField(title: item.name, text: Binding(
                             get: { balances[item.id] ?? editableAmount(item.fields.amount("balance")) },
                             set: { balances[item.id] = $0 }
-                        ), unit: "€", keyboard: .numbersAndPunctuation)
+                        ), unit: "€", keyboard: .numbersAndPunctuation, cardBalance: item.fields.text("type") == "credit")
                     }
                 }
                 PlanField(title: "Notiz", text: $note, prompt: "Optional")

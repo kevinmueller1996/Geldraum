@@ -85,11 +85,11 @@ struct Overview: View {
                     LabeledAmount(label: "Monatlicher Spielraum", amount: metrics.available)
                 }.njoraCard()
 
-                if !metrics.annualIncome.isEmpty || !metrics.annualCosts.isEmpty {
+                if !metrics.annualIncome.isEmpty || !metrics.specialCosts.isEmpty {
                     VStack(alignment: .leading, spacing: 11) {
                         Text("Sonderposten in diesem Monat").font(.headline)
                         ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
-                        ForEach(metrics.annualCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
+                        ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
                     }.njoraCard()
                 }
                 if !plan[.history].isEmpty {
@@ -117,32 +117,41 @@ struct MonthlyPlan: View {
             Section("Im Monat verfügbar") {
                 LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
                 LabeledAmount(label: "Fixkosten", amount: -metrics.expenses)
-                LabeledAmount(label: "Rücklage für Jahreskosten", amount: -metrics.reserve)
                 LabeledAmount(label: "Kreditraten", amount: -metrics.payments)
             }
             Section("Plan bearbeiten") {
-                ForEach([PlanSection.income, .expenses, .annual]) { section in
+                ForEach([PlanSection.income, .expenses]) { section in
                     NavigationLink(section.title) { PlanSectionView(section: section, store: store) }
                 }
             }
-            let groups = metrics.expensesByCategory
-            if !groups.isEmpty {
+            let categories = metrics.rankedCategories
+            if !categories.isEmpty {
                 Section("Fixkosten nach Kategorie · pro Monat") {
-                    Chart(groups.keys.sorted(), id: \.self) { category in
-                        BarMark(x: .value("Kategorie", category), y: .value("Monatlich", groups[category] ?? 0))
-                            .foregroundStyle(NjoraTheme.accent)
-                    }.frame(height: 180)
-                    ForEach(groups.keys.sorted(), id: \.self) { category in
-                        LabeledAmount(label: category, amount: groups[category] ?? 0)
+                    ForEach(categories, id: \.name) { category in
+                        VStack(alignment: .leading, spacing: 9) {
+                            LabeledAmount(label: category.name, amount: category.amount)
+                            GeometryReader { area in
+                                let largest = max(categories.first?.amount ?? 0, 0)
+                                let ratio = largest > 0 ? max(0, category.amount) / largest : 0
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(NjoraTheme.accent.opacity(0.14))
+                                    Capsule().fill(NjoraTheme.accent).frame(width: area.size.width * ratio)
+                                }
+                            }
+                            .frame(height: 4)
+                            .accessibilityHidden(true)
+                        }
+                        .padding(.vertical, 5)
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
             Section("Sonderposten in diesem Monat") {
-                if metrics.annualIncome.isEmpty && metrics.annualCosts.isEmpty {
+                if metrics.annualIncome.isEmpty && metrics.specialCosts.isEmpty {
                     Text("Keine Sonderposten").foregroundStyle(.secondary)
                 }
                 ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
-                ForEach(metrics.annualCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
+                ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
             }
             Notice(text: store.notice(in: .month))
         }.scrollContentBackground(.hidden).background(NjoraTheme.paper)
@@ -264,7 +273,6 @@ struct PlanSectionView: View {
     let section: PlanSection
     @ObservedObject var store: NjoraStore
     @State private var selection: PlanItem?
-    @State private var selectedCard: PlanItem?
     @State private var pendingRemoval: PlanItem?
     @State private var checkIn = false
 
@@ -274,20 +282,6 @@ struct PlanSectionView: View {
             let metrics = PlanMetrics(plan: plan)
             let total = metrics.titleTotal(for: section)
             List {
-                if section == .expenses {
-                    if !metrics.creditCards.isEmpty {
-                        Section("Kreditkartenraten · monatlich") {
-                            ForEach(metrics.creditCards) { card in
-                                Button { selectedCard = card } label: {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        LabeledAmount(label: card.name, amount: card.cardPayment)
-                                        Text(card.cardPayment > 0 ? card.cardCategory : card.cardCategory + " · Rate festlegen").font(.footnote).foregroundStyle(.secondary)
-                                    }
-                                }.buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
                 if section == .income {
                     Section {
                         LabeledAmount(label: "Pro Jahr", amount: metrics.incomePerYear)
@@ -305,7 +299,7 @@ struct PlanSectionView: View {
                 Section {
                     if items.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text(section == .expenses && !PlanMetrics(plan: plan).creditCards.isEmpty ? "Keine weiteren Fixkosten" : section.emptyMessage).font(.headline)
+                            Text(section.emptyMessage).font(.headline)
                             if section == .history {
                                 if plan[.accounts].isEmpty {
                                     NavigationLink("Konten verwalten") { PlanSectionView(section: .accounts, store: store) }
@@ -352,16 +346,13 @@ struct PlanSectionView: View {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     if section != .history {
                         Button { selection = section.newItem } label: { Label(section.addTitle, systemImage: "plus") }
-                            .disabled(store.busy || items.count >= section.limit)
+                            .disabled(store.busy || items.count >= (section == .expenses ? section.limit + PlanSection.annual.limit : section.limit))
                             .accessibilityIdentifier("njora.add")
                     }
                     ProfileButton(store: store)
                 }
             }
             .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
-            .sheet(item: $selectedCard) { card in
-                PlanEditor(section: .accounts, item: card, plan: plan, store: store)
-            }
             .sheet(item: $selection) { item in
                 PlanEditor(section: section, item: item, plan: plan, store: store)
             }
@@ -415,7 +406,7 @@ private struct PlanItemRow: View {
             fields.integer("bookingDay").flatMap { $0 > 0 ? "am " + String($0) + "." : nil },
             item.frequency == .monthly ? nil : monthNames[safe: fields.integer("month") ?? -1].map { "Fällig im " + $0 + (item.frequency == .quarterly ? " und alle drei Monate" : "") }
         ].compactMap { $0 }.joined(separator: " · ")
-        case .accounts: fields.text("type") == "credit" ? "\(item.cardCategory) · Monatsrate \(euros(item.cardPayment))" : nil
+        case .accounts: fields.text("type") == "credit" ? "Kreditkarte" : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
         case .loans: "\(euros(fields.amount("payment"))) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
         case .goals:

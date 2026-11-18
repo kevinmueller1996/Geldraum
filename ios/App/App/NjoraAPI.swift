@@ -144,7 +144,7 @@ actor NjoraAPI {
         struct Saved: Decodable { let revision: Int }
         do {
             let reply: Saved = try await request("/api/account", method: "PUT", body: [
-                "plan": .object(plan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
+                "plan": .object(plan.storagePlan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
             ])
             return reply.revision
         } catch {
@@ -156,7 +156,7 @@ actor NjoraAPI {
                 do { current = try await account() }
                 catch let auth as APIError where auth.status == 401 { throw auth }
                 catch { throw APIError(0, "Njora konnte das Speichern nicht bestätigen. Prüfe die Verbindung und lade den aktuellen Stand.") }
-                if current.plan == plan, let saved = current.revision, saved > (revision ?? 0) { return saved }
+                if current.plan == plan.storagePlan, let saved = current.revision, saved > (revision ?? 0) { return saved }
                 if current.revision != revision {
                     throw APIError(409, "Der Finanzplan wurde zwischenzeitlich geändert. Lade den aktuellen Stand.")
                 }

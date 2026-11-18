@@ -12,10 +12,8 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, frequencies, monthlyExpense, isExpenseDue, cardPayment, type Frequency } from "./recurring-costs";
+import { byDueDate, byTargetDate, frequencies, monthlyExpense, isExpenseDue, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency } from "./recurring-costs";
 
-type Expense = { id: string; name: string; amount: number; category: string; frequency?: Frequency; month?: number; bookingDay?: number };
-type AnnualCost = { id: string; name: string; amount: number; month: number };
 type Commitment = { id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
 type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" | "cash" | "other";
@@ -24,7 +22,7 @@ type SecuritySuggestion = { symbol: string; name: string; exchange: string; exch
 type Account = { id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
 type View = "home" | "month" | "loans" | "goals" | "more";
-type EditorScope = "accounts" | "income" | "expenses" | "annual" | "specials" | "loans" | "goals" | "savings";
+type EditorScope = "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
 type Plan = {
   name: string;
   liquidity: number;
@@ -49,8 +47,8 @@ const STORAGE_KEY = "klarbudget-plan-v3";
 const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
 const OLD_STORAGE_KEY = "klarbudget-profile";
 const months = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-const categories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Kreditkarten"];
-const onboardingSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Jahresplanung", "Ziele"] as const;
+const categories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Sonstige"];
+const onboardingSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Kredite", "Ziele"] as const;
 const savingKindLabels: Record<SavingKind, string> = {
   security: "Aktie oder ETF",
   dayMoney: "Tagesgeldkonto",
@@ -178,8 +176,8 @@ function emptyPlan(name = ""): Plan {
 function orderedPlan(plan: Plan): Plan {
   return { ...plan,
     incomes: [...plan.incomes].sort(byDueDate("incomes")),
-    expenses: [...plan.expenses].sort(byDueDate("expenses")),
-    annualCosts: [...plan.annualCosts].sort(byDueDate("annualCosts")),
+    expenses: unifiedExpenses(plan.expenses, plan.annualCosts).sort(byDueDate("expenses")),
+    annualCosts: [],
     goals: [...plan.goals].sort(byTargetDate),
   };
 }
@@ -191,8 +189,8 @@ function normalizePlan(value: Partial<Plan>): Plan {
     ...value,
     categoryColors: { ...defaultCategoryColors, ...(value.categoryColors ?? {}) },
     incomes: (value.incomes ?? base.incomes).map((item) => ({ ...item, month: item.annual ? item.month : undefined })),
-    expenses: (value.expenses ?? base.expenses).map((item) => ({ ...item, bookingDay: item.bookingDay ?? 0 })),
-    annualCosts: value.annualCosts ?? [],
+    expenses: unifiedExpenses(value.expenses ?? base.expenses, value.annualCosts ?? []).map((item) => ({ ...item, bookingDay: item.bookingDay ?? 0 })),
+    annualCosts: [],
     commitments: (value.commitments ?? []).map((item) => ({ ...item, interestRate: item.interestRate ?? 0, termMonths: item.termMonths ?? 0, extraPayment: item.extraPayment ?? 0 })),
     goals: (value.goals ?? []).map((item) => ({ ...item, targetDate: item.targetDate ?? "" })),
     savings: (value.savings ?? []).map((item) => ({
@@ -342,23 +340,18 @@ export default function Home() {
   }, [authStatus, checkingIn, editing, onboardingStep, plan, savingsOpen, showLegacyPrompt]);
 
   const active = useMemo(() => orderedPlan(plan ?? demoPlan), [plan]);
-  const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category),
-    ...draft.accounts.map((item) => item.category).filter((value): value is string => Boolean(value))])];
+  const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category)])];
   const metrics = useMemo(() => {
     const now = new Date();
     const income = active.incomes.filter((item) => !item.annual).reduce((sum, item) => sum + item.amount, 0);
     const annualIncome = active.incomes.filter((item) => item.annual).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualIncome = active.incomes.filter((item) => item.annual && item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
-    const currentAnnualCosts = active.annualCosts.filter((item) => item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
-    const cardPayments = active.accounts.reduce((sum, account) => sum + cardPayment(account), 0);
-    const expenses = active.expenses.reduce((sum, item) => sum + monthlyExpense(item), cardPayments);
-    const annualTotal = active.annualCosts.reduce((sum, item) => sum + item.amount, 0);
-    const annualReserve = annualTotal / 12;
+    const expenses = active.expenses.reduce((sum, item) => sum + monthlyExpense(item), 0);
     const payments = active.commitments.reduce((sum, item) => sum + item.payment + (item.extraPayment ?? 0), 0);
     const goalNeed = active.goals.reduce((sum, item) => sum + goalMonthlyNeed(item), 0);
-    const available = income - expenses - annualReserve - payments;
+    const available = income - expenses - payments;
     const unallocated = available;
-    const baseCosts = expenses + annualReserve + payments;
+    const baseCosts = expenses + payments;
     const burden = income > 0 ? Math.round((baseCosts / income) * 100) : 0;
     const bankBalance = active.accounts.filter((item) => item.type !== "credit").reduce((sum, item) => sum + item.balance, 0);
     const creditBalance = active.accounts.filter((item) => item.type === "credit").reduce((sum, item) => sum + item.balance, 0);
@@ -375,17 +368,17 @@ export default function Home() {
       if (item.bookingDay) return sum + (Math.min(item.bookingDay, daysInMonth) > now.getDate() ? item.amount : 0);
       return sum + item.amount * remainingShare;
     }, 0);
-    const forecast = netBalance + (income + currentAnnualIncome) * remainingShare - remainingExpenses - (payments + currentAnnualCosts) * remainingShare;
+    const forecast = netBalance + (income + currentAnnualIncome) * remainingShare - remainingExpenses - payments * remainingShare;
     const totalDebt = active.commitments.reduce((sum, item) => sum + item.balance, 0);
-    const plannedOutflow = expenses + annualReserve + payments;
-    return { income, annualIncome, currentAnnualIncome, currentAnnualCosts, cardPayments, expenses, annualTotal, annualReserve, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt, plannedOutflow };
+    const plannedOutflow = expenses + payments;
+    return { income, annualIncome, currentAnnualIncome, expenses, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt, plannedOutflow };
   }, [active]);
 
   const groupedExpenses = useMemo(() => [...new Set(active.expenses.map((item) => item.category))].map((category) => ({
     category,
     value: active.expenses.filter((item) => item.category === category).reduce((sum, item) => sum + monthlyExpense(item), 0),
     color: active.categoryColors[category] ?? defaultCategoryColors[category] ?? "#938178",
-  })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value), [active.expenses, active.categoryColors]);
+  })).sort((a, b) => b.value - a.value || a.category.localeCompare(b.category, "de")), [active.expenses, active.categoryColors]);
 
   const savingsMetrics = useMemo(() => {
     const items = active.savings.map((item) => ({ ...item, value: savingValue(item) })).sort((a, b) => b.value - a.value);
@@ -405,13 +398,12 @@ export default function Home() {
     setEditing(true);
   }
 
-  function openFocusedEditor(section: EditorScope, add?: "account" | "income" | "expense" | "annual" | "loan" | "goal" | "security" | "saving", target?: string) {
+  function openFocusedEditor(section: EditorScope, add?: "account" | "income" | "expense" | "loan" | "goal" | "security" | "saving", target?: string) {
     const next = structuredClone(orderedPlan(plan ?? emptyPlan()));
     let nextTarget = target ?? null;
     if (add === "account") next.accounts.push({ id: uid(), name: "", type: "bank", balance: 0 });
     if (add === "income") next.incomes.push({ id: uid(), name: "", amount: 0, annual: false, month: undefined });
     if (add === "expense") { const id = uid(); next.expenses.push({ id, name: "", amount: 0, category: target && categories.includes(target) ? target : "Lebenshaltung", bookingDay: 0 }); nextTarget = target && categories.includes(target) ? target : `item:${id}`; }
-    if (add === "annual") next.annualCosts.push({ id: uid(), name: "", amount: 0, month: new Date().getMonth() });
     if (add === "loan") { const id = uid(); next.commitments.push({ id, name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }); nextTarget = id; }
     if (add === "goal") { const id = uid(); next.goals.push({ id, name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }); nextTarget = id; }
     if (add === "security") { const id = uid(); next.savings.push({ id, name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }); nextTarget = id; }
@@ -436,7 +428,7 @@ export default function Home() {
       const response = await fetch("/api/account", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: next, revision }),
+        body: JSON.stringify({ plan: storagePlan(next), revision }),
       });
       if (response.status === 409) {
         setSyncStatus("conflict");
@@ -472,7 +464,6 @@ export default function Home() {
     if (step === 1 && !draft.accounts.some((item) => item.name.trim())) return "Bitte lege mindestens ein Konto oder eine Karte an.";
     if (step === 2 && !draft.incomes.some((item) => !item.annual && item.name.trim() && item.amount > 0)) return "Bitte trage mindestens ein monatliches Einkommen mit Betrag ein.";
     if (step === 3 && draft.expenses.some((item) => item.amount > 0 && !item.name.trim())) return "Bitte ergänze zu jedem eingetragenen Betrag eine Bezeichnung.";
-    if (step === 4 && draft.annualCosts.some((item) => !item.name.trim() || item.amount <= 0)) return "Bitte vervollständige die angelegten Jahreskosten oder entferne den Eintrag.";
     if (step === 4 && draft.commitments.some((item) => !item.name.trim() || item.balance <= 0 || item.payment <= 0)) return "Bitte vervollständige angelegte Kredite mit Name, Restschuld und Monatsrate.";
     if (step === 5 && draft.goals.some((item) => !item.name.trim() || item.target <= 0)) return "Bitte vervollständige angelegte Ziele mit Name und Zielbetrag.";
     return "";
@@ -578,7 +569,7 @@ export default function Home() {
 
   async function exportPlan() {
     if (!plan) return;
-    const backup = JSON.stringify(plan, null, 2);
+    const backup = JSON.stringify(storagePlan(plan), null, 2);
     const filename = `njora-sicherung-${localDay()}.json`;
     if (Capacitor.isNativePlatform()) {
       try {
@@ -714,24 +705,16 @@ export default function Home() {
   const currentMonthName = new Intl.DateTimeFormat("de-DE", { month: "long" }).format(new Date());
   const currentSpecials = [
     ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: item.amount, type: "income" as const })),
-    ...active.annualCosts.filter((item) => item.month === currentMonth).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
+    ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
   ];
-  const monthlyCategories = new Map(groupedExpenses.map((item) => [item.category, item.value]));
-  for (const card of active.accounts) {
-    if (cardPayment(card) <= 0) continue;
-    const category = card.category ?? "Kreditkarten";
-    monthlyCategories.set(category, (monthlyCategories.get(category) ?? 0) + cardPayment(card));
-  }
   const monthOutflows = [
-    ...Array.from(monthlyCategories, ([label, value]) => ({ label, value, color: active.categoryColors[label] ?? defaultCategoryColors[label] ?? "#9279a5" })),
+    ...groupedExpenses.map(({ category: label, value, color }) => ({ label, value, color })),
     ...(metrics.payments ? [{ label: "Kreditraten", value: metrics.payments, color: "#f2b1a5" }] : []),
-    ...(metrics.annualReserve ? [{ label: "Jahresrücklage", value: metrics.annualReserve, color: "#e5ba58" }] : []),
   ].sort((a, b) => b.value - a.value);
   const editorCopy: Record<EditorScope, { eyebrow: string; title: string; intro: string }> = {
     accounts: { eyebrow: "Konten & Karten", title: "Konten bearbeiten", intro: "Passe ausschließlich deine Konten und Karten an. Aktuelle Stände pflegst du weiterhin am schnellsten über den Check-in." },
     income: { eyebrow: "Einkommen", title: "Einkommen bearbeiten", intro: "Pflege hier ausschließlich deine monatlichen und jährlichen Einkommensquellen. Jahreszuflüsse erscheinen nur in ihrem hinterlegten Monat." },
     expenses: { eyebrow: "Monatsplan", title: "Fixkosten bearbeiten", intro: "Wähle Betrag, Kategorie und Zahlungsrhythmus deiner Fixkosten." },
-    annual: { eyebrow: "Jahresplanung", title: "Jahreskosten bearbeiten", intro: "Pflege unregelmäßige Kosten mit Betrag und Fälligkeitsmonat – Njora berechnet daraus die Monatsrücklage." },
     specials: { eyebrow: "Sonderposten", title: "Unregelmäßig, aber planbar", intro: "Pflege jährliche Einnahmen und Ausgaben mit ihrem jeweiligen Monat. So weißt du frühzeitig, was besonders wird." },
     loans: { eyebrow: "Verbindlichkeiten", title: "Kredite bearbeiten", intro: "Passe Restschuld und Rate an oder ergänze optionale Vertragsdetails für eine genauere Prognose." },
     goals: { eyebrow: "Ziele", title: "Ziele bearbeiten", intro: "Lege Zielbetrag, aktuellen Stand und optional ein Zieldatum fest. Eine notwendige Sparrate wird nur für Terminziele berechnet." },
@@ -811,12 +794,6 @@ export default function Home() {
           </article>
           <div className="section-title financial-heading"><h2>Fixkosten</h2><TitleAmount value={metrics.expenses} label="Ø pro Monat" /></div>
           <div className="category-details">{groupedExpenses.map((group) => <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}><div className="category-head"><div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div><div><strong>{euro(group.value)} / Monat</strong><button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.category)}>Ändern</button></div></div>{active.expenses.filter((item) => item.category === group.category).map((item) => <div className="detail-row" key={item.id}><span>{item.name}<small>{frequencies[item.frequency ?? "monthly"]}{item.frequency && item.frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}</small>{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b></div>)}</article>)}<button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
-          {active.accounts.some((account) => account.type === "credit") && <article className="detail-card">
-            <div className="section-title compact"><h2>Kreditkartenraten</h2><div className="heading-actions"><TitleAmount value={metrics.cardPayments} label="pro Monat" /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("accounts")}>Karten bearbeiten</button></div></div>
-            {active.accounts.filter((account) => account.type === "credit").map((card) => <div className="detail-row" key={card.id}>
-              <span>{card.name}<small>{card.category ?? "Kreditkarten"}</small></span><b>{cardPayment(card) > 0 ? euro(cardPayment(card)) + " / Monat" : "Keine Rate festgelegt"}</b>
-            </div>)}
-          </article>}
         </section>}
 
         {activeView === "loans" && <section className="view" aria-labelledby="loans-title">
@@ -850,10 +827,10 @@ export default function Home() {
 
         {activeView === "more" && <section className="view" aria-labelledby="more-title">
           <ViewHeader id="more-title" eyebrow="Account & Einstellungen" title="Dein persönlicher Bereich" copy={cloudUser?.local ? "Lokale Datenhaltung und die Pflege deines Finanzplans an einem Ort." : "Synchronisierung, Datenschutz und die Pflege deines Finanzplans an einem Ort."} />
-          <article className="detail-card annual-card"><div className="section-title compact"><div><p className="eyebrow">Jahreskosten</p><h2>Unregelmäßig, aber planbar</h2></div><span>{euro(metrics.annualTotal)} im Jahr</span></div><div className="month-strip">{months.map((month, index) => {
-            const sum = active.annualCosts.filter((item) => item.month === index).reduce((total, item) => total + item.amount, 0);
+          <article className="detail-card annual-card"><div className="section-title compact"><div><h2>Fälligkeiten im Jahresverlauf</h2></div></div><div className="month-strip">{months.map((month, index) => {
+            const sum = active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, index)).reduce((total, item) => total + item.amount, 0);
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
-          })}</div><div className="annual-list">{active.annualCosts.map((item) => <article key={item.id}><span>{months[item.month]}</span><div><strong>{item.name}</strong><small>aus der Monatsrücklage</small></div><b>{euro(item.amount)}</b></article>)}<button className="annual-add" type="button" onClick={() => openFocusedEditor("annual", "annual")}><span>+</span><div><strong>Jahreskosten ergänzen</strong><small>Fälligkeit und Betrag eintragen</small></div></button></div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("annual")}>Jahreskosten ändern</button></article>
+          })}</div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button></article>
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
@@ -890,10 +867,7 @@ export default function Home() {
 
             {onboardingStep === 1 && <>
               <p className="eyebrow">Konten & Karten</p><h2 id="onboarding-title">Wo liegt dein Geld heute?</h2><p className="onboarding-intro">Nur Name und aktueller Stand – eine Bankverbindung oder IBAN ist nicht nötig.</p>
-              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <div className="payment-fields">
-                <label>Monatliche Kartenrate (€)<DecimalInput signed={false} value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
-                <label>Kategorie<select value={item.category ?? "Kreditkarten"} onChange={(event) => updateList("accounts", index, { category: event.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
-              </div>}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput fixedMinus={item.type === "credit"} value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
             </>}
 
@@ -911,8 +885,8 @@ export default function Home() {
             </>}
 
             {onboardingStep === 4 && <>
-              <p className="eyebrow">Jahresplanung & Kredite</p><h2 id="onboarding-title">Gibt es größere Verpflichtungen?</h2><p className="onboarding-intro">Beides ist optional. Jahreskosten werden automatisch auf den Monat umgelegt; Kredite fließen mit ihrer Rate in deinen Spielraum ein.</p>
-              <div className="onboarding-optional-groups"><section><div className="onboarding-group-head"><div><strong>Jährliche Ausgaben</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, annualCosts: [...draft.annualCosts, { id: uid(), name: "", amount: 0, month: 0 }] })}>Jahreskosten</AddButton></div>{draft.annualCosts.map((item, index) => <div className="onboarding-row annual" key={item.id}><input aria-label="Jahreskosten" value={item.name} onChange={(e) => updateList("annualCosts", index, { name: e.target.value })} placeholder="z. B. KFZ-Steuer" /><span className="currency-input"><DecimalInput aria-label="Jahresbetrag" value={item.amount} onValueChange={(value) => updateList("annualCosts", index, { amount: value })} placeholder="pro Jahr" /><b>€</b></span><select aria-label="Fälligkeitsmonat" value={item.month} onChange={(e) => updateList("annualCosts", index, { month: Number(e.target.value) })}>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><RemoveButton onClick={() => removeListItem("annualCosts", index)} /></div>)}</section>
+              <p className="eyebrow">Kredite</p><h2 id="onboarding-title">Zahlst du einen Kredit zurück?</h2><p className="onboarding-intro">Eine vereinbarte Rate kannst du hier in deinen Monatsplan aufnehmen.</p>
+              <div className="onboarding-optional-groups">
               <section><div className="onboarding-group-head"><div><strong>Kredite & Verpflichtungen</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit</AddButton></div>{draft.commitments.map((item, index) => <div className="onboarding-row loan" key={item.id}><input aria-label="Kreditname" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Autokredit" /><span className="currency-input"><DecimalInput aria-label="Restschuld" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><b>€</b></span><span className="currency-input"><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><b>€</b></span><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>)}</section></div>
             </>}
 
@@ -938,10 +912,7 @@ export default function Home() {
           {!editorScope && <div className="editor-section basis-grid"><label>Profilname<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Budget" required /></label><label>Check-in-Rhythmus<select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="daily">täglich</option><option value="weekly">wöchentlich</option></select></label></div>}
 
           {(!editorScope || editorScope === "accounts") && <EditorSection id="editor-accounts" title="Konten & Karten" subtitle="Nur der aktuelle Stand – keine Bankverbindung nötig">
-            {draft.accounts.map((item, index) => <div className="editor-row four" key={item.id}><input aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /><DecimalInput aria-label="Aktueller Stand" value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /><select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select>{item.type === "credit" && <div className="payment-fields">
-                <label>Monatliche Kartenrate (€)<DecimalInput signed={false} value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
-                <label>Kategorie<select value={item.category ?? "Kreditkarten"} onChange={(event) => updateList("accounts", index, { category: event.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
-              </div>}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
+            {draft.accounts.map((item, index) => <div className="editor-row four" key={item.id}><input aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /><DecimalInput aria-label="Aktueller Stand" fixedMinus={item.type === "credit"} value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /><select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select><RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
             <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
           </EditorSection>}
 
@@ -955,16 +926,12 @@ export default function Home() {
             <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: true, month: currentMonth }] })}>Jährliche Einnahme</AddButton>
           </EditorSection>}
 
-          {(!editorScope || editorScope === "expenses") && <EditorSection id="editor-expenses" title="Fixkosten" subtitle="Nach Lebensbereichen statt als ein großer Block">
+          {(!editorScope || editorScope === "expenses" || editorScope === "specials") && <EditorSection id="editor-expenses" title="Fixkosten" subtitle="Betrag, Rhythmus und Fälligkeit">
             {editorTarget && !editorTarget.startsWith("item:") && <div className="category-color-editor"><div><span className="category-color-preview" style={{ backgroundColor: draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget] }} /><span><strong>Kategoriefarbe</strong><small>Für Diagramm und Monatsübersicht</small></span></div><label><input aria-label={`Farbe für ${editorTarget}`} type="color" value={draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget]} onChange={(e) => setDraft({ ...draft, categoryColors: { ...draft.categoryColors, [editorTarget]: e.target.value } })} /></label></div>}
-            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /><DecimalInput aria-label="Betrag je Zahlung" value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="Betrag je Zahlung" /><select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select><input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
-            {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget && categories.includes(editorTarget) ? editorTarget : "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>}
+            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /><DecimalInput aria-label="Betrag je Zahlung" value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="Betrag je Zahlung" /><select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select><input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
+            {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget ?? "Wohnen", bookingDay: 0, ...(editorScope === "specials" ? { frequency: "annual" as const, month: currentMonth } : {}) }] })}>Ausgabe</AddButton>}
           </EditorSection>}
 
-          {(!editorScope || editorScope === "annual" || editorScope === "specials") && <EditorSection id="editor-annual" title="Jährliche Ausgaben" subtitle="Fälligkeit sichtbar, Rücklage automatisch">
-            {draft.annualCosts.map((item, index) => <div className="editor-row four" key={item.id}><input aria-label="Jahreskosten" value={item.name} onChange={(e) => updateList("annualCosts", index, { name: e.target.value })} placeholder="z. B. KFZ-Steuer" /><DecimalInput aria-label="Jahresbetrag" value={item.amount} onValueChange={(value) => updateList("annualCosts", index, { amount: value })} placeholder="pro Jahr" /><select aria-label="Fällig im Monat" value={item.month} onChange={(e) => updateList("annualCosts", index, { month: Number(e.target.value) })}>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><RemoveButton onClick={() => removeListItem("annualCosts", index)} /></div>)}
-            <AddButton onClick={() => setDraft({ ...draft, annualCosts: [...draft.annualCosts, { id: uid(), name: "", amount: 0, month: editorScope === "specials" ? currentMonth : 0 }] })}>Jahreskosten</AddButton>
-          </EditorSection>}
 
           {(!editorScope || editorScope === "loans") && <EditorSection id="editor-loans" title="Kredite & Verpflichtungen" subtitle="Restschuld und Rate reichen aus; Vertragsdetails verbessern die Prognose">
             {draft.commitments.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="loan-editor-item" key={item.id}><div className="editor-row four"><input aria-label="Verpflichtung" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Immobilienkredit" /><DecimalInput aria-label="Restbetrag" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><RemoveButton onClick={() => removeListItem("commitments", index)} /></div><details className="loan-details" open={Boolean(item.interestRate || item.termMonths || item.extraPayment)}><summary>Optionale Vertragsdetails für genauere Prognose</summary><div><label>Zinssatz p. a.<span className="currency-input"><DecimalInput aria-label="Zinssatz pro Jahr" value={item.interestRate} onValueChange={(value) => updateList("commitments", index, { interestRate: value })} placeholder="z. B. 3,5" /><b>%</b></span></label><label>Restlaufzeit<span className="currency-input"><input aria-label="Restlaufzeit in Monaten" inputMode="numeric" value={item.termMonths || ""} onChange={(e) => updateList("commitments", index, { termMonths: numberValue(e.target.value) })} placeholder="Monate" /><b>M</b></span></label><label>Zusätzliche Monatsrate<span className="currency-input"><DecimalInput aria-label="Zusätzliche monatliche Tilgung" value={item.extraPayment} onValueChange={(value) => updateList("commitments", index, { extraPayment: value })} placeholder="optional" /><b>€</b></span></label></div></details></div>)}
@@ -1036,7 +1003,7 @@ export default function Home() {
         <p className="editor-intro">Ein Check-in für heute aktualisiert deine Konten. Frühere Stände werden im Verlauf ergänzt.</p>
         <form onSubmit={saveCheckIn}>
           <label>Stand vom<input type="date" max={localDay()} value={checkInDate} onChange={(e) => setCheckInDate(e.target.value)} required /></label>
-          <div className="checkin-accounts">{checkInAccounts.map((account, index) => <div className="checkin-account-edit" key={account.id}><input aria-label="Kontoname" value={account.name} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Kontoname" /><select aria-label={`Typ von ${account.name || "Konto"}`} value={account.type} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: e.target.value as Account["type"] } : item))}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select><span className="currency-input"><DecimalInput aria-label={`Stand von ${account.name || "Konto"}`} value={account.balance} onValueChange={(value) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, balance: value } : item))} placeholder="Stand" /><b>€</b></span>{checkInAccounts.length > 1 && <RemoveButton onClick={() => setCheckInAccounts((current) => current.filter((_, itemIndex) => itemIndex !== index))} />}</div>)}<button className="account-add-line" type="button" onClick={() => setCheckInAccounts((current) => [...current, { id: uid(), name: "", type: "bank", balance: 0 }])}><span>+</span> Konto oder Karte hinzufügen</button></div>
+          <div className="checkin-accounts">{checkInAccounts.map((account, index) => <div className="checkin-account-edit" key={account.id}><input aria-label="Kontoname" value={account.name} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Kontoname" /><select aria-label={`Typ von ${account.name || "Konto"}`} value={account.type} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: e.target.value as Account["type"] } : item))}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select><span className="currency-input"><DecimalInput aria-label={`Stand von ${account.name || "Konto"}`} fixedMinus={account.type === "credit"} value={account.balance} onValueChange={(value) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, balance: value } : item))} placeholder="Stand" /><b>€</b></span>{checkInAccounts.length > 1 && <RemoveButton onClick={() => setCheckInAccounts((current) => current.filter((_, itemIndex) => itemIndex !== index))} />}</div>)}<button className="account-add-line" type="button" onClick={() => setCheckInAccounts((current) => [...current, { id: uid(), name: "", type: "bank", balance: 0 }])}><span>+</span> Konto oder Karte hinzufügen</button></div>
           <label>Notiz (optional)<input value={checkInNote} onChange={(e) => setCheckInNote(e.target.value)} placeholder="z. B. Kreditkarte bereits ausgeglichen" /></label>
           <div className="checkin-preview"><span>Netto-Stand am gewählten Datum</span><strong>{euro(checkInAccounts.reduce((sum, account) => sum + (account.type === "credit" ? -account.balance : account.balance), 0))}</strong></div>
           {saveNotice}

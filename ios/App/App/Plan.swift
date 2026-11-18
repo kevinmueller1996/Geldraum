@@ -50,7 +50,7 @@ struct Plan: Codable, Equatable {
     init(from decoder: Decoder) throws { fields = try decoder.singleValueContainer().decode(Record.self) }
     func encode(to encoder: Encoder) throws {
         var value = encoder.singleValueContainer()
-        try value.encode(fields)
+        try value.encode(storagePlan.fields)
     }
 
     var name: String { fields.text("name", default: "Mein Finanzplan") }
@@ -100,12 +100,53 @@ struct Plan: Codable, Equatable {
             }
             return saving
         }
-        return plan
+        return plan.unifiedCosts
     }
 
     subscript(section: PlanSection) -> [PlanItem] {
         get { fields[section.rawValue]?.array?.compactMap { $0.object.map(PlanItem.init) } ?? [] }
         set { fields[section.rawValue] = .array(newValue.map { .object($0.fields) }) }
+    }
+
+    var unifiedCosts: Plan {
+        guard !self[.annual].isEmpty else { return self }
+        var result = self
+        var expenses = self[.expenses]
+        var used = Set(expenses.map(\.id))
+        let reserved = Set(self[.annual].map(\.id))
+        var suffix = 0
+        for var entry in self[.annual] {
+            if used.contains(entry.id) {
+                var id: String
+                repeat {
+                    suffix += 1
+                    id = "legacy-annual-\(suffix)"
+                } while used.contains(id) || reserved.contains(id)
+                entry.fields["id"] = .string(id)
+            }
+            used.insert(entry.id)
+            entry.fields["frequency"] = .string("annual")
+            if entry.fields.text("category").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                entry.fields["category"] = .string("Sonstige")
+            }
+            expenses.append(entry)
+        }
+        result[.expenses] = expenses
+        result[.annual] = []
+        return result
+    }
+
+    // Older servers accept 250 recurring entries plus 100 annual entries.
+    var storagePlan: Plan {
+        let expenses = self[.expenses]
+        guard expenses.count > PlanSection.expenses.limit, self[.annual].isEmpty else { return self }
+        let overflow = expenses.count - PlanSection.expenses.limit
+        let annual = expenses.filter { $0.frequency == .annual }.suffix(overflow)
+        let ids = Set(annual.map(\.id))
+        var result = self
+        result[.expenses] = expenses.filter { !ids.contains($0.id) }
+        result[.annual] = Array(annual)
+        return result
     }
 
     func entriesByDueDate(in section: PlanSection) -> [PlanItem] {
@@ -163,7 +204,7 @@ enum ExpenseFrequency: String, CaseIterable {
     }
 }
 
-let standardExpenseCategories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Kreditkarten"]
+let standardExpenseCategories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Sonstige"]
 
 struct PlanItem: Identifiable, Equatable {
     var fields: Record
@@ -172,8 +213,6 @@ struct PlanItem: Identifiable, Equatable {
     var name: String { fields.text("name") }
     var frequency: ExpenseFrequency { ExpenseFrequency(rawValue: fields.text("frequency")) ?? .monthly }
     var monthlyExpense: Double { fields.amount("amount") / Double(frequency.months) }
-    var cardPayment: Double { fields.text("type") == "credit" ? max(0, fields.amount("monthlyPayment")) : 0 }
-    var cardCategory: String { fields.text("category", default: "Kreditkarten") }
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
     var savingValue: Double {
         if fields.text("kind") == "security" {
@@ -283,20 +322,30 @@ struct PlanMetrics {
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
-    var creditCards: [PlanItem] { plan[.accounts].filter { $0.fields.text("type") == "credit" } }
-    var cardPayments: Double { creditCards.reduce(0) { $0 + $1.cardPayment } }
-    var expenses: Double { plan[.expenses].reduce(cardPayments) { $0 + $1.monthlyExpense } }
-    var expensesByCategory: [String: Double] {
+    var expenses: Double { plan[.expenses].reduce(0) { $0 + $1.monthlyExpense } }
+    var rankedCategories: [(name: String, amount: Double)] {
         var totals: [String: Double] = [:]
-        for item in plan[.expenses] { totals[item.fields.text("category"), default: 0] += item.monthlyExpense }
-        for card in creditCards where card.cardPayment > 0 { totals[card.cardCategory, default: 0] += card.cardPayment }
-        return totals
+        var labels: [String: String] = [:]
+        for item in plan[.expenses] {
+            let label = item.fields.text("category").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            let name = label.isEmpty ? "Sonstige" : label
+            let key = name.lowercased()
+            if labels[key] == nil { labels[key] = name }
+            totals[key, default: 0] += item.monthlyExpense
+        }
+        return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value) }.sorted {
+            if $0.amount != $1.amount { return $0.amount > $1.amount }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
     }
-    var reserve: Double { plan[.annual].sum("amount") / 12 }
     var payments: Double { plan[.loans].sum("payment") + plan[.loans].sum("extraPayment") }
-    var available: Double { income - expenses - reserve - payments }
+    var available: Double { income - expenses - payments }
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
-    var annualCosts: [PlanItem] { plan[.annual].filter { $0.fields.integer("month") == month } }
+    var specialCosts: [PlanItem] {
+        plan.entriesByDueDate(in: .expenses).filter {
+            $0.frequency != .monthly && $0.frequency.isDue(in: month, anchor: $0.fields.integer("month") ?? 0)
+        }
+    }
     var forecast: Double {
         let day = calendar.component(.day, from: today)
         let days = calendar.range(of: .day, in: .month, for: today)?.count ?? 30
@@ -307,7 +356,7 @@ struct PlanMetrics {
             let fraction = booking == 0 ? share : (booking > day ? 1.0 : 0.0)
             return sum + item.fields.amount("amount") * fraction
         }
-        return net + (incomeThisMonth - payments - annualCosts.sum("amount")) * share - remainingExpenses
+        return net + (incomeThisMonth - payments) * share - remainingExpenses
     }
 
     func net(for snapshot: PlanItem) -> Double {
@@ -393,7 +442,7 @@ extension Plan {
             return item("", ["date": .string(PlanDate.string(date)), "balances": .object([:]),
                              "note": .string(""), "netBalance": .number(amount)])
         }
-        return plan
+        return plan.unifiedCosts
     }
 }
 #endif
