@@ -84,7 +84,7 @@ werden, da Vercel die Account-Routen derzeit dorthin weiterleitet:
 
 - `RESEND_API_KEY`
 - `AUTH_EMAIL_FROM`, zum Beispiel `Njora <konto@njora.de>`
-- `AUTH_PUBLIC_ORIGIN=https://njora.vercel.app`
+- `AUTH_PUBLIC_ORIGIN=https://njora.de`
 - `AUTH_REQUIRE_EMAIL_VERIFICATION=1`
 
 Vor dem Aktivieren müssen Absenderdomain, SPF, DKIM und DMARC eingerichtet
@@ -112,10 +112,9 @@ folgende Environment Variables in Vercel gesetzt werden:
 Die Werte gehören ausschließlich in die Vercel-Projekteinstellungen und
 dürfen nicht in GitHub committed werden.
 
-Wenn Vercel weiterhin über das Cloudflare-Backend arbeitet, muss zusätzlich
-`GELDRAUM_BACKEND_ORIGIN` explizit auf dessen HTTPS-Origin zeigen. Ohne diesen
-Wert oder ohne eine vollständige direkte D1-Konfiguration schlagen API-Aufrufe
-bewusst geschlossen fehl; es gibt keinen stillen Produktions-Fallback.
+Ohne direkte D1-Konfiguration verwendet Vercel das bestehende Njora-Backend.
+Mit `GELDRAUM_BACKEND_ORIGIN` lässt sich dessen HTTPS-Adresse explizit setzen.
+Eine nur teilweise konfigurierte D1-Verbindung meldet einen Fehler.
 
 ## gettex-Kurse aktivieren
 

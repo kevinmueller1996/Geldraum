@@ -17,14 +17,15 @@ async function withPreview(callback) {
   try {
     const deadline = Date.now() + 120_000;
     while (Date.now() < deadline) {
+      let response;
       try {
-        const response = await fetch(`http://localhost:${port}/`, {
+        response = await fetch(`http://localhost:${port}/`, {
           headers: { accept: "text/html" },
         });
-        if (response.ok) return await callback(response, `http://localhost:${port}`);
       } catch {
         // The preview process is still starting.
       }
+      if (response?.ok) return await callback(response, `http://localhost:${port}`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
     throw new Error(`Preview did not start in time.\n${output}`);

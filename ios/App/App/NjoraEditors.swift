@@ -29,20 +29,33 @@ struct PlanField: View {
     }
 }
 
-extension View {
-    func planFormStyle() -> some View {
-        self.scrollContentBackground(.hidden)
+private struct PlanFormStyle: ViewModifier {
+    @State private var editingField = false
+
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
             .background(NjoraTheme.paper)
             .scrollDismissesKeyboard(.interactively)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Tastatur schließen") {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if editingField {
+                    HStack {
+                        Spacer()
+                        Button("Tastatur schließen") {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        }
+                        .padding(.horizontal).frame(minHeight: 44)
                     }
+                    .background(.bar)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidBeginEditingNotification)) { _ in editingField = true }
+            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidEndEditingNotification)) { _ in editingField = false }
     }
+}
+
+extension View {
+    func planFormStyle() -> some View { modifier(PlanFormStyle()) }
 }
 
 struct PlanEditor: View {
