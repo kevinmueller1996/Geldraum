@@ -1,6 +1,10 @@
 import Foundation
 import Security
 
+func isRequestCancellation(_ error: Error) -> Bool {
+    error is CancellationError || (error as? URLError)?.code == .cancelled
+}
+
 struct APIError: LocalizedError {
     let status: Int
     let message: String
@@ -109,8 +113,7 @@ actor NjoraAPI {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    init() {
-        let config = URLSessionConfiguration.ephemeral
+    init(configuration config: URLSessionConfiguration = .ephemeral) {
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.urlCache = nil
@@ -139,10 +142,28 @@ actor NjoraAPI {
 
     func save(_ plan: Plan, revision: Int?) async throws -> Int {
         struct Saved: Decodable { let revision: Int }
-        let reply: Saved = try await request("/api/account", method: "PUT", body: [
-            "plan": .object(plan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
-        ])
-        return reply.revision
+        do {
+            let reply: Saved = try await request("/api/account", method: "PUT", body: [
+                "plan": .object(plan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
+            ])
+            return reply.revision
+        } catch {
+            guard error is URLError || error is DecodingError || isRequestCancellation(error)
+                    || (error as? APIError).map({ $0.status >= 500 }) == true else { throw error }
+            // A lost acknowledgement may follow a committed write. Only read back, never replay the PUT.
+            if !Task.isCancelled {
+                let current: AccountPayload
+                do { current = try await account() }
+                catch let auth as APIError where auth.status == 401 { throw auth }
+                catch { throw APIError(0, "Njora konnte das Speichern nicht bestätigen. Prüfe die Verbindung und lade den aktuellen Stand.") }
+                if current.plan == plan, let saved = current.revision, saved > (revision ?? 0) { return saved }
+                if current.revision != revision {
+                    throw APIError(409, "Der Finanzplan wurde zwischenzeitlich geändert. Lade den aktuellen Stand.")
+                }
+                throw APIError(0, "Beim Nachladen war die Änderung noch nicht sichtbar. Bitte versuche es erneut.")
+            }
+            throw APIError(0, "Njora konnte das Speichern nicht bestätigen. Prüfe die Verbindung und lade den aktuellen Stand.")
+        }
     }
 
     func endSession(deleteAccount: Bool) async throws {
@@ -202,11 +223,20 @@ actor NjoraAPI {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         if includeSession, let token { request.setValue("\(Self.cookieName)=\(token)", forHTTPHeaderField: "Cookie") }
-        let (data, urlResponse) = try await session.data(for: request)
+        let data: Data
+        let urlResponse: URLResponse
+        do {
+            (data, urlResponse) = try await session.data(for: request)
+        } catch let error as URLError where (method == "GET" || path == "/api/market/quotes")
+                    && [.timedOut, .networkConnectionLost].contains(error.code) {
+            try await Task.sleep(nanoseconds: 300_000_000)
+            (data, urlResponse) = try await session.data(for: request)
+        }
         guard let response = urlResponse as? HTTPURLResponse else { throw APIError(0, "Ungültige Antwort vom Njora-Dienst.") }
         guard (200...299).contains(response.statusCode) else {
             let reply = try? decoder.decode(Record.self, from: data)
-            throw APIError(response.statusCode, reply?.text("error", default: "Der Njora-Dienst konnte die Anfrage nicht bearbeiten.") ?? "Der Njora-Dienst ist gerade nicht verfügbar.", code: reply?["code"]?.string)
+            let fallback = response.statusCode == 401 ? "Bitte melde dich erneut an." : "Der Njora-Dienst konnte die Anfrage nicht bearbeiten."
+            throw APIError(response.statusCode, reply?.text("error", default: fallback) ?? fallback, code: reply?["code"]?.string)
         }
         return (data, response)
     }

@@ -82,7 +82,7 @@ struct PlanEditor: View {
                     PlanField(title: "Bezeichnung", text: string("name"), prompt: section.itemTitle)
                 }
                 Section { fields }
-                Notice(text: validation.isEmpty ? store.message : validation)
+                Notice(text: validation.isEmpty ? store.notice(in: .editor) : validation)
                 if store.conflict {
                     Button("Neueren Plan laden und diesen Entwurf verwerfen", role: .destructive) {
                         Task { if await store.refresh() { dismiss() } }
@@ -103,6 +103,7 @@ struct PlanEditor: View {
                         .disabled(store.busy || store.conflict || item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .onDisappear { store.clearNotice(in: .editor) }
             .interactiveDismissDisabled(store.busy)
             .sheet(isPresented: $showSearch) {
                 SecuritySearchView(store: store) { result in
@@ -321,7 +322,7 @@ struct CheckInView: View {
                     }
                 }
                 PlanField(title: "Notiz", text: $note, prompt: "Optional")
-                Notice(text: validation.isEmpty ? store.message : validation)
+                Notice(text: validation.isEmpty ? store.notice(in: .editor) : validation)
                 if store.conflict {
                     Button("Neueren Plan laden und Entwurf verwerfen", role: .destructive) {
                         Task { if await store.refresh() { dismiss() } }
@@ -329,6 +330,7 @@ struct CheckInView: View {
                 }
             }
             .planFormStyle()
+            .onDisappear { store.clearNotice(in: .editor) }
             .interactiveDismissDisabled(store.busy)
             .navigationTitle("Check-in")
             .navigationBarTitleDisplayMode(.inline)
@@ -429,16 +431,16 @@ struct SettingsView: View {
             Section("Finanzplan") {
                 Button("Sicherung als JSON exportieren", action: export)
                 Button("JSON-Sicherung importieren") { importing = true }
-                Button("Plan neu laden") { Task { await store.refresh() } }
+                Button("Plan neu laden") { Task { await store.refresh(in: .settings) } }
             }
             Section("Konto") {
                 Button("Abmelden") {
-                    Task { await store.endSession(deleteAccount: false); if store.state == .signedOut { dismiss() } }
+                    Task { await store.endSession(deleteAccount: false, in: .settings); if store.state == .signedOut { dismiss() } }
                 }.disabled(store.busy)
                 Button("Konto löschen", role: .destructive) { delete = true }.disabled(store.busy)
                 LegalLinksView()
             }
-            Notice(text: notice.isEmpty ? store.message : notice)
+            Notice(text: notice.isEmpty ? store.notice(in: .settings) : notice)
         }
         .planFormStyle()
         .navigationTitle("Konto & Einstellungen")
@@ -471,7 +473,7 @@ struct SettingsView: View {
             if let incoming = importPreview {
                 Button("Sicherung übernehmen", role: .destructive) {
                     notice = ""
-                    Task { if await store.save(incoming) { name = incoming.name; cadence = incoming.cadence } }
+                    Task { if await store.save(incoming, in: .settings) { name = incoming.name; cadence = incoming.cadence } }
                 }
             }
             Button("Abbrechen", role: .cancel) { importPreview = nil }
@@ -482,7 +484,7 @@ struct SettingsView: View {
         }
         .confirmationDialog("Konto und Finanzplan dauerhaft löschen?", isPresented: $delete, titleVisibility: .visible) {
             Button("Konto endgültig löschen", role: .destructive) {
-                Task { await store.endSession(deleteAccount: true); if store.state == .signedOut { dismiss() } }
+                Task { await store.endSession(deleteAccount: true, in: .settings); if store.state == .signedOut { dismiss() } }
             }
         }
     }
@@ -494,7 +496,7 @@ struct SettingsView: View {
         let plan = changed
         notice = ""
         Task {
-            if await store.save(plan), reminderActive { await enableReminder() }
+            if await store.save(plan, in: .settings), reminderActive { await enableReminder() }
         }
     }
 

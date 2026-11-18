@@ -62,10 +62,21 @@ final class NjoraStore: ObservableObject {
     @Published private(set) var plan: Plan?
     @Published private(set) var user: AccountPayload.User?
     @Published private(set) var busy = false
-    @Published var message = ""
+    enum NoticeScope: Hashable {
+        case account, overview, month, section(PlanSection), editor, settings
+    }
+    @Published private var notices: [NoticeScope: String] = [:]
+    var message: String {
+        get { notice(in: .account) }
+        set { notices[.account] = newValue }
+    }
+    func notice(in scope: NoticeScope) -> String { notices[scope] ?? "" }
+    func clearNotice(in scope: NoticeScope) { notices[scope] = nil }
     @Published private(set) var conflict = false
     private var revision: Int?
-    private let api = NjoraAPI()
+    private let api: NjoraAPI
+
+    init(api: NjoraAPI = NjoraAPI()) { self.api = api }
 
     func restore() async {
         #if DEBUG
@@ -84,6 +95,7 @@ final class NjoraStore: ObservableObject {
                     await self.signOutLocally()
                     return
                 }
+                if isRequestCancellation(error) { throw error }
                 self.state = .offline
                 throw error
             }
@@ -108,26 +120,24 @@ final class NjoraStore: ObservableObject {
         }
     }
 
-    func save(_ changed: Plan) async -> Bool {
+    func save(_ changed: Plan, in scope: NoticeScope = .editor) async -> Bool {
         #if DEBUG
         if state == .preview { plan = changed; return true }
         #endif
-        return await run {
+        return await run(in: scope) {
             self.revision = try await self.api.save(changed, revision: self.revision)
+            self.conflict = false
             self.plan = changed
             self.state = .ready
         }
     }
 
     @discardableResult
-    func refresh() async -> Bool {
+    func refresh(in scope: NoticeScope = .editor) async -> Bool {
         #if DEBUG
         if state == .preview { return true }
         #endif
-        let hadConflict = conflict
-        let refreshed = await run { try await self.reload() }
-        if !refreshed && hadConflict && state == .ready { conflict = true }
-        return refreshed
+        return await run(in: scope) { try await self.reload() }
     }
 
     func search(_ query: String) async throws -> [SecuritySuggestion] { try await api.search(query) }
@@ -144,11 +154,11 @@ final class NjoraStore: ObservableObject {
         }
         let symbols = Set(plan[.savings].filter { $0.fields.text("kind") == "security" }
             .map { $0.fields.text("symbol").uppercased() }.filter { !$0.isEmpty }).sorted()
-        guard !symbols.isEmpty else { message = "Lege zuerst ein Wertpapier mit Börsensymbol an."; return }
-        await run {
+        guard !symbols.isEmpty else { notices[.section(.savings)] = "Lege zuerst ein Wertpapier mit Börsensymbol an."; return }
+        await run(in: .section(.savings)) {
             let quotes = try await self.api.quotes(symbols)
             guard !quotes.isEmpty else {
-                self.message = "Für deine Wertpapiere ist gerade kein neuer Kurs verfügbar."
+                self.notices[.section(.savings)] = "Für deine Wertpapiere ist gerade kein neuer Kurs verfügbar."
                 return
             }
             let bySymbol = Dictionary(quotes.map { ($0.symbol, $0) }, uniquingKeysWith: { first, _ in first })
@@ -167,15 +177,20 @@ final class NjoraStore: ObservableObject {
                 return updated
             }
             if changed[.savings] != plan[.savings] {
-                self.revision = try await self.api.save(changed, revision: self.revision)
+                try Task.checkCancellation()
+                // Once the write has started, finish it even if the depot view disappears.
+                let pending = Task { [changed, revision = self.revision, api = self.api] in
+                    try await api.save(changed, revision: revision)
+                }
+                self.revision = try await pending.value
                 self.plan = changed
             }
-            self.message = "\(quotes.count) von \(symbols.count) Kursen abgerufen."
+            self.notices[.section(.savings)] = "\(quotes.count) von \(symbols.count) Kursen abgerufen."
         }
     }
 
-    func endSession(deleteAccount: Bool) async {
-        await run {
+    func endSession(deleteAccount: Bool, in scope: NoticeScope = .account) async {
+        await run(in: scope) {
             try await self.api.endSession(deleteAccount: deleteAccount)
             await self.signOutLocally()
         }
@@ -188,7 +203,8 @@ final class NjoraStore: ObservableObject {
         plan = nil
         revision = nil
         state = .signedOut
-        message = ""
+        notices.removeAll()
+        conflict = false
     }
 
     private func loadAfterAuthentication() async throws {
@@ -198,6 +214,7 @@ final class NjoraStore: ObservableObject {
 
     private func reload() async throws {
         let reply = try await api.account()
+        conflict = false
         user = reply.user
         plan = reply.plan
         revision = reply.revision
@@ -205,19 +222,36 @@ final class NjoraStore: ObservableObject {
     }
 
     @discardableResult
-    private func run(_ operation: () async throws -> Void) async -> Bool {
+    private func run(in scope: NoticeScope = .account, _ operation: () async throws -> Void) async -> Bool {
         guard !busy else { return false }
-        message = ""
-        conflict = false
+        notices[scope] = nil
         busy = true
         defer { busy = false }
         do { try await operation(); return true }
         catch let error as APIError {
-            if error.status == 401, state != .signedOut { await signOutLocally() }
-            conflict = error.status == 409
-            message = error.message
+            if error.status == 401, state != .signedOut {
+                await signOutLocally()
+                message = error.message
+            } else {
+                if error.status == 409 { conflict = true }
+                notices[scope] = error.message
+            }
         } catch {
-            message = "Njora konnte den Dienst gerade nicht erreichen. Bitte versuche es erneut."
+            if isRequestCancellation(error) { return false }
+            if let transport = error as? URLError {
+                switch transport.code {
+                case .notConnectedToInternet, .dataNotAllowed:
+                    notices[scope] = "Dein Gerät ist offline. Versuche es wieder, sobald du Internet hast."
+                case .timedOut:
+                    notices[scope] = "Die Antwort von Njora hat zu lange gedauert. Bitte erneut versuchen."
+                default:
+                    notices[scope] = "Die Verbindung zu Njora wurde unterbrochen. Bitte erneut versuchen."
+                }
+            } else if error is DecodingError {
+                notices[scope] = "Die Antwort von Njora konnte nicht gelesen werden. Bitte aktualisiere die Ansicht."
+            } else {
+                notices[scope] = "Die Anfrage konnte nicht abgeschlossen werden. Bitte erneut versuchen."
+            }
         }
         return false
     }
@@ -395,7 +429,7 @@ struct SetupView: View {
                     plan[.income][0].fields["amount"] = .number(earnings)
                     plan[.accounts][0].fields["balance"] = .number(current)
                     let newPlan = plan
-                    Task { _ = await store.save(newPlan) }
+                    Task { _ = await store.save(newPlan, in: .account) }
                 }.disabled(store.busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.utf16.count > 80)
                 Section("Konto") {
                     Button("Abmelden") { Task { await store.endSession(deleteAccount: false) } }.disabled(store.busy)

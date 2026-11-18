@@ -100,12 +100,12 @@ struct Overview: View {
                         BalanceChart(plan: plan)
                     }.njoraCard()
                 }
-                Notice(text: store.message)
+                Notice(text: store.notice(in: .overview))
             }
             .padding(22).frame(maxWidth: 860).frame(maxWidth: .infinity)
         }
         .background(NjoraTheme.paper)
-        .refreshable { await store.refresh() }
+        .refreshable { await store.refresh(in: .overview) }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
     }
 }
@@ -147,9 +147,9 @@ struct MonthlyPlan: View {
                 ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
                 ForEach(metrics.annualCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
             }
-            Notice(text: store.message)
+            Notice(text: store.notice(in: .month))
         }.scrollContentBackground(.hidden).background(NjoraTheme.paper)
-            .refreshable { await store.refresh() }
+            .refreshable { await store.refresh(in: .month) }
     }
 }
 
@@ -258,9 +258,10 @@ struct PlanSectionView: View {
                         }
                     }
                 }
-                Notice(text: store.message)
+                Notice(text: store.notice(in: .section(section)))
             }
             .scrollContentBackground(.hidden).background(NjoraTheme.paper)
+            .refreshable { await store.refresh(in: .section(section)) }
             .navigationTitle(section.title)
             .task {
                 if section == .savings { await store.refreshQuotes(ifNeeded: true) }
@@ -287,7 +288,7 @@ struct PlanSectionView: View {
                         var changed = plan
                         changed[section] = items.filter { $0.id != item.id }
                         let result = changed
-                        Task { _ = await store.save(result) }
+                        Task { _ = await store.save(result, in: .section(section)) }
                     }
                 }
             }
