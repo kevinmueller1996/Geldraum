@@ -232,10 +232,16 @@ enum PlanSection: String, CaseIterable, Identifiable {
 struct PlanMetrics {
     let plan: Plan
     var today: Date = .now
-    private var calendar: Calendar { .current }
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
+    }
     var month: Int { calendar.component(.month, from: today) - 1 }
     var net: Double { plan[.accounts].reduce(0) { $0 + $1.netBalance } }
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
+    var incomeThisMonth: Double { income + annualIncome.sum("amount") }
+    var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
     var expenses: Double { plan[.expenses].sum("amount") }
     var reserve: Double { plan[.annual].sum("amount") / 12 }
     var payments: Double { plan[.loans].sum("payment") + plan[.loans].sum("extraPayment") }
@@ -251,7 +257,7 @@ struct PlanMetrics {
             let fraction = booking == 0 ? share : (booking > day ? 1.0 : 0.0)
             return sum + item.fields.amount("amount") * fraction
         }
-        return net + (income + annualIncome.sum("amount") - payments - annualCosts.sum("amount")) * share - remainingExpenses
+        return net + (incomeThisMonth - payments - annualCosts.sum("amount")) * share - remainingExpenses
     }
 
     func net(for snapshot: PlanItem) -> Double {

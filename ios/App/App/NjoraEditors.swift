@@ -195,9 +195,10 @@ struct PlanEditor: View {
 
     private func monthPicker() -> some View {
         Picker("Fälligkeitsmonat", selection: Binding(
-            get: { item.fields.integer("month") ?? 0 },
+            get: { item.fields.integer("month") ?? -1 },
             set: { item.fields["month"] = .number(Double($0)) }
         )) {
+            if item.fields.integer("month") == nil { Text("Monat wählen").tag(-1) }
             ForEach(monthNames.indices, id: \.self) { Text(monthNames[$0]).tag($0) }
         }
     }

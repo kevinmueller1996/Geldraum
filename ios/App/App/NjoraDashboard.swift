@@ -83,6 +83,7 @@ struct Overview: View {
                     LabeledAmount(label: "Prognose zum Monatsende", amount: metrics.forecast, emphasis: true)
                     Text("Schätzung aus deinen geplanten Ein- und Ausgaben.").font(.footnote).foregroundStyle(.secondary)
                     Divider()
+                    LabeledAmount(label: "Einkommen im \(monthNames[metrics.month])", amount: metrics.incomeThisMonth)
                     LabeledAmount(label: "Monatlicher Spielraum", amount: metrics.available)
                 }.njoraCard()
 
@@ -116,7 +117,7 @@ struct MonthlyPlan: View {
         let metrics = PlanMetrics(plan: plan)
         List {
             Section("Im Monat verfügbar") {
-                LabeledAmount(label: "Einkommen", amount: metrics.income)
+                LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
                 LabeledAmount(label: "Fixkosten", amount: -metrics.expenses)
                 LabeledAmount(label: "Rücklage für Jahreskosten", amount: -metrics.reserve)
                 LabeledAmount(label: "Kreditraten", amount: -metrics.payments)
@@ -201,6 +202,13 @@ struct PlanSectionView: View {
         if let plan = store.plan {
             let items = plan[section]
             List {
+                if section == .income {
+                    let metrics = PlanMetrics(plan: plan)
+                    Section("Einkommen gesamt") {
+                        LabeledAmount(label: "Im \(monthNames[metrics.month])", amount: metrics.incomeThisMonth, emphasis: true)
+                        LabeledAmount(label: "Pro Jahr", amount: metrics.incomePerYear)
+                    }
+                }
                 if section == .history, !items.isEmpty {
                     Section("Kontostände im Verlauf") { BalanceChart(plan: plan) }
                 }
@@ -314,7 +322,9 @@ private struct PlanItemRow: View {
     }
     private var detail: String? {
         switch section {
-        case .income: fields.flag("annual") ? "Jährlich" : "Monatlich"
+        case .income: fields.flag("annual")
+            ? (monthNames[safe: fields.integer("month") ?? -1].map { "Jährlich im \($0)" } ?? "Jährlich · Monat offen")
+            : "Monatlich"
         case .expenses: fields.text("category")
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
         case .loans: "\(euros(fields.amount("payment"))) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
