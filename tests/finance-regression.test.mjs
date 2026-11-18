@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseAmount } from "../app/amount.ts";
+import { acceptsAmountEdit, parseAmount } from "../app/amount.ts";
 import { loanProjection } from "../app/loan-projection.ts";
 import { backupPlan } from "../app/plan-validation.ts";
 import { loadDelayedQuotes } from "../app/market/delayed.ts";
@@ -9,6 +9,16 @@ test("German currency grouping agrees with the native input", () => {
   for (const [text, value] of [["40.000", 40000], ["-1.234,56", -1234.56], ["0.125", 0.125], ["7,95", 7.95], ["12.34,56", null], ["1e5", null]]) {
     assert.equal(parseAmount(text), value);
   }
+});
+
+test("amount edits allow decimal and grouping prefixes and reject mixed input atomically", () => {
+  for (const amount of ["-1.234.567,89", "+40.000,50", ",5", "0.125", "000,01"]) {
+    for (let end = 0; end <= amount.length; end++) assert.ok(acceptsAmountEdit(amount.slice(0, end)));
+  }
+  for (const input of ["12abc34", "1e5", "10 €", "12.34,56", "1,,2", "1-2", "1.234.5678", "7\n"]) {
+    assert.equal(acceptsAmountEdit(input), false, input);
+  }
+  assert.equal(acceptsAmountEdit("-25,50", false), false);
 });
 
 test("a partial final instalment and unpaid interest use the actual remaining balance", () => {
@@ -53,4 +63,18 @@ test("recurring costs keep the instalment separate from the monthly budget and d
   assert.equal(cardPayment({ type: "credit", monthlyPayment: 80, balance: 1000 }), 80);
   assert.equal(cardPayment({ type: "bank", monthlyPayment: 80 }), 0);
   assert.equal(cardPayment({ type: "credit" }), 0);
+});
+
+test("dues follow calendar months and booking days, with undated entries last", async () => {
+  const { byDueDate, byTargetDate } = await import("../app/recurring-costs.ts");
+  const items = [
+    { id: "dec", month: 11, frequency: "annual" }, { id: "free" },
+    { id: "jan31", month: 0, bookingDay: 31, frequency: "annual" },
+    { id: "day31", bookingDay: 31 }, { id: "day1", bookingDay: 1 },
+    { id: "jan1", month: 0, bookingDay: 1, frequency: "quarterly" },
+  ];
+  assert.deepEqual(items.sort(byDueDate("expenses")).map((item) => item.id), ["day1", "day31", "free", "jan1", "jan31", "dec"]);
+  assert.deepEqual([11, 3, 0].map((month) => ({month})).sort(byDueDate("annualCosts")).map(x => x.month), [0, 3, 11]);
+  assert.deepEqual([{annual:true}, {annual:true, month:0}, {annual:false}].sort(byDueDate("incomes")).map(x=>x.month ?? x.annual), [false,0,true]);
+  assert.deepEqual(["", "2027-01-01", "2026-12-31"].map(targetDate => ({targetDate})).sort(byTargetDate).map(x=>x.targetDate), ["2026-12-31", "2027-01-01", ""]);
 });

@@ -108,6 +108,27 @@ struct Plan: Codable, Equatable {
         set { fields[section.rawValue] = .array(newValue.map { .object($0.fields) }) }
     }
 
+    func entriesByDueDate(in section: PlanSection) -> [PlanItem] {
+        let items = self[section]
+        switch section {
+        case .expenses, .annual, .income:
+            func dueKey(_ item: PlanItem) -> (Int, Int) {
+                let monthly = (section == .expenses && item.frequency == .monthly)
+                    || (section == .income && !item.fields.flag("annual"))
+                let month = monthly ? -1 : (item.fields.integer("month") ?? 12)
+                let day = item.fields.integer("bookingDay") ?? 0
+                return (month, day > 0 ? day : 32)
+            }
+            return items.sorted { dueKey($0) < dueKey($1) }
+        case .goals:
+            return items.sorted {
+                let first = $0.fields.text("targetDate"), second = $1.fields.text("targetDate")
+                return !first.isEmpty && (second.isEmpty || first < second)
+            }
+        default: return items
+        }
+    }
+
     mutating func save(_ item: PlanItem, in section: PlanSection) {
         var items = self[section]
         if let index = items.firstIndex(where: { $0.id == item.id }) { items[index] = item }
@@ -320,6 +341,13 @@ enum PlanDate {
 
 func euros(_ amount: Double) -> String {
     amount.formatted(.currency(code: "EUR").locale(Locale(identifier: "de_DE")))
+}
+
+// During editing, a sign or an unfinished thousands group can still become a number.
+func acceptsAmountEdit(_ value: String, signed: Bool) -> Bool {
+    if !signed && value.hasPrefix("-") { return false }
+    return value.range(of: #"\A[+-]?(?:[0-9]*(?:[,.][0-9]*)?|[1-9][0-9]{0,2}(?:\.[0-9]{3})+(?:\.[0-9]{0,3}|,[0-9]*)?)\z"#,
+                       options: .regularExpression) != nil
 }
 
 func germanAmount(_ value: String) -> Double? {

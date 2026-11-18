@@ -15,10 +15,24 @@ struct PlanField: View {
             Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                TextField(title, text: $text, prompt: Text(prompt))
-                    .keyboardType(keyboard)
-                    .accessibilityLabel(unit.isEmpty ? title : "\(title) in \(unit)")
-                    .accessibilityIdentifier("field." + title)
+                if unit == "€" {
+                    EuroInput(title: title, text: $text, prompt: prompt, signed: keyboard == .numbersAndPunctuation)
+                    if keyboard == .numbersAndPunctuation {
+                        Button {
+                            if text.hasPrefix("-") { text.removeFirst() }
+                            else { text = "-" + (text.hasPrefix("+") ? String(text.dropFirst()) : text) }
+                        } label: {
+                            Image(systemName: "plus.forwardslash.minus").frame(minWidth: 34, minHeight: 36)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Vorzeichen wechseln")
+                    }
+                } else {
+                    TextField(title, text: $text, prompt: Text(prompt))
+                        .keyboardType(keyboard)
+                        .accessibilityLabel(unit.isEmpty ? title : "\(title) in \(unit)")
+                        .accessibilityIdentifier("field." + title)
+                }
                 if !unit.isEmpty {
                     Text(unit).foregroundStyle(.secondary).fixedSize()
                         .accessibilityHidden(true)
@@ -26,6 +40,48 @@ struct PlanField: View {
             }
         }
         .padding(.vertical, 3)
+    }
+}
+
+// Validate the proposed replacement before UIKit displays it, including paste and hardware keyboards.
+private struct EuroInput: UIViewRepresentable {
+    let title: String
+    @Binding var text: String
+    let prompt: String
+    let signed: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(input: self) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
+        field.keyboardType = .decimalPad
+        field.font = .preferredFont(forTextStyle: .body)
+        field.adjustsFontForContentSizeCategory = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        context.coordinator.input = self
+        if field.text != text { field.text = text }
+        field.placeholder = prompt
+        field.accessibilityLabel = title + " in €"
+        field.accessibilityIdentifier = "field." + title
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var input: EuroInput
+        init(input: EuroInput) { self.input = input }
+
+        func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString replacement: String) -> Bool {
+            let current = textField.text ?? ""
+            guard let selection = Range(range, in: current) else { return false }
+            return acceptsAmountEdit(current.replacingCharacters(in: selection, with: replacement), signed: input.signed)
+        }
+
+        @objc func changed(_ field: UITextField) { input.text = field.text ?? "" }
     }
 }
 

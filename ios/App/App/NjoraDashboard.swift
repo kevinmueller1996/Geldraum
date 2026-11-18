@@ -270,7 +270,7 @@ struct PlanSectionView: View {
 
     var body: some View {
         if let plan = store.plan {
-            let items = plan[section]
+            let items = plan.entriesByDueDate(in: section)
             let metrics = PlanMetrics(plan: plan)
             let total = metrics.titleTotal(for: section)
             List {
@@ -333,6 +333,7 @@ struct PlanSectionView: View {
                         } else {
                             Button { selection = item } label: {
                                 PlanItemRow(item: item, section: section)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
@@ -370,7 +371,7 @@ struct PlanSectionView: View {
                 if let item = pendingRemoval {
                     Button("Löschen", role: .destructive) {
                         var changed = plan
-                        changed[section] = items.filter { $0.id != item.id }
+                        changed[section] = plan[section].filter { $0.id != item.id }
                         let result = changed
                         Task { _ = await store.save(result, in: .section(section)) }
                     }
@@ -411,6 +412,7 @@ private struct PlanItemRow: View {
             ? (monthNames[safe: fields.integer("month") ?? -1].map { "Jährlich im \($0)" } ?? "Jährlich · Monat offen")
             : "Monatlich"
         case .expenses: [fields.text("category"), item.frequency.label,
+            fields.integer("bookingDay").flatMap { $0 > 0 ? "am " + String($0) + "." : nil },
             item.frequency == .monthly ? nil : monthNames[safe: fields.integer("month") ?? -1].map { "Fällig im " + $0 + (item.frequency == .quarterly ? " und alle drei Monate" : "") }
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? "\(item.cardCategory) · Monatsrate \(euros(item.cardPayment))" : nil

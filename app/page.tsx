@@ -12,7 +12,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { id: string; name: string; amount: number; annual: boolean; month?: number };
-import { frequencies, monthlyExpense, isExpenseDue, cardPayment, type Frequency } from "./recurring-costs";
+import { byDueDate, byTargetDate, frequencies, monthlyExpense, isExpenseDue, cardPayment, type Frequency } from "./recurring-costs";
 
 type Expense = { id: string; name: string; amount: number; category: string; frequency?: Frequency; month?: number; bookingDay?: number };
 type AnnualCost = { id: string; name: string; amount: number; month: number };
@@ -175,6 +175,15 @@ function emptyPlan(name = ""): Plan {
   };
 }
 
+function orderedPlan(plan: Plan): Plan {
+  return { ...plan,
+    incomes: [...plan.incomes].sort(byDueDate("incomes")),
+    expenses: [...plan.expenses].sort(byDueDate("expenses")),
+    annualCosts: [...plan.annualCosts].sort(byDueDate("annualCosts")),
+    goals: [...plan.goals].sort(byTargetDate),
+  };
+}
+
 function normalizePlan(value: Partial<Plan>): Plan {
   const base = emptyPlan(value.name ?? "");
   return {
@@ -332,7 +341,7 @@ export default function Home() {
     };
   }, [authStatus, checkingIn, editing, onboardingStep, plan, savingsOpen, showLegacyPrompt]);
 
-  const active = plan ?? demoPlan;
+  const active = useMemo(() => orderedPlan(plan ?? demoPlan), [plan]);
   const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category),
     ...draft.accounts.map((item) => item.category).filter((value): value is string => Boolean(value))])];
   const metrics = useMemo(() => {
@@ -390,14 +399,14 @@ export default function Home() {
   function openEditor() {
     setImportPreview(null);
     setImportError("");
-    setDraft(structuredClone(plan ?? emptyPlan()));
+    setDraft(structuredClone(orderedPlan(plan ?? emptyPlan())));
     setEditorScope(null);
     setEditorTarget(null);
     setEditing(true);
   }
 
   function openFocusedEditor(section: EditorScope, add?: "account" | "income" | "expense" | "annual" | "loan" | "goal" | "security" | "saving", target?: string) {
-    const next = structuredClone(plan ?? emptyPlan());
+    const next = structuredClone(orderedPlan(plan ?? emptyPlan()));
     let nextTarget = target ?? null;
     if (add === "account") next.accounts.push({ id: uid(), name: "", type: "bank", balance: 0 });
     if (add === "income") next.incomes.push({ id: uid(), name: "", amount: 0, annual: false, month: undefined });
@@ -486,6 +495,7 @@ export default function Home() {
 
   async function finishOnboarding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!event.currentTarget.reportValidity()) return;
     if (onboardingStep < onboardingSteps.length - 1) {
       nextOnboardingStep();
       return;
@@ -697,7 +707,6 @@ export default function Home() {
   if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
 
   const currentMonth = new Date().getMonth();
-  const upcomingAnnual = [...active.annualCosts].sort((a, b) => ((a.month - currentMonth + 12) % 12) - ((b.month - currentMonth + 12) % 12));
   const lastSnapshot = [...active.snapshots].sort((a, b) => b.date.localeCompare(a.date))[0];
   const daysSinceUpdate = lastSnapshot ? Math.max(0, Math.floor((new Date().getTime() - new Date(`${lastSnapshot.date}T12:00:00`).getTime()) / 86400000)) : null;
   const lastUpdateLabel = lastSnapshot ? new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${lastSnapshot.date}T12:00:00`)) : "Noch kein Update";
@@ -706,7 +715,7 @@ export default function Home() {
   const currentSpecials = [
     ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: item.amount, type: "income" as const })),
     ...active.annualCosts.filter((item) => item.month === currentMonth).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
-  ].sort((a, b) => b.amount - a.amount);
+  ];
   const monthlyCategories = new Map(groupedExpenses.map((item) => [item.category, item.value]));
   for (const card of active.accounts) {
     if (cardPayment(card) <= 0) continue;
@@ -844,7 +853,7 @@ export default function Home() {
           <article className="detail-card annual-card"><div className="section-title compact"><div><p className="eyebrow">Jahreskosten</p><h2>Unregelmäßig, aber planbar</h2></div><span>{euro(metrics.annualTotal)} im Jahr</span></div><div className="month-strip">{months.map((month, index) => {
             const sum = active.annualCosts.filter((item) => item.month === index).reduce((total, item) => total + item.amount, 0);
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
-          })}</div><div className="annual-list">{upcomingAnnual.map((item) => <article key={item.id}><span>{months[item.month]}</span><div><strong>{item.name}</strong><small>aus der Monatsrücklage</small></div><b>{euro(item.amount)}</b></article>)}<button className="annual-add" type="button" onClick={() => openFocusedEditor("annual", "annual")}><span>+</span><div><strong>Jahreskosten ergänzen</strong><small>Fälligkeit und Betrag eintragen</small></div></button></div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("annual")}>Jahreskosten ändern</button></article>
+          })}</div><div className="annual-list">{active.annualCosts.map((item) => <article key={item.id}><span>{months[item.month]}</span><div><strong>{item.name}</strong><small>aus der Monatsrücklage</small></div><b>{euro(item.amount)}</b></article>)}<button className="annual-add" type="button" onClick={() => openFocusedEditor("annual", "annual")}><span>+</span><div><strong>Jahreskosten ergänzen</strong><small>Fälligkeit und Betrag eintragen</small></div></button></div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("annual")}>Jahreskosten ändern</button></article>
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
@@ -882,7 +891,7 @@ export default function Home() {
             {onboardingStep === 1 && <>
               <p className="eyebrow">Konten & Karten</p><h2 id="onboarding-title">Wo liegt dein Geld heute?</h2><p className="onboarding-intro">Nur Name und aktueller Stand – eine Bankverbindung oder IBAN ist nicht nötig.</p>
               <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <div className="payment-fields">
-                <label>Monatliche Kartenrate (€)<DecimalInput value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
+                <label>Monatliche Kartenrate (€)<DecimalInput signed={false} value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
                 <label>Kategorie<select value={item.category ?? "Kreditkarten"} onChange={(event) => updateList("accounts", index, { category: event.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
               </div>}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
@@ -930,7 +939,7 @@ export default function Home() {
 
           {(!editorScope || editorScope === "accounts") && <EditorSection id="editor-accounts" title="Konten & Karten" subtitle="Nur der aktuelle Stand – keine Bankverbindung nötig">
             {draft.accounts.map((item, index) => <div className="editor-row four" key={item.id}><input aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /><DecimalInput aria-label="Aktueller Stand" value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /><select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"] })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select>{item.type === "credit" && <div className="payment-fields">
-                <label>Monatliche Kartenrate (€)<DecimalInput value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
+                <label>Monatliche Kartenrate (€)<DecimalInput signed={false} value={item.monthlyPayment} placeholder="0" onValueChange={(value) => updateList("accounts", index, { monthlyPayment: Math.max(0, value) })} /></label>
                 <label>Kategorie<select value={item.category ?? "Kreditkarten"} onChange={(event) => updateList("accounts", index, { category: event.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>
               </div>}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
             <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
@@ -974,9 +983,9 @@ export default function Home() {
                 <select aria-label="Art der Ersparnis" value={item.kind} onChange={(e) => updateList("savings", index, { kind: e.target.value as SavingKind })}>{Object.entries(savingKindLabels).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}</select>
                 {item.kind === "security" ? <>
                   <input aria-label="Börsensymbol" value={item.symbol ?? ""} onChange={(e) => updateList("savings", index, { symbol: e.target.value.toUpperCase() })} placeholder="Symbol, z. B. SAP.DE" autoCapitalize="characters" />
-                  <DecimalInput aria-label="Stückzahl" value={item.quantity} onValueChange={(value) => updateList("savings", index, { quantity: Math.max(value, 0) })} placeholder="Stückzahl" />
-                  <span className="currency-input"><DecimalInput aria-label="Kurs in Euro" value={item.priceEur} onValueChange={(value) => updateList("savings", index, { priceEur: Math.max(value, 0), price: Math.max(value, 0), currency: "EUR", quoteUpdatedAt: undefined, quoteVenue: undefined })} placeholder="Kurs in EUR" /><b>€</b></span>
-                </> : <span className="currency-input"><DecimalInput aria-label="Aktueller Sparstand" value={item.balance} onValueChange={(value) => updateList("savings", index, { balance: Math.max(value, 0) })} placeholder="Aktueller Stand" /><b>€</b></span>}
+                  <DecimalInput signed={false} aria-label="Stückzahl" value={item.quantity} onValueChange={(value) => updateList("savings", index, { quantity: Math.max(value, 0) })} placeholder="Stückzahl" />
+                  <span className="currency-input"><DecimalInput signed={false} aria-label="Kurs in Euro" value={item.priceEur} onValueChange={(value) => updateList("savings", index, { priceEur: Math.max(value, 0), price: Math.max(value, 0), currency: "EUR", quoteUpdatedAt: undefined, quoteVenue: undefined })} placeholder="Kurs in EUR" /><b>€</b></span>
+                </> : <span className="currency-input"><DecimalInput signed={false} aria-label="Aktueller Sparstand" value={item.balance} onValueChange={(value) => updateList("savings", index, { balance: Math.max(value, 0) })} placeholder="Aktueller Stand" /><b>€</b></span>}
                 <RemoveButton onClick={() => removeListItem("savings", index)} />
               </div>
               {item.kind === "security" && <div className="saving-quote-hint"><span>Aktueller Wert <b>{euro(savingValue(item))}</b></span><small>{item.quoteUpdatedAt ? [marketPrice(item.price ?? 0, item.currency), item.quoteVenue, `Kurs vom ${dateTimeLabel(item.quoteUpdatedAt)}`].filter(Boolean).join(" · ") : item.symbol ? `${item.symbol} automatisch gewählt · Kurs nach dem Speichern aktualisierbar` : "Unternehmen suchen und aus der Liste auswählen"}</small></div>}
