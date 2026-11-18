@@ -9,7 +9,13 @@ struct Dashboard: View {
             TabView {
                 NavigationStack {
                     Overview(plan: plan, store: store)
-                        .financialTitle("Heute", amount: PlanMetrics(plan: plan).net, caption: "Kontostand")
+                        .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
+                                FinancialTitle(title: "Heute", amount: PlanMetrics(plan: plan).net, caption: "Kontostand")
+                            }.buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 8).background(NjoraTheme.paper)
+                        }
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                 }.tabItem { Label("Heute", systemImage: "sun.max") }
                 NavigationStack {
@@ -61,25 +67,36 @@ struct Overview: View {
         let metrics = PlanMetrics(plan: plan)
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Monatlicher Spielraum").font(.headline)
-                    Text(euros(metrics.available))
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                        .monospacedDigit()
-                    Text("Regelmäßiges Einkommen abzüglich Fixkosten")
-                        .font(.footnote)
-                }
-                .foregroundStyle(NjoraTheme.paper)
-                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                .background(NjoraTheme.accent, in: RoundedRectangle(cornerRadius: 18))
-                .accessibilityElement(children: .combine)
+                NavigationLink {
+                    MonthlyPlan(plan: store.plan ?? plan, store: store)
+                        .financialTitle("Monatsplan", amount: metrics.available, caption: "Spielraum pro Monat")
+                        .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack { Text("Monatlicher Spielraum").font(.headline); Spacer(); Image(systemName: "chevron.right") }
+                        Text(euros(metrics.available)).font(.system(.largeTitle, design: .rounded, weight: .bold)).monospacedDigit()
+                        Text("Regelmäßiges Einkommen abzüglich Fixkosten").font(.footnote)
+                    }
+                    .foregroundStyle(NjoraTheme.paper)
+                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(NjoraTheme.accent, in: RoundedRectangle(cornerRadius: 18))
+                }.buttonStyle(.plain)
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
-                    metric("Einkommen im " + monthNames[metrics.month], amount: metrics.incomeThisMonth)
-                    metric("Fixkosten · Ø pro Monat", amount: metrics.fixedCosts)
-                    metric("Prognose zum Monatsende", amount: metrics.forecast)
-                    metric("Offene Kreditschuld", amount: plan[.loans].sum("balance"))
-                }
+                    NavigationLink { PlanSectionView(section: .income, store: store) } label: {
+                        metric("Einkommen im " + monthNames[metrics.month], value: euros(metrics.incomeThisMonth))
+                    }
+                    NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
+                        metric("Fixkosten · Ø pro Monat", value: euros(metrics.fixedCosts))
+                    }
+                    NavigationLink { ForecastDetail(store: store) } label: {
+                        let forecast = metrics.forecast
+                        metric("Prognose zum Monatsende", value: forecast.uncertain.isEmpty ? euros(forecast.datedBalance) : "Spanne ansehen")
+                    }
+                    NavigationLink { PlanSectionView(section: .loans, store: store) } label: {
+                        metric("Offene Kreditschuld", value: euros(plan[.loans].sum("balance")))
+                    }
+                }.buttonStyle(.plain)
                 if plan[.accounts].isEmpty {
                     NavigationLink("Erstes Konto anlegen") { PlanSectionView(section: .accounts, store: store) }
                 } else {
@@ -96,10 +113,12 @@ struct Overview: View {
                     }.njoraCard()
                 }
                 if !plan[.history].isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Kontostände im Verlauf").font(.headline)
-                        BalanceChart(plan: plan)
-                    }.njoraCard()
+                    NavigationLink { PlanSectionView(section: .history, store: store) } label: {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack { Text("Kontostände im Verlauf").font(.headline); Spacer(); Image(systemName: "chevron.right") }
+                            BalanceChart(plan: plan)
+                        }.njoraCard()
+                    }.buttonStyle(.plain)
                 }
                 Notice(text: store.notice(in: .overview))
             }
@@ -109,18 +128,60 @@ struct Overview: View {
         .refreshable { await store.refresh(in: .overview) }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
     }
-    private func metric(_ title: String, amount: Double) -> some View {
+    private func metric(_ title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
                 .frame(minHeight: 40, alignment: .topLeading)
-            Text(euros(amount)).font(.title3.weight(.semibold)).monospacedDigit()
-                .foregroundStyle(amount < 0 ? Color.red : Color.primary)
+            Text(value).font(.title3.weight(.semibold)).monospacedDigit()
+                .foregroundStyle(.primary)
                 .lineLimit(1).minimumScaleFactor(0.65)
         }
         .njoraCard()
         .accessibilityElement(children: .combine)
     }
 
+}
+
+private struct ForecastDetail: View {
+    @ObservedObject var store: NjoraStore
+    var body: some View {
+        if let plan = store.plan {
+            let forecast = PlanMetrics(plan: plan).forecast
+            List {
+                Section("Rechnung ab heute") {
+                    LabeledAmount(label: "Eingetragener Nettokontostand", amount: forecast.balance)
+                    ForEach(forecast.scheduled) { row in
+                        LabeledAmount(label: "\(row.day). · " + row.name, amount: row.amount)
+                    }
+                    LabeledAmount(label: "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: true)
+                }
+                if !forecast.uncertain.isEmpty {
+                    Section("Buchung offen") {
+                        ForEach(forecast.uncertain) { row in
+                            VStack(alignment: .leading) {
+                                LabeledAmount(label: row.name, amount: row.amount)
+                                Text(row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Section("Möglicher Stand am Monatsende") {
+                        LabeledAmount(label: "Untergrenze", amount: forecast.low)
+                        LabeledAmount(label: "Obergrenze", amount: forecast.high)
+                        Text("Unten sind alle offenen Ausgaben berücksichtigt, oben alle offenen Einnahmen.").font(.footnote)
+                    }
+                }
+                Section {
+                    Text("Die Rechnung setzt einen aktuellen Kontostand voraus. Frühere Fälligkeiten gelten als gebucht. Spätere zählen vollständig. Ungeplante Ausgaben sind offen.")
+                    if let date = plan[.history].map({ $0.fields.text("date") }).max(), let last = PlanDate.parse(date) {
+                        Text("Letzter Check-in: " + last.formatted(date: .abbreviated, time: .omitted))
+                    }
+                }.font(.footnote).foregroundStyle(.secondary)
+            }
+            .navigationTitle("Monatsendprognose")
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+        }
+    }
 }
 
 struct MonthlyPlan: View {
@@ -297,6 +358,8 @@ struct PlanSectionView: View {
             let metrics = PlanMetrics(plan: plan)
             let total = metrics.titleTotal(for: section)
             let loans = section == .expenses ? metrics.loansWithPayments : []
+            let annual = section == .expenses ? items.filter { $0.frequency == .annual } : []
+            let regular = section == .expenses ? items.filter { $0.frequency != .annual } : items
             List {
                 if section == .income {
                     Section {
@@ -318,12 +381,17 @@ struct PlanSectionView: View {
                             Button { selectedLoan = loan } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     LabeledAmount(label: loan.name, amount: loan.monthlyLoanPayment)
-                                    Text(loan.loanCategory).font(.footnote).foregroundStyle(.secondary)
+                                    Text([loan.loanCategory, loan.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
                                 }.contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityHint("Kredit bearbeiten")
                         }
+                    }
+                }
+                if !annual.isEmpty {
+                    Section("Jährliche Fixkosten") {
+                        ForEach(annual) { entry in editableRow(entry) }
                     }
                 }
                 Section {
@@ -344,7 +412,7 @@ struct PlanSectionView: View {
                         .padding(.vertical, 8)
                         .listRowBackground(NjoraTheme.card)
                     }
-                    ForEach(section == .history ? Array(items.reversed()) : items) { item in
+                    ForEach(section == .history ? Array(regular.reversed()) : regular) { item in
                         if section == .history {
                             let label = PlanDate.parse(item.fields.text("date"))?.formatted(date: .abbreviated, time: .omitted) ?? item.fields.text("date")
                             VStack(alignment: .leading, spacing: 5) {
@@ -355,12 +423,7 @@ struct PlanSectionView: View {
                             }
                             .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
                         } else {
-                            Button { selection = item } label: {
-                                PlanItemRow(item: item, section: section)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
+                            editableRow(item)
                         }
                     }
                 }
@@ -403,6 +466,13 @@ struct PlanSectionView: View {
             }
         }
     }
+    private func editableRow(_ item: PlanItem) -> some View {
+        Button { selection = item } label: {
+            PlanItemRow(item: item, section: section).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+        .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
+    }
+
 }
 
 private struct PlanItemRow: View {
@@ -441,7 +511,7 @@ private struct PlanItemRow: View {
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? "Kreditkarte" : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
-        case .loans: "\(item.loanCategory) · \(euros(item.monthlyLoanPayment)) pro Monat · \(euros(item.balanceAfter(months: 12))) nach 12 Monaten"
+        case .loans: [item.loanCategory, euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"

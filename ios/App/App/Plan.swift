@@ -216,6 +216,10 @@ struct PlanItem: Identifiable, Equatable {
         let name = fields.text("category").trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Kreditraten" : name
     }
+    var bookingDayLabel: String? {
+        guard let day = fields.integer("bookingDay"), day > 0 else { return nil }
+        return "am \(day)."
+    }
     var monthlyLoanPayment: Double { max(0, fields.amount("payment") + fields.amount("extraPayment")) }
     var monthlyExpense: Double { fields.amount("amount") / Double(frequency.months) }
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
@@ -314,6 +318,23 @@ enum PlanSection: String, CaseIterable, Identifiable {
     }
 }
 
+struct ForecastEntry: Identifiable {
+    let id: String
+    let name: String
+    let amount: Double
+    let day: Int
+    let monthUnknown: Bool
+}
+
+struct MonthForecast {
+    let balance: Double
+    var scheduled: [ForecastEntry] = []
+    var uncertain: [ForecastEntry] = []
+    var datedBalance: Double { scheduled.reduce(balance) { $0 + $1.amount } }
+    var low: Double { uncertain.reduce(datedBalance) { $0 + min(0, $1.amount) } }
+    var high: Double { uncertain.reduce(datedBalance) { $0 + max(0, $1.amount) } }
+}
+
 struct PlanMetrics {
     let plan: Plan
     var today: Date = .now
@@ -345,7 +366,13 @@ struct PlanMetrics {
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
-    var loansWithPayments: [PlanItem] { plan[.loans].filter { $0.monthlyLoanPayment > 0 } }
+    var loansWithPayments: [PlanItem] {
+        plan[.loans].filter { $0.monthlyLoanPayment > 0 }.sorted {
+            let first = $0.fields.integer("bookingDay") ?? 0
+            let second = $1.fields.integer("bookingDay") ?? 0
+            return (first > 0 ? first : 32) < (second > 0 ? second : 32)
+        }
+    }
     var payments: Double { plan[.loans].reduce(0) { $0 + $1.monthlyLoanPayment } }
     var available: Double { income - fixedCosts }
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
@@ -354,17 +381,31 @@ struct PlanMetrics {
             $0.frequency != .monthly && $0.frequency.isDue(in: month, anchor: $0.fields.integer("month") ?? 0)
         }
     }
-    var forecast: Double {
+    var forecast: MonthForecast {
         let day = calendar.component(.day, from: today)
-        let days = calendar.range(of: .day, in: .month, for: today)?.count ?? 30
-        let share = Double(max(0, days - day)) / Double(days)
-        let remainingExpenses = plan[.expenses].reduce(0.0) { sum, item in
-            guard item.frequency.isDue(in: month, anchor: item.fields.integer("month") ?? 0) else { return sum }
-            let booking = min(days, item.fields.integer("bookingDay") ?? 0)
-            let fraction = booking == 0 ? share : (booking > day ? 1.0 : 0.0)
-            return sum + item.fields.amount("amount") * fraction
+        let lastDay = calendar.range(of: .day, in: .month, for: today)?.count ?? 31
+        var result = MonthForecast(balance: net)
+        func include(_ item: PlanItem, section: PlanSection, amount: Double, monthUnknown: Bool = false) {
+            guard amount != 0 else { return }
+            let due = min(lastDay, item.fields.integer("bookingDay") ?? 0)
+            if due > 0 && due < day { return }
+            let entry = ForecastEntry(id: section.rawValue + "." + item.id, name: item.name, amount: amount,
+                                      day: due, monthUnknown: monthUnknown)
+            if due > day && !monthUnknown { result.scheduled.append(entry) }
+            else { result.uncertain.append(entry) }
         }
-        return net + (incomeThisMonth - payments) * share - remainingExpenses
+        for item in plan[.income] {
+            let annual = item.fields.flag("annual")
+            let dueMonth = item.fields.integer("month")
+            if annual, let dueMonth, dueMonth != month { continue }
+            include(item, section: .income, amount: item.fields.amount("amount"), monthUnknown: annual && dueMonth == nil)
+        }
+        for item in plan[.expenses] where item.frequency.isDue(in: month, anchor: item.fields.integer("month") ?? 0) {
+            include(item, section: .expenses, amount: -item.fields.amount("amount"))
+        }
+        for loan in loansWithPayments { include(loan, section: .loans, amount: -loan.monthlyLoanPayment) }
+        result.scheduled.sort { $0.day < $1.day }
+        return result
     }
 
     func net(for snapshot: PlanItem) -> Double {

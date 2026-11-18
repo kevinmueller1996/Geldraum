@@ -121,3 +121,30 @@ test("loan categories survive backup and sync and use the same spelling as expen
   assert.deepEqual(result.commitments[0], { ...base.commitments[0], category: "Mobilität" });
   assert.equal(backupPlan({ ...base, commitments: [{ ...base.commitments[0], category: 42 }] }), null);
 });
+
+test("month-end applies dated flows in full and keeps undated or unconfirmed flows separate", async () => {
+  const { monthEndForecast } = await import("../app/recurring-costs.ts");
+  const due = { id:"rent", name:"Miete", amount:100, category:"Wohnen", bookingDay:31 };
+  const loan = { id:"loan", name:"Kredit", payment:70, extraPayment:10, bookingDay:19 };
+  const salary = { id:"salary", name:"Gehalt", amount:2727, annual:false, bookingDay:1 };
+  const plan = { incomes:[salary], expenses:[due, { ...due, id:"annual", frequency:"annual", month:11 }], commitments:[loan] };
+  const date = new Date(2026,10,18);
+  const project = (incomes, commitments = [loan]) => monthEndForecast(-373, date, { ...plan, incomes, commitments });
+  assert.equal(project([salary]).datedBalance, -553);
+  assert.equal(project([{ ...salary, bookingDay:25 }]).datedBalance, 2174);
+  const ambiguous = project([{ ...salary, bookingDay:0 }], [{ ...loan, bookingDay:18 }]);
+  assert.deepEqual([ambiguous.low, ambiguous.high], [-553,2254]);
+  assert.equal(ambiguous.uncertain.length,2);
+  assert.equal(project([salary]).scheduled.at(-1).day,30);
+  const february = monthEndForecast(-373, new Date(2028,1,28), { incomes:[], expenses:[due], commitments:[] });
+  assert.equal(february.scheduled[0].day,29);
+});
+
+test("loan booking days survive backups and exclude invalid calendar days", () => {
+  const base = { name:"Plan", incomes:[], accounts:[], annualCosts:[], expenses:[], goals:[], snapshots:[] };
+  function check(day) {
+    return backupPlan({ ...base, commitments:[{ id:"l", name:"Kredit", balance:300, payment:20, bookingDay:day }] });
+  }
+  for (const day of [undefined,0,1,31]) assert.ok(check(day));
+  for (const day of [-1,32,2.5,"10"]) assert.equal(check(day),null);
+});

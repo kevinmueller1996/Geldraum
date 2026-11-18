@@ -1227,3 +1227,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .dashboard-specials { display:grid; margin:16px 0; }
 .dashboard-income summary { padding:12px 0; font-weight:650; }
 .loan-category-field { display:grid; gap:5px; margin:8px 0; }
+
+button.dashboard-balance { display:block; width:100%; text-align:left; border:0; cursor:pointer; }
+.dashboard-balance span:last-child { font-size:.82rem; }
+.dashboard-account-link { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
+#forecast-detail { margin:16px 0; }

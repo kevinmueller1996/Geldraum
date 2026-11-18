@@ -99,3 +99,36 @@ export function byTargetDate(a: { targetDate?: string }, b: { targetDate?: strin
   if (!first || !second) return Number(!first) - Number(!second);
   return first.localeCompare(second);
 }
+
+type ForecastItem = { id: string; name: string; bookingDay?: number };
+type ForecastRow = { id: string; name: string; amount: number; day: number; monthUnknown: boolean };
+
+export function monthEndForecast(balance: number, today: Date, plan: {
+  incomes: (ForecastItem & { amount: number; annual: boolean; month?: number })[];
+  expenses: Expense[];
+  commitments: (ForecastItem & { payment: number; extraPayment?: number })[];
+}) {
+  const month = today.getMonth(), day = today.getDate();
+  const lastDay = new Date(today.getFullYear(), month + 1, 0).getDate();
+  const scheduled: ForecastRow[] = [], uncertain: ForecastRow[] = [];
+  function include(kind: string, item: ForecastItem, amount: number, monthUnknown = false) {
+    const due = Math.min(item.bookingDay ?? 0, lastDay);
+    if (!amount || (due > 0 && due < day)) return;
+    const rows = due > day && !monthUnknown ? scheduled : uncertain;
+    rows.push({ id: kind + item.id, name: item.name, amount, day: due, monthUnknown });
+  }
+  for (const item of plan.incomes) {
+    if (!item.annual || item.month === undefined || item.month === month) {
+      include("income:", item, item.amount, item.annual && item.month === undefined);
+    }
+  }
+  for (const item of plan.expenses) {
+    if (isExpenseDue(item, month)) include("expense:", item, -item.amount);
+  }
+  for (const loan of plan.commitments) include("loan:", loan, -Math.max(0, loan.payment + (loan.extraPayment ?? 0)));
+  scheduled.sort((a, b) => a.day - b.day);
+  const datedBalance = scheduled.reduce((sum, row) => sum + row.amount, balance);
+  const low = uncertain.reduce((sum, row) => sum + Math.min(0, row.amount), datedBalance);
+  const high = uncertain.reduce((sum, row) => sum + Math.max(0, row.amount), datedBalance);
+  return { scheduled, uncertain, datedBalance, low, high };
+}

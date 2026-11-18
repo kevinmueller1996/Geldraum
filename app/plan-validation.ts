@@ -10,6 +10,10 @@ function isMoney(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= 1_000_000_000;
 }
 
+function validBookingDay(day: unknown) {
+  return day === undefined || (Number.isInteger(day) && Number(day) >= 0 && Number(day) <= 31);
+}
+
 function validExpenseSchedule(item: Record<string, unknown>) {
   const frequency = item.frequency ?? "monthly";
   return ["monthly", "quarterly", "annual"].includes(String(frequency))
@@ -28,10 +32,10 @@ export function isPlan(value: unknown): value is Record<string, unknown> {
   if (value.liquidity !== undefined && !isMoney(value.liquidity)) return false;
   if (value.categoryColors !== undefined && (!isRecord(value.categoryColors) || !Object.values(value.categoryColors).every((color) => isText(color, 80)))) return false;
   if (value.checkInCadence !== undefined && !["weekly", "daily"].includes(String(value.checkInCadence))) return false;
-  return validList(value.incomes, 50, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && typeof item.annual === "boolean" && (item.month === undefined || (Number.isInteger(item.month) && Number(item.month) >= 0 && Number(item.month) <= 11)))
-    && validList(value.expenses, 250, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && isText(item.category, 80) && validExpenseSchedule(item) && (item.bookingDay === undefined || (Number.isInteger(item.bookingDay) && Number(item.bookingDay) >= 0 && Number(item.bookingDay) <= 31)))
+  return validList(value.incomes, 50, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && typeof item.annual === "boolean" && validBookingDay(item.bookingDay) && (item.month === undefined || (Number.isInteger(item.month) && Number(item.month) >= 0 && Number(item.month) <= 11)))
+    && validList(value.expenses, 250, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && isText(item.category, 80) && validExpenseSchedule(item) && validBookingDay(item.bookingDay))
     && validList(value.annualCosts, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && Number.isInteger(item.month) && Number(item.month) >= 0 && Number(item.month) <= 11)
-    && validList(value.commitments, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.balance) && isMoney(item.payment) && (item.category === undefined || isText(item.category, 80)) && (item.interestRate === undefined || isMoney(item.interestRate)) && (item.extraPayment === undefined || isMoney(item.extraPayment)) && (item.termMonths === undefined || (Number.isInteger(item.termMonths) && Number(item.termMonths) >= 0)))
+    && validList(value.commitments, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.balance) && isMoney(item.payment) && validBookingDay(item.bookingDay) && (item.category === undefined || isText(item.category, 80)) && (item.interestRate === undefined || isMoney(item.interestRate)) && (item.extraPayment === undefined || isMoney(item.extraPayment)) && (item.termMonths === undefined || (Number.isInteger(item.termMonths) && Number(item.termMonths) >= 0)))
     && validList(value.goals, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.target) && isMoney(item.saved) && (item.monthly === undefined || isMoney(item.monthly)) && (item.targetDate === undefined || isText(item.targetDate, 20)))
     && validList(value.savings, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && ["security", "dayMoney", "fixedDeposit", "buildingSavings", "cash", "other"].includes(String(item.kind)) && isMoney(item.balance)
       && (item.kind !== "security" || (isText(item.symbol, 30) && isMoney(item.quantity) && isMoney(item.price) && isMoney(item.priceEur) && isText(item.currency, 10)

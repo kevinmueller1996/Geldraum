@@ -198,6 +198,7 @@ struct PlanEditor: View {
                 else { item.fields.removeValue(forKey: "month") }
             }))
             if item.fields.flag("annual") { monthPicker() }
+            bookingDayPicker
         case .expenses:
             Picker("Zahlungsrhythmus", selection: Binding(get: { item.frequency }, set: { frequency in
                 item.fields["frequency"] = .string(frequency.rawValue)
@@ -210,10 +211,7 @@ struct PlanEditor: View {
             amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true)
             if item.frequency != .monthly { monthPicker() }
             categoryPicker(default: "Wohnen")
-            Picker("Buchungstag", selection: Binding(get: { item.fields.integer("bookingDay") ?? 0 }, set: { item.fields["bookingDay"] = .number(Double($0)) })) {
-                Text("Kein fester Tag").tag(0)
-                ForEach(1...31, id: \.self) { Text("\($0).").tag($0) }
-            }
+            bookingDayPicker
         case .annual:
             amount("Jahresbetrag", key: "amount", signed: true)
             monthPicker()
@@ -221,6 +219,7 @@ struct PlanEditor: View {
             categoryPicker(default: "Kreditraten")
             amount("Restschuld", key: "balance")
             amount("Monatsrate", key: "payment")
+            bookingDayPicker
             amount("Jahreszins", key: "interestRate", unit: "%")
             amount("Restlaufzeit", key: "termMonths", unit: "Monate", integer: true)
             amount("Monatliche Sondertilgung", key: "extraPayment")
@@ -284,6 +283,13 @@ struct PlanEditor: View {
         return Picker("Kategorie", selection: Binding(get: { display }, set: { item.fields["category"] = .string($0) })) {
             ForEach(options, id: \.self) { Text($0).tag($0) }
         }.pickerStyle(.menu)
+    }
+
+    private var bookingDayPicker: some View {
+        Picker("Buchungstag", selection: Binding(get: { item.fields.integer("bookingDay") ?? 0 }, set: { item.fields["bookingDay"] = .number(Double($0)) })) {
+            Text("Kein fester Tag").tag(0)
+            ForEach(1...31, id: \.self) { Text("\($0).").tag($0) }
+        }
     }
 
     private func monthPicker() -> some View {
