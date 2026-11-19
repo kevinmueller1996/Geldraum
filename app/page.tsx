@@ -1,5 +1,6 @@
 "use client";
 
+import { applyClosingPrices, closeVenue, securityISIN, type ClosingPrices } from "./market/closing-prices";
 import { currentSession, offlineCopy, updateCopy, mergeDraft, reconcile, pending, Conflict, SessionChanged, type Copy, type Remote, type Choice } from "./browser-plan";
 import { expireMarker } from "./browser-session";
 import { Capacitor } from "@capacitor/core";
@@ -130,8 +131,17 @@ function savingValue(item: SavingAsset) {
     : Math.max(item.balance, 0);
 }
 
+function savingPriceLabel(item: SavingAsset) {
+  if (item.quoteVenue === closeVenue && item.quoteUpdatedAt) {
+    const day = new Date(item.quoteUpdatedAt + "T12:00:00Z");
+    if (Number.isFinite(day.getTime())) return closeVenue + " · Datenstand " + day.toLocaleDateString("de-DE", {timeZone:"UTC"});
+  }
+  return [item.quoteVenue, item.quoteUpdatedAt && dateTimeLabel(item.quoteUpdatedAt)].filter(Boolean).join(" · ");
+}
+
 function dateTimeLabel(value?: string) {
   if (!value) return "unbekannt";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value.split("-").reverse().join(".");
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "unbekannt" : new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "medium" }).format(date);
 }
@@ -302,6 +312,7 @@ export default function Home() {
       const previous = current.current;
       if (previous && previous.session !== currentSession()) { location.reload(); return; }
       const headers: Record<string,string> = {"x-njora-browser": "1"};
+      headers["x-njora-closing-prices"] = [...new Set(previous?.draft?.savings.filter(s => s.kind === "security").map(s => securityISIN(s.symbol)).filter(Boolean))].join(",") || "1";
       if (previous) headers["x-njora-browser-session"] = previous.session;
       const response = await fetch("/api/account", {headers, cache: "no-store", signal: AbortSignal.timeout(15000)});
       if (cancelled) return;
@@ -310,7 +321,7 @@ export default function Home() {
         if (!localRuntime) { location.replace(response.status === 401 ? "/login" : "/"); return; }
       }
       if (!response.ok) throw new Error("Der Cloud-Abgleich ist gerade nicht möglich.");
-      const reply = await response.json() as Remote;
+      const { closingPrices:daily, ...reply } = await response.json() as Remote & {closingPrices?:ClosingPrices | null};
       if (reply.plan) reply.plan = normalizePlan(reply.plan);
       const session = response.headers.get("x-njora-browser-session");
       if (!session || session !== currentSession() || (previous && reply.user.email !== previous.user.email)) throw new SessionChanged();
@@ -319,7 +330,10 @@ export default function Home() {
       const copy = await updateCopy(email, session, saved => {
         const bound = saved ? {...saved, session, billing: reply.billing, user: reply.user}
           : {...reply, session, draft: reply.plan, sending: null};
-        try { return reconcile(bound, reply); }
+        try {
+          const merged = reconcile(bound, reply);
+          return {...merged, draft:applyClosingPrices(merged.draft, daily)};
+        }
         catch (e) { if (!(e instanceof Conflict)) throw e; overlap = true; return bound; }
       });
       if (!copy || cancelled) return;
@@ -383,6 +397,9 @@ export default function Home() {
     const messages = typeof BroadcastChannel === "function" ? new BroadcastChannel("njora-finance") : null;
     channel.current = messages;
     if (messages) messages.onmessage = changed;
+    const marketTimer = window.setInterval(() => {
+      if (current.current?.draft?.savings.some(s => s.kind === "security" && securityISIN(s.symbol))) resume();
+    }, 3600000);
     window.addEventListener("online", resume);
     window.addEventListener("pageshow", changed);
     window.addEventListener("storage", changed);
@@ -394,7 +411,7 @@ export default function Home() {
         if (cached && !cancelled) { show(cached); setSyncStatus(pending(cached) ? "pending" : "offline"); }
       } finally { if (!cancelled) void sync(); }
     })().catch(() => {});
-    return () => { cancelled = true; messages?.close(); channel.current = null; clearTimeout(timer); window.removeEventListener("online",resume);
+    return () => { cancelled = true; clearInterval(marketTimer); messages?.close(); channel.current = null; clearTimeout(timer); window.removeEventListener("online",resume);
       window.removeEventListener("pageshow",changed); window.removeEventListener("storage",changed); document.removeEventListener("visibilitychange",changed); };
   }, []);
 
@@ -849,7 +866,7 @@ export default function Home() {
   }
   if (editorScope === "savings" && editorTarget) {
     const saving = draft.savings.find((item) => item.id === editorTarget);
-    currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Trage Stückzahl und Kurs je Stück in Euro ein." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
+    currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Mit der ISIN übernimmt Njora den verfügbaren Euro-Schlusskurs von Cboe Europe. Ohne ISIN kannst du den Kurs selbst eintragen." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
   }
 
   function showCosts(from: "home" | "month", category?: string) {
@@ -1013,7 +1030,7 @@ export default function Home() {
           <button className="savings-overview-card" type="button" onClick={openSavings} aria-label="Depot und Ersparnisse öffnen">
             <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
             {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
-            <small>{savingsMetrics.latestQuote ? `Letzter Kursstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Wertpapiere werden mit dem eingetragenen Kurs bewertet"}</small>
+            <small>{savingsMetrics.latestQuote ? `Letzter Datenstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Aktien und ETFs per ISIN mit Schlusskurs bewerten"}</small>
           </button>
           <article className="detail-card goal-allocation"><div className="section-title compact"><div><p className="eyebrow">Machbarkeitscheck</p><h2>Was deine Termine erfordern</h2></div></div>{active.goals.map((goal) => <div className="allocation-line" key={goal.id}><span>{goal.name}<small>{goal.targetDate ? `bis ${new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T12:00:00`))}` : "ohne festen Termin"}</small></span><strong>{goal.targetDate ? `${euro(goalMonthlyNeed(goal))} / Monat` : "flexibel"}</strong></div>)}<div className="allocation-total"><span>Rechnerischer Bedarf aus Terminzielen</span><strong>{euro(metrics.goalNeed)}</strong></div><p className={`goal-feasibility ${metrics.goalNeed > metrics.available ? "warning" : ""}`}>{metrics.goalNeed === 0 ? "Ohne Zieldatum bleibt dein gesamter Überschuss frei verteilbar." : metrics.goalNeed <= metrics.available ? `Nach allen Terminzielen blieben rechnerisch ${euro(metrics.available - metrics.goalNeed)} pro Monat frei.` : `Die Terminziele übersteigen deinen Überschuss um ${euro(metrics.goalNeed - metrics.available)} pro Monat.`}</p></article>
         </section>}
@@ -1139,19 +1156,19 @@ export default function Home() {
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>}
           </EditorSection>}
 
-          {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title="Depot & Ersparnisse" subtitle="Stückzahl und Kurs in Euro oder den aktuellen Sparstand eintragen">
+          {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title="Depot & Ersparnisse" subtitle="ISIN und Stückzahl für automatische Schlusskurse oder einen manuellen Kurs eintragen">
             {draft.savings.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="saving-editor-item" key={item.id}>
               <div className={`editor-row ${item.kind === "security" ? "saving-security-edit" : "saving-balance-edit"}`}>
                 <input aria-label="Bezeichnung der Ersparnis" value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder={item.kind === "security" ? "Wertpapiername" : "z. B. Notgroschen"} />
                 <select aria-label="Art der Ersparnis" value={item.kind} onChange={(e) => updateList("savings", index, { kind: e.target.value as SavingKind })}>{Object.entries(savingKindLabels).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}</select>
                 {item.kind === "security" ? <>
-                  <input aria-label="Börsensymbol" value={item.symbol ?? ""} onChange={(e) => updateList("savings", index, { symbol: e.target.value.toUpperCase() })} placeholder="Symbol, z. B. SAP.DE" autoCapitalize="characters" />
+                  <input aria-label="ISIN für automatische Schlusskurse oder Börsensymbol" value={item.symbol ?? ""} onChange={(e) => updateList("savings", index, { symbol: e.target.value.trim().toUpperCase(), price: 0, priceEur: 0, quoteVenue: undefined, quoteUpdatedAt: undefined })} placeholder="ISIN, z. B. DE0007164600" autoCapitalize="characters" />
                   <DecimalInput signed={false} aria-label="Stückzahl" value={item.quantity} onValueChange={(value) => updateList("savings", index, { quantity: Math.max(value, 0) })} placeholder="Stückzahl" />
                   <span className="currency-input"><DecimalInput signed={false} aria-label="Kurs in Euro" value={item.priceEur} onValueChange={(value) => updateList("savings", index, { priceEur: Math.max(value, 0), price: Math.max(value, 0), currency: "EUR", quoteUpdatedAt: new Date().toISOString(), quoteVenue: "Manuell" })} placeholder="Kurs in EUR" /><b>€</b></span>
                 </> : <span className="currency-input"><DecimalInput signed={false} aria-label="Aktueller Sparstand" value={item.balance} onValueChange={(value) => updateList("savings", index, { balance: Math.max(value, 0) })} placeholder="Aktueller Stand" /><b>€</b></span>}
                 <RemoveButton onClick={() => removeListItem("savings", index)} />
               </div>
-              {item.kind === "security" && <div className="saving-quote-hint"><span>Aktueller Wert <b>{euro(savingValue(item))}</b></span><small>{item.quoteUpdatedAt ? [marketPrice(item.price ?? 0, item.currency), item.quoteVenue, `Kurs vom ${dateTimeLabel(item.quoteUpdatedAt)}`].filter(Boolean).join(" · ") : "Kurs je Stück in Euro eintragen"}</small></div>}
+              {item.kind === "security" && <div className="saving-quote-hint"><span>Aktueller Wert <b>{exactEuros.format(savingValue(item))}</b></span><small>{item.quoteUpdatedAt ? [marketPrice(item.price ?? 0, item.currency), savingPriceLabel(item)].filter(Boolean).join(" · ") : securityISIN(item.symbol) ? "Noch kein Cboe-Schlusskurs gespeichert" : "Kurs je Stück in Euro eintragen"}</small></div>}
             </div>)}
             {!editorTarget && <div className="saving-add-actions"><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }] })}>Wertpapier</AddButton><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "dayMoney", balance: 0 }] })}>Sparform</AddButton></div>}
           </EditorSection>}
@@ -1186,11 +1203,11 @@ export default function Home() {
         {saveNotice}
         <div className="savings-list">{savingsMetrics.items.length ? savingsMetrics.items.map((item) => <article key={item.id}>
           <i style={{ backgroundColor: savingKindColors[item.kind] }} />
-          <div><strong>{item.name || savingKindLabels[item.kind]}</strong><small>{item.kind === "security" ? `${item.symbol ? item.symbol + " · " : ""}${item.quantity || 0} Stück${item.quoteUpdatedAt ? ` · ${marketPrice(item.price ?? 0, item.currency)} · ${item.quoteVenue || "Quelle nicht gespeichert"} · ${dateTimeLabel(item.quoteUpdatedAt)}` : ""}` : savingKindLabels[item.kind]}</small></div>
-          <span><b>{euro(item.value)}</b><small>{savingsMetrics.total ? `${Math.round((item.value / savingsMetrics.total) * 100)}%` : "0%"}</small></span>
+          <div><strong>{item.name || savingKindLabels[item.kind]}</strong><small>{item.kind === "security" ? `${item.symbol ? item.symbol + " · " : ""}${item.quantity || 0} Stück${item.quoteUpdatedAt ? ` · ${marketPrice(item.price ?? 0, item.currency)} · ${savingPriceLabel(item)}` : securityISIN(item.symbol) ? " · Noch kein Schlusskurs gespeichert" : ""}` : savingKindLabels[item.kind]}</small></div>
+          <span><b>{exactEuros.format(item.value)}</b><small>{savingsMetrics.total ? `${Math.round((item.value / savingsMetrics.total) * 100)}%` : "0%"}</small></span>
           <button className="edit-chip" type="button" onClick={() => openFocusedEditor("savings", undefined, item.id)}>Ändern</button>
         </article>) : <div className="savings-empty"><span>◇</span><strong>Noch keine Ersparnisse erfasst</strong><p>Füge dein erstes Wertpapier, Tagesgeldkonto oder eine andere Rücklage hinzu.</p></div>}</div>
-        <p className="market-note">Der Depotwert ergibt sich aus Stückzahl und eingetragenem Kurs in Euro.</p>
+        <p className="market-note">Bei unterstützten ISINs bewertet Njora deine Stückzahl mit dem letzten verfügbaren Euro-Schlusskurs von Cboe Europe. Der Datenstand bezeichnet die Kursdatei. Bei selten gehandelten Titeln kann der Kurs älter sein.</p>
       </section></div>}
 
       {checkingIn && <div className="modal-backdrop"><section className="checkin-card" role="dialog" aria-modal="true" aria-labelledby="checkin-title">

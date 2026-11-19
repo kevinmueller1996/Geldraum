@@ -1,3 +1,5 @@
+import { closingPrices } from "../../market/cboe";
+import { securityISIN } from "../../market/closing-prices";
 import { browserSession, wrongSession } from "../../browser-session-server";
 import { billingEnabled, membership, removeBillingAccount, subscriber } from "../../billing/subscription";
 import { normalizePlanCategories } from "../../recurring-costs";
@@ -102,7 +104,24 @@ async function upsertUser(identity: Identity, recordAccess = false) {
 
 export async function GET(request: NextRequest) {
   if (await wrongSession(request)) return json({error: "Die Sitzung hat gewechselt."}, 412);
-  const response = await getAccount(request);
+  let response = await getAccount(request);
+  const requested = request.headers.get("x-njora-closing-prices");
+  if (response.ok && requested !== null && requested.length <= 1400) {
+    const payload = await response.clone().json();
+    if (payload.authenticated && payload.billing?.active !== false) {
+      const symbols: string[] = Array.isArray(payload.plan?.savings)
+        ? payload.plan.savings.filter((s: {kind:string}) => s.kind === "security").map((s: {symbol?:string}) => s.symbol) : [];
+      const ids = new Set([...symbols, ...requested.split(",")].filter(v => typeof v === "string").map(securityISIN).filter(Boolean));
+      if (ids.size) {
+        // A market-data outage must never block access to an otherwise valid financial plan.
+        const quotes = await closingPrices(ids).catch(error => {
+          console.warn("Cboe closing prices unavailable", error instanceof Error ? error.message : "Unknown error");
+          return null;
+        });
+        response = NextResponse.json({...payload, closingPrices:quotes}, {headers:response.headers});
+      }
+    }
+  }
   if (response.ok && request.headers.get("x-njora-browser") === "1") {
     const token = await browserSession(request);
     if (token) {
