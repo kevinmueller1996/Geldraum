@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { isLocalHostname } from "../local-host";
 import LegalLinks from "../legal-links";
+import PreviewCarousel from "./preview-carousel";
 import "./landing.css";
 
 type Mode = "login" | "register";
@@ -119,10 +120,7 @@ export default function LoginPage() {
         <div className="nj-actions"><button type="button" className="nj-primary" onClick={() => openAccess("register")}>Konto erstellen</button><a href="#produkt">Monatsplan ansehen</a></div>
         <p className="nj-footnote">Manuelle Eingabe · Ohne Bankverbindung</p>
       </div>
-      <figure className="nj-stage">
-        <img className="nj-phone" src="/njora-heute-demo.png" width="354" height="770" alt="Die Heute-Ansicht der iPhone-App mit Monatsendprognose, Einkommen, Fixkosten und Kontoverlauf." fetchPriority="high" />
-        <figcaption>iPhone-Vorschau · Beispieldaten</figcaption>
-      </figure>
+      <PreviewCarousel />
     </section>
 
     <section className="nj-feature nj-wrap" id="produkt" aria-labelledby="plan-title">
