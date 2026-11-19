@@ -1280,10 +1280,10 @@ function ExpenseScheduleFields({ item, update }: { item: Expense; update: (patch
       <label>Fälligkeit<input type="date" value={item.dueDate ?? ""} required onChange={event => update({dueDate: event.target.value})} /></label>
       <label><input type="checkbox" checked={Boolean(item.paid)} onChange={event => update({paid: event.target.checked})} /> Bezahlt</label>
     </>}
-    {item.rateChanges?.filter(rate => rate.date > localDay()).map(rate => <label key={rate.date}>Monatsbetrag ab {rate.date}
-      <DecimalInput value={rate.amount} onValueChange={amount => update({rateChanges: item.rateChanges?.map(r => r.date === rate.date ? {...r, amount} : r)})} />
+    {item.rateChanges?.filter(rate => rate.date > localDay()).map(rate => <div key={rate.date}>
+      <label>Monatsbetrag ab {rate.date}<DecimalInput value={rate.amount} onValueChange={amount => update({rateChanges: item.rateChanges?.map(r => r.date === rate.date ? {...r, amount} : r)})} /></label>
       <button type="button" onClick={() => update({rateChanges: item.rateChanges?.filter(r => r.date !== rate.date)})}>Änderung entfernen</button>
-    </label>)}
+    </div>)}
     {(item.frequency === "annual" || item.frequency === "quarterly") && <label>Fälligkeitsmonat<select value={item.month ?? 0} onChange={(event) => update({ month: Number(event.target.value) })}>
       {months.map((label, index) => <option key={label} value={index}>{label}</option>)}
     </select></label>}

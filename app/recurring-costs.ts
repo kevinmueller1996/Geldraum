@@ -54,10 +54,12 @@ export function localISO(date: Date) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
 
-export function expenseAmount(item: ExpenseSchedule, day = localISO(new Date())) {
+export function expenseAmount(item: ExpenseSchedule, day?: string) {
+  if (!item.rateChanges?.length) return item.amount;
+  const date = day ?? localISO(new Date());
   let amount = item.amount, latest = "";
-  for (const rate of item.rateChanges ?? []) {
-    if (rate.date <= day && rate.date > latest) { amount = rate.amount; latest = rate.date; }
+  for (const rate of item.rateChanges) {
+    if (rate.date <= date && rate.date > latest) { amount = rate.amount; latest = rate.date; }
   }
   return amount;
 }
