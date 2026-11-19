@@ -124,6 +124,7 @@ export function upcomingCardSettlements(accounts: CardAccount[], today: Date) {
 }
 
 export function monthEndForecast(balance: number, today: Date, plan: {
+  accounts?: CardAccount[];
   incomes: (ForecastItem & { amount: number; annual: boolean; month?: number })[];
   expenses: Expense[];
   commitments: (ForecastItem & { payment: number; extraPayment?: number })[];
@@ -150,5 +151,14 @@ export function monthEndForecast(balance: number, today: Date, plan: {
   const datedBalance = scheduled.reduce((sum, row) => sum + row.amount, balance);
   const low = uncertain.reduce((sum, row) => sum + Math.min(0, row.amount), datedBalance);
   const high = uncertain.reduce((sum, row) => sum + Math.max(0, row.amount), datedBalance);
-  return { scheduled, uncertain, datedBalance, low, high };
+  const transfers = upcomingCardSettlements(plan.accounts ?? [], today).map(({ account, date }) => ({
+    kind: "transfer" as const, account, date
+  }));
+  const payments = scheduled.map(row => ({
+    kind: "payment" as const, row, date: new Date(today.getFullYear(), month, row.day)
+  }));
+  const rowsFromToday = [...payments, ...transfers].sort((a, b) =>
+    (a.date?.getTime() ?? Infinity) - (b.date?.getTime() ?? Infinity)
+  );
+  return { scheduled, rowsFromToday, uncertain, datedBalance, low, high };
 }

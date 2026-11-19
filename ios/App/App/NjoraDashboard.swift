@@ -144,14 +144,12 @@ struct Overview: View {
 
 private struct ForecastDetail: View {
     @ObservedObject var store: NjoraStore
-    @State private var selectedCard: PlanItem?
     @State private var selectedEntry: ForecastEntry?
     @State private var checkingBalance = false
     var body: some View {
         if let plan = store.plan {
             let metrics = PlanMetrics(plan: plan)
             let forecast = metrics.forecast
-            let cards = metrics.cardSettlements
             List {
                 Section("Rechnung ab heute") {
                     Button { checkingBalance = true } label: {
@@ -160,7 +158,7 @@ private struct ForecastDetail: View {
                             disclosure
                         }.contentShape(Rectangle())
                     }.buttonStyle(.plain)
-                    ForEach(forecast.scheduled) { row in
+                    ForEach(forecast.rowsFromToday) { row in
                         entryButton(row, dated: true)
                     }
                     LabeledAmount(label: "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: true)
@@ -177,20 +175,6 @@ private struct ForecastDetail: View {
                         Text("Unten sind alle offenen Ausgaben berücksichtigt, oben alle offenen Einnahmen.").font(.footnote)
                     }
                 }
-                if !cards.isEmpty {
-                    Section {
-                        ForEach(cards, id: \.account.id) { card in
-                            Button { selectedCard = card.account } label: {
-                                HStack {
-                                    LabeledAmount(label: card.account.name, amount: card.account.fields.amount("balance"),
-                                                  detail: card.date.map { $0.formatted(.dateTime.day().month(.wide).year().locale(Locale(identifier: "de_DE"))) } ?? "Abbuchungstag offen")
-                                    disclosure
-                                }.contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                        }
-                    } header: { Text("Nächster Kreditkartenausgleich") }
-                    footer: { Text("Der offene Kartenbetrag ist im Nettokontostand bereits berücksichtigt.") }
-                }
                 Section {
                     Text("Die Rechnung setzt einen aktuellen Kontostand voraus. Frühere Fälligkeiten gelten als gebucht. Spätere zählen vollständig. Ungeplante Ausgaben sind offen.")
                     if let date = plan[.history].map({ $0.fields.text("date") }).max(), let last = PlanDate.parse(date) {
@@ -198,7 +182,6 @@ private struct ForecastDetail: View {
                     }
                 }.font(.footnote).foregroundStyle(.secondary)
             }
-            .sheet(item: $selectedCard) { PlanEditor(section: .accounts, item: $0, plan: plan, store: store) }
             .sheet(item: $selectedEntry) { entry in
                 PlanEditor(section: entry.section, item: entry.item, plan: plan, store: store)
             }
@@ -215,7 +198,14 @@ private struct ForecastDetail: View {
         Button { selectedEntry = row } label: {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
+                    if row.section == .accounts {
+                        let date = row.bookingDate.map { $0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "de_DE"))) }
+                        LabeledAmount(label: [date, row.item.name].compactMap { $0 }.joined(separator: " · "), amount: row.amount)
+                        Text(date == nil ? "Kartenausgleich · Abbuchungstag offen" : "Kartenausgleich · bereits im Nettostand")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
+                    }
                     if !dated {
                         Text(row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
                             .font(.footnote).foregroundStyle(.secondary)

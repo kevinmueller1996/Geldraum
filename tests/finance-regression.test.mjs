@@ -198,3 +198,20 @@ test("monthly credit card settlement dates use the local calendar without changi
     assert.equal(backupPlan({ ...plan, accounts: [{ ...account, bookingDay: invalid }] }), null);
   }
 });
+
+test("the forecast timeline interleaves card transfers, including today, with dated payments", async () => {
+  const { monthEndForecast } = await import("../app/recurring-costs.ts");
+  const card = { id: "later", name: "Karte", type: "credit", balance: 180, bookingDay: 23 };
+  const plan = {
+    accounts: [card, { ...card, id: "today", bookingDay: 18 }, { ...card, id: "next", bookingDay: 1 }, { ...card, id: "unknown", bookingDay: 0 }],
+    incomes: [{ id: "salary", name: "Gehalt", amount: 2000, annual: false, bookingDay: 25 }],
+    expenses: [{ id: "rent", name: "Miete", amount: 400, category: "Wohnen", bookingDay: 20 }],
+    commitments: []
+  };
+  const result = monthEndForecast(-373, new Date(2026, 11, 18), plan);
+  assert.deepEqual(result.rowsFromToday.map(entry => entry.kind === "transfer" ? entry.account.id : entry.row.itemId),
+    ["today", "rent", "later", "salary", "next", "unknown"]);
+  assert.equal(result.rowsFromToday[4].date.getTime(), new Date(2027, 0, 1).getTime());
+  assert.equal(result.rowsFromToday[5].date, null);
+  assert.deepEqual([result.low, result.datedBalance, result.high], [1227, 1227, 1227]);
+});

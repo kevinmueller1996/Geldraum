@@ -343,10 +343,12 @@ struct ForecastEntry: Identifiable {
     let amount: Double
     let day: Int
     let monthUnknown: Bool
+    var bookingDate: Date? = nil
 }
 
 struct MonthForecast {
     let balance: Double
+    var rowsFromToday: [ForecastEntry] = []
     var scheduled: [ForecastEntry] = []
     var uncertain: [ForecastEntry] = []
     var datedBalance: Double { scheduled.reduce(balance) { $0 + $1.amount } }
@@ -419,7 +421,8 @@ struct PlanMetrics {
             }
     }
     var forecast: MonthForecast {
-        let day = calendar.component(.day, from: today)
+        let start = calendar.startOfDay(for: today)
+        let day = calendar.component(.day, from: start)
         let lastDay = calendar.range(of: .day, in: .month, for: today)?.count ?? 31
         var result = MonthForecast(balance: net)
         func include(_ item: PlanItem, section: PlanSection, amount: Double, monthUnknown: Bool = false) {
@@ -427,7 +430,8 @@ struct PlanMetrics {
             let due = min(lastDay, item.fields.integer("bookingDay") ?? 0)
             if due > 0 && due < day { return }
             let entry = ForecastEntry(section: section, item: item, amount: amount,
-                                      day: due, monthUnknown: monthUnknown)
+                                      day: due, monthUnknown: monthUnknown,
+                                      bookingDate: due > 0 ? calendar.date(byAdding: .day, value: due - day, to: start) : nil)
             if due > day && !monthUnknown { result.scheduled.append(entry) }
             else { result.uncertain.append(entry) }
         }
@@ -441,7 +445,14 @@ struct PlanMetrics {
             include(item, section: .expenses, amount: -item.fields.amount("amount"))
         }
         for loan in loansWithPayments { include(loan, section: .loans, amount: -loan.monthlyLoanPayment) }
-        result.scheduled.sort { $0.day < $1.day }
+        let transfers = cardSettlements.map { card in
+            ForecastEntry(section: .accounts, item: card.account, amount: -card.account.fields.amount("balance"),
+                          day: card.date.map { calendar.component(.day, from: $0) } ?? 0,
+                          monthUnknown: false, bookingDate: card.date)
+        }
+        result.rowsFromToday = (result.scheduled + transfers).sorted {
+            ($0.bookingDate ?? .distantFuture) < ($1.bookingDate ?? .distantFuture)
+        }
         return result
     }
 

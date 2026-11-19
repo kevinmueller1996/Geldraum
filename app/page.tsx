@@ -11,7 +11,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { bookingDay?: number; id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, upcomingCardSettlements, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
+import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
 
 type Commitment = { bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -364,9 +364,8 @@ export default function Home() {
     const snapshotNet = (snapshot: Snapshot) => snapshot.netBalance ?? active.accounts.reduce((sum, account) => sum + (account.type === "credit" ? -(snapshot.balances[account.id] ?? 0) : (snapshot.balances[account.id] ?? 0)), 0);
     const monthDelta = monthSnapshots.length > 1 ? snapshotNet(monthSnapshots.at(-1)!) - snapshotNet(monthSnapshots[0]) : 0;
     const forecast = monthEndForecast(netBalance, now, active);
-    const cardSettlements = upcomingCardSettlements(active.accounts, now);
     const totalDebt = active.commitments.reduce((sum, item) => sum + item.balance, 0);
-    return { cardSettlements, income, annualIncome, currentAnnualIncome, fixedCosts, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt };
+    return { income, annualIncome, currentAnnualIncome, fixedCosts, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt };
   }, [active]);
 
   const groupedExpenses = useMemo(() => {
@@ -837,22 +836,24 @@ export default function Home() {
           </div>
           {showForecast && <section id="forecast-detail" className="detail-card">
             <h2>Monatsendprognose</h2>
+            <h3>Rechnung ab heute</h3>
             <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Eingetragener Nettokontostand</span><b>{exactEuros.format(metrics.netBalance)}</b><span aria-hidden="true">›</span></button>
-            {metrics.forecast.scheduled.map(row => forecastButton(row, true))}
+            {metrics.forecast.rowsFromToday.map(entry => {
+              if (entry.kind === "payment") return forecastButton(entry.row, true);
+              const { account, date } = entry;
+              return <button type="button" className="detail-row forecast-entry" key={`accounts:${account.id}`} onClick={() => openFocusedEditor("accounts", undefined, account.id)}>
+                <span>{date && date.toLocaleDateString("de-DE", { day: "numeric", month: "short" }) + " · "}{account.name}
+                  <small>{date ? "Kartenausgleich · bereits im Nettostand" : "Kartenausgleich · Abbuchungstag offen"}</small>
+                </span>
+                <b>{exactEuros.format(-account.balance)}</b><span aria-hidden="true">›</span>
+              </button>;
+            })}
             <div className="detail-row"><strong>Mit datierten Zahlungen</strong><b>{exactEuros.format(metrics.forecast.datedBalance)}</b></div>
             {metrics.forecast.uncertain.length > 0 && <>
               <h3>Buchung offen</h3>
               {metrics.forecast.uncertain.map(row => forecastButton(row, false))}
               <p><strong>Möglicher Stand am Monatsende</strong><br />{exactEuros.format(metrics.forecast.low)} bis {exactEuros.format(metrics.forecast.high)}</p>
               <p>Unten sind alle offenen Ausgaben berücksichtigt, oben alle offenen Einnahmen.</p>
-            </>}
-            {metrics.cardSettlements.length > 0 && <>
-              <h3>Nächster Kreditkartenausgleich</h3>
-              {metrics.cardSettlements.map(({ account, date }) => <button type="button" className="detail-row forecast-entry" key={account.id} onClick={() => openFocusedEditor("accounts", undefined, account.id)}>
-                <span>{account.name}<small>{date?.toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" }) ?? "Abbuchungstag offen"}</small></span>
-                <b>{exactEuros.format(account.balance)}</b><span aria-hidden="true">›</span>
-              </button>)}
-              <p>Der offene Kartenbetrag ist im Nettokontostand bereits berücksichtigt.</p>
             </>}
             <p>Die Rechnung setzt einen aktuellen Kontostand voraus. Frühere Fälligkeiten gelten als gebucht. Spätere zählen vollständig. Ungeplante Ausgaben sind offen.</p>
             <small>Letzter Check-in · {lastUpdateLabel}</small>
