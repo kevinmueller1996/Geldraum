@@ -4,6 +4,7 @@ import SwiftUI
 enum DashboardTab: Hashable { case today, month, loans, goals, more }
 
 struct Dashboard: View {
+    @Environment(\.njoraAppearance) private var theme
     @ObservedObject var store: NjoraStore
     @Binding var tab: DashboardTab
 
@@ -35,7 +36,7 @@ struct Dashboard: View {
                     }
                     .navigationTitle("Mehr")
                     .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
-                    .scrollContentBackground(.hidden).background(NjoraTheme.paper)
+                    .scrollContentBackground(.hidden).background(theme.paper)
                 }.tabItem { Label("Mehr", systemImage: "ellipsis") }.tag(DashboardTab.more)
             }
         }
@@ -57,6 +58,7 @@ private struct ProfileButton: View {
 }
 
 struct Overview: View {
+    @Environment(\.njoraAppearance) private var theme
     let plan: Plan
     @ObservedObject var store: NjoraStore
     @State private var checkIn = false
@@ -81,9 +83,9 @@ struct Overview: View {
                                 "Mit datierten Zahlungen · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
                             .font(.footnote)
                     }
-                    .foregroundStyle(NjoraTheme.paper)
+                    .foregroundStyle(theme.paper)
                     .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(NjoraTheme.accent, in: RoundedRectangle(cornerRadius: 18))
+                    .background(theme.accent, in: RoundedRectangle(cornerRadius: 18))
                 }.buttonStyle(.plain)
                 .accessibilityIdentifier("njora.overview.forecast")
 
@@ -111,21 +113,21 @@ struct Overview: View {
                         Text("Sonderposten in diesem Monat").font(.headline)
                         ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
                         ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
-                    }.njoraCard()
+                    }.njoraCard(theme.card)
                 }
                 if !plan[.history].isEmpty {
                     NavigationLink { PlanSectionView(section: .history, store: store) } label: {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack { Text("Kontostände im Verlauf").font(.headline); Spacer(); Image(systemName: "chevron.right") }
                             BalanceChart(plan: plan)
-                        }.njoraCard()
+                        }.njoraCard(theme.card)
                     }.buttonStyle(.plain)
                 }
                 Notice(text: store.notice(in: .overview))
             }
             .padding(22).frame(maxWidth: 860).frame(maxWidth: .infinity)
         }
-        .background(NjoraTheme.paper)
+        .background(theme.paper)
         .safeAreaInset(edge: .top, spacing: 0) {
             HStack(spacing: 8) {
                 NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
@@ -147,7 +149,7 @@ struct Overview: View {
             .padding(.horizontal, 18).padding(.vertical, 8)
             .frame(maxWidth: 860)
             .frame(maxWidth: .infinity)
-            .background(NjoraTheme.paper)
+            .background(theme.paper)
         }
         .refreshable { await store.refresh(in: .overview) }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
@@ -155,9 +157,9 @@ struct Overview: View {
     private func balanceActionIcon(_ name: String) -> some View {
         Image(systemName: name)
             .font(.body.weight(.semibold))
-            .foregroundStyle(NjoraTheme.accent)
+            .foregroundStyle(theme.accent)
             .frame(width: 34, height: 34)
-            .background(NjoraTheme.accent.opacity(0.10), in: Circle())
+            .background(theme.accent.opacity(0.10), in: Circle())
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
     }
@@ -170,7 +172,7 @@ struct Overview: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1).minimumScaleFactor(0.65)
         }
-        .njoraCard()
+        .njoraCard(theme.card)
         .accessibilityElement(children: .combine)
     }
 
@@ -255,6 +257,7 @@ private struct ForecastDetail: View {
 }
 
 struct MonthlyPlan: View {
+    @Environment(\.njoraAppearance) private var theme
     let plan: Plan
     @ObservedObject var store: NjoraStore
     var body: some View {
@@ -282,8 +285,8 @@ struct MonthlyPlan: View {
                                 GeometryReader { area in
                                     let ratio = min(1, max(0, share ?? 0))
                                     ZStack(alignment: .leading) {
-                                        Capsule().fill(NjoraTheme.accent.opacity(0.14))
-                                        Capsule().fill(NjoraTheme.accent).frame(width: area.size.width * ratio)
+                                        Capsule().fill(theme.accent.opacity(0.14))
+                                        Capsule().fill(theme.accent).frame(width: area.size.width * ratio)
                                     }
                                 }
                                 .frame(height: 4)
@@ -302,21 +305,22 @@ struct MonthlyPlan: View {
                 }
             }
             Notice(text: store.notice(in: .month))
-        }.scrollContentBackground(.hidden).background(NjoraTheme.paper)
+        }.scrollContentBackground(.hidden).background(theme.paper)
             .refreshable { await store.refresh(in: .month) }
     }
 }
 
 struct BalanceChart: View {
+    @Environment(\.njoraAppearance) private var theme
     let plan: Plan
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
         Chart(plan[.history].suffix(30)) { snapshot in
             if let day = PlanDate.parse(snapshot.fields.text("date")) {
                 LineMark(x: .value("Datum", day), y: .value("Stand", metrics.net(for: snapshot)))
-                    .foregroundStyle(NjoraTheme.accent)
+                    .foregroundStyle(theme.accent)
                 PointMark(x: .value("Datum", day), y: .value("Stand", metrics.net(for: snapshot)))
-                    .foregroundStyle(NjoraTheme.accent)
+                    .foregroundStyle(theme.accent)
             }
         }.frame(height: 170)
     }
@@ -336,7 +340,7 @@ struct LabeledAmount: View {
     private var number: some View {
         VStack(alignment: .trailing, spacing: 1) {
             Text(euros(amount)).monospacedDigit().fontWeight(emphasis ? .semibold : .regular)
-                .foregroundStyle(amount < 0 ? Color.red : emphasis ? NjoraTheme.positive : Color.primary)
+                .foregroundStyle(amount < 0 ? Color.red : emphasis ? NjoraAppearance.positive : Color.primary)
             if let detail { Text(detail).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
         }
     }
@@ -353,18 +357,17 @@ extension View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 FinancialTitle(title: title, amount: amount, caption: caption)
-                    .padding(.horizontal, 18).padding(.vertical, 8)
-                    .background(NjoraTheme.paper)
             }
     }
 
-    func njoraCard() -> some View {
+    func njoraCard(_ background: Color) -> some View {
         self.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-            .background(NjoraTheme.card, in: RoundedRectangle(cornerRadius: 18))
+            .background(background, in: RoundedRectangle(cornerRadius: 18))
     }
 }
 
 private struct FinancialTitle: View {
+    @Environment(\.njoraAppearance) private var theme
     let title: String
     let amount: Double?
     let caption: String
@@ -387,6 +390,8 @@ private struct FinancialTitle: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18).padding(.vertical, 8)
+        .background(theme.paper)
     }
 
     private var heading: some View {
@@ -422,6 +427,7 @@ private extension PlanMetrics {
 }
 
 struct PlanSectionView: View {
+    @Environment(\.njoraAppearance) private var theme
     let section: PlanSection
     @ObservedObject var store: NjoraStore
     var category: String? = nil
@@ -495,7 +501,7 @@ struct PlanSectionView: View {
                                 }
                             }
                             .padding(.vertical, 8)
-                            .listRowBackground(NjoraTheme.card)
+                            .listRowBackground(theme.card)
                         }
                         ForEach(section == .history ? Array(items.reversed()) : items) { item in
                             if section == .history {
@@ -515,7 +521,7 @@ struct PlanSectionView: View {
                 }
                 Notice(text: store.notice(in: .section(section)))
             }
-            .scrollContentBackground(.hidden).background(NjoraTheme.paper)
+            .scrollContentBackground(.hidden).background(theme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
             .financialTitle(category ?? section.title, amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
             .toolbar {

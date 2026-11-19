@@ -6,6 +6,7 @@ import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { backupPlan } from "./plan-validation";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
+import { AppearancePicker, useAppearance } from "./appearance-picker";
 import BillingOffer, { type BillingStatus } from "./billing/offer";
 import LegalLinks from "./legal-links";
 import { isLocalHostname } from "./local-host";
@@ -225,6 +226,7 @@ function migrateOldProfile(): Plan | null {
 }
 
 export default function Home() {
+  const appearance = useAppearance();
   const [plan, setPlan] = useState<Plan | null>(null);
   const [draft, setDraft] = useState<Plan>(emptyPlan());
   const [ready, setReady] = useState(false);
@@ -743,7 +745,7 @@ export default function Home() {
     </article></main>
   );
   return (
-    <main id="top" className="page-shell">
+    <main id="top" className="page-shell" data-appearance={appearance.appearance}>
       <header className="topbar">
         <button className="brand" type="button" onClick={() => navigate("home")} aria-label="Njora Startseite"><Brand /></button>
         <nav className="desktop-nav" aria-label="Hauptnavigation">
@@ -884,6 +886,7 @@ export default function Home() {
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
           })}</div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button></article>
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
+          <AppearancePicker {...appearance} />
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
           {billing && <article className="account-card"><BillingOffer billing={billing} /></article>}

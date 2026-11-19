@@ -12,6 +12,7 @@ private enum Metric: String {
 private struct Entry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot?
+    var appearance = NjoraAppearance.load()
 }
 
 private struct Provider: TimelineProvider {
@@ -39,16 +40,6 @@ private struct SummaryView: View {
     let metric: Metric
     let entry: Entry
     @Environment(\.widgetFamily) var family
-    @Environment(\.colorScheme) var colorScheme
-
-    private var paper: Color {
-        colorScheme == .dark ? Color(red: 0.15, green: 0.12, blue: 0.11) : Color(red: 0.96, green: 0.94, blue: 0.91)
-    }
-
-    private var accent: Color {
-        colorScheme == .dark ? Color(red: 0.94, green: 0.65, blue: 0.54) : Color(red: 0.30, green: 0.14, blue: 0.12)
-    }
-
     private func euros(_ value: Double) -> String {
         value.formatted(.currency(code: "EUR").locale(Locale(identifier: "de_DE")))
     }
@@ -56,7 +47,7 @@ private struct SummaryView: View {
     @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 5) {
             Label(metric.title, systemImage: metric.symbol)
-                .font(.subheadline.weight(.semibold)).foregroundStyle(accent)
+                .font(.subheadline.weight(.semibold)).foregroundStyle(entry.appearance.accent)
             if let data = entry.snapshot {
                 Text(euros(metric == .balance ? data.balance : data.available))
                     .font(.system(.title, design: .serif, weight: .semibold))
@@ -99,9 +90,9 @@ private struct SummaryView: View {
 
     var body: some View {
         if #available(iOS 17, *) {
-            content.containerBackground(for: .widget) { paper }
+            content.containerBackground(for: .widget) { entry.appearance.paper }
         } else {
-            content.padding().background(paper)
+            content.padding().background(entry.appearance.paper)
         }
     }
 }

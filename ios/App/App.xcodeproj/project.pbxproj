@@ -15,7 +15,9 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		9408A9EF8B2F5E86AD10EFE8 /* Snapshot in App */ = {isa = PBXBuildFile; fileRef = 6D690FB9875558EBB10BD2B7 /* WidgetSnapshot.swift */;};
+		E084560EC3B74C8184537111 /* Appearance in App */ = {isa = PBXBuildFile; fileRef = E084560EC3B74C8184537113 /* NjoraAppearance.swift */;};
 		2D1D5820139F508B990BB390 /* Snapshot in Widgets */ = {isa = PBXBuildFile; fileRef = 6D690FB9875558EBB10BD2B7 /* WidgetSnapshot.swift */;};
+		E084560EC3B74C8184537112 /* Appearance in Widgets */ = {isa = PBXBuildFile; fileRef = E084560EC3B74C8184537113 /* NjoraAppearance.swift */;};
 		1224D16829B35052AD2B29BC /* Widget in Sources */ = {isa = PBXBuildFile; fileRef = CF90EABCE0B156B4B98BD778 /* NjoraWidgets.swift */;};
 		5F1ED23B4D7D5C26941155B7 /* Widgets in PlugIns */ = {isa = PBXBuildFile; fileRef = 29D43F2B8E3A5D7D96C88A97 /* NjoraWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); };};
 /* End PBXBuildFile section */
@@ -31,6 +33,7 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		6D690FB9875558EBB10BD2B7 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshot.swift; sourceTree = "<group>";};
+		E084560EC3B74C8184537113 /* NjoraAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NjoraAppearance.swift; sourceTree = "<group>";};
 		CF90EABCE0B156B4B98BD778 /* NjoraWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NjoraWidgets.swift; sourceTree = "<group>";};
 		22F4B05B7C0E5090A47699F2 /* WidgetGroup.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WidgetGroup.entitlements; sourceTree = "<group>";};
 		E86A2A7383ED5EEA90ECEC6E /* Info.plist (Widgets) */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
@@ -94,7 +97,7 @@
 			path = App;
 			sourceTree = "<group>";
 		};
-		265835FBB001541F9F791313 /* Shared */ = {isa = PBXGroup; children = (6D690FB9875558EBB10BD2B7 /* WidgetSnapshot.swift */,22F4B05B7C0E5090A47699F2 /* WidgetGroup.entitlements */); path = Shared; sourceTree = "<group>";};
+		265835FBB001541F9F791313 /* Shared */ = {isa = PBXGroup; children = (E084560EC3B74C8184537113 /* NjoraAppearance.swift */,6D690FB9875558EBB10BD2B7 /* WidgetSnapshot.swift */,22F4B05B7C0E5090A47699F2 /* WidgetGroup.entitlements */); path = Shared; sourceTree = "<group>";};
 		97CD0CAB05185F2BAFD93E28 /* Widgets */ = {isa = PBXGroup; children = (CF90EABCE0B156B4B98BD778 /* NjoraWidgets.swift */,E86A2A7383ED5EEA90ECEC6E /* Info.plist (Widgets) */); path = Widgets; sourceTree = "<group>";};
 /* End PBXGroup section */
 
@@ -173,6 +176,7 @@
 			files = (
 				9B773B11F702000000000100 /* Plan.swift in Sources */,
 				9408A9EF8B2F5E86AD10EFE8 /* Snapshot in App */,
+				E084560EC3B74C8184537111 /* Appearance in App */,
 				9B773B11F702000000000101 /* NjoraAPI.swift in Sources */,
 				9B773B11F702000000000102 /* NjoraApp.swift in Sources */,
 				9B773B11F702000000000103 /* NjoraDashboard.swift in Sources */,
@@ -180,7 +184,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		3DD670FDCD495694BB5D5411 /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (2D1D5820139F508B990BB390 /* Snapshot in Widgets */,1224D16829B35052AD2B29BC /* Widget in Sources */); runOnlyForDeploymentPostprocessing = 0;};
+		3DD670FDCD495694BB5D5411 /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (E084560EC3B74C8184537112 /* Appearance in Widgets */,2D1D5820139F508B990BB390 /* Snapshot in Widgets */,1224D16829B35052AD2B29BC /* Widget in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXVariantGroup section */
@@ -309,7 +313,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -334,7 +338,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -356,7 +360,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widgets/Info.plist;
@@ -372,7 +376,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widgets/Info.plist;

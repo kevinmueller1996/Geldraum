@@ -97,12 +97,13 @@ private struct EuroInput: UIViewRepresentable {
 }
 
 private struct PlanFormStyle: ViewModifier {
+    @Environment(\.njoraAppearance) private var theme
     @State private var editingField = false
 
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
-            .background(NjoraTheme.paper)
+            .background(theme.paper)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if editingField {
@@ -451,6 +452,7 @@ struct PlanFile: FileDocument {
 }
 
 struct SettingsView: View {
+    @EnvironmentObject private var appearance: AppearanceSettings
     @ObservedObject var store: NjoraStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -473,6 +475,31 @@ struct SettingsView: View {
                     } else if billing.provider == "stripe" {
                         Text("Dein Web-Abo verwaltest du im Kontobereich von njora.de.")
                     }
+                }
+            }
+            Section("Erscheinungsbild") {
+                ForEach(NjoraAppearance.allCases, id: \.self) { option in
+                    Button {
+                        do { try appearance.select(option) }
+                        catch { notice = "Das Erscheinungsbild konnte nicht gespeichert werden." }
+                    } label: {
+                        HStack(spacing: 12) {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(option.paper)
+                                .overlay { Capsule().fill(option.accent).frame(width: 19, height: 6) }
+                                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.3)) }
+                                .frame(width: 34, height: 26)
+                                .accessibilityHidden(true)
+                            Text(option.title).foregroundStyle(.primary)
+                            Spacer()
+                            if option == appearance.selected {
+                                Image(systemName: "checkmark").accessibilityHidden(true)
+                            }
+                        }
+                        .frame(minHeight: 32)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityAddTraits(option == appearance.selected ? .isSelected : [])
                 }
             }
             Section("Profil") {

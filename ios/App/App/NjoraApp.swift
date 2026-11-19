@@ -6,6 +6,7 @@ import WidgetKit
 @main
 struct NjoraApp: App {
     @Environment(\.scenePhase) private var phase
+    @StateObject private var appearance = AppearanceSettings()
     @StateObject private var store = NjoraStore()
     @State private var tab = DashboardTab.today
     @State private var emailAction: EmailAction?
@@ -34,12 +35,12 @@ struct NjoraApp: App {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(NjoraTheme.paper.ignoresSafeArea())
-            .tint(NjoraTheme.accent)
+            .background(appearance.selected.paper.ignoresSafeArea())
+            .tint(appearance.selected.accent)
             .environment(\.locale, Locale(identifier: "de_DE"))
             .overlay {
                 if phase != .active {
-                    ZStack { NjoraTheme.paper.ignoresSafeArea(); BrandMark() }
+                    ZStack { appearance.selected.paper.ignoresSafeArea(); BrandMark() }
                         .accessibilityHidden(true)
                 }
             }
@@ -63,6 +64,8 @@ struct NjoraApp: App {
             .sheet(item: $emailAction) { action in
                 EmailPasswordView(action: action, store: store)
             }
+            .environment(\.njoraAppearance, appearance.selected)
+            .environmentObject(appearance)
         }
     }
 }
@@ -252,24 +255,24 @@ final class NjoraStore: ObservableObject {
     }
 }
 
-enum NjoraTheme {
-    static let accent = Color(light: UIColor(red: 0.30, green: 0.14, blue: 0.12, alpha: 1), dark: UIColor(red: 0.94, green: 0.65, blue: 0.54, alpha: 1))
-    static let paper = Color(light: UIColor(red: 0.96, green: 0.94, blue: 0.91, alpha: 1), dark: UIColor(red: 0.15, green: 0.12, blue: 0.11, alpha: 1))
-    static let card = Color(light: UIColor(red: 1, green: 0.99, blue: 0.97, alpha: 1), dark: UIColor(red: 0.22, green: 0.18, blue: 0.17, alpha: 1))
-    static let positive = Color(light: UIColor(red: 0.25, green: 0.38, blue: 0.25, alpha: 1), dark: UIColor(red: 0.59, green: 0.77, blue: 0.57, alpha: 1))
-}
+@MainActor
+final class AppearanceSettings: ObservableObject {
+    @Published private(set) var selected = NjoraAppearance.load()
 
-extension Color {
-    fileprivate init(light: UIColor, dark: UIColor) {
-        self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    func select(_ newValue: NjoraAppearance) throws {
+        guard newValue != selected else { return }
+        try newValue.save()
+        selected = newValue
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 
 struct BrandMark: View {
+    @Environment(\.njoraAppearance) private var theme
     var body: some View {
         Label("N J O R A", systemImage: "n.circle")
             .font(.system(.title3, design: .serif, weight: .semibold))
-            .foregroundStyle(NjoraTheme.accent)
+            .foregroundStyle(theme.accent)
             .accessibilityLabel("Njora")
     }
 }
