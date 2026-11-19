@@ -103,6 +103,7 @@ private struct PlanFormStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
+            .frame(maxWidth: 720).frame(maxWidth: .infinity)
             .background(theme.paper)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {

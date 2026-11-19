@@ -1,6 +1,17 @@
 import Charts
 import SwiftUI
 
+private enum DashboardLayout {
+    static let maxWidth: CGFloat = 1120
+    static let readingWidth: CGFloat = 820
+
+    static func columns<Content: View>(_ wide: Bool, @ViewBuilder content: () -> Content) -> some View {
+        let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 24))
+                          : AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+        return layout { content() }
+    }
+}
+
 enum DashboardTab: Hashable { case today, month, loans, goals, more }
 
 struct Dashboard: View {
@@ -10,7 +21,7 @@ struct Dashboard: View {
 
     var body: some View {
         if let plan = store.plan {
-            TabView(selection: $tab) {
+            let navigation = TabView(selection: $tab) {
                 NavigationStack {
                     Overview(plan: plan, store: store)
                         .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
@@ -19,7 +30,7 @@ struct Dashboard: View {
                 }.tabItem { Label("Heute", systemImage: "sun.max") }.tag(DashboardTab.today)
                 NavigationStack {
                     MonthlyPlan(plan: plan, store: store)
-                        .financialTitle("Monatsplan", amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
+                        .financialTitle("Monatsplan", width: DashboardLayout.maxWidth, amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                 }.tabItem { Label("Monatsplan", systemImage: "calendar") }.tag(DashboardTab.month)
                 NavigationStack {
@@ -38,6 +49,11 @@ struct Dashboard: View {
                     .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                     .scrollContentBackground(.hidden).background(theme.paper)
                 }.tabItem { Label("Mehr", systemImage: "ellipsis") }.tag(DashboardTab.more)
+            }
+            if #available(iOS 18, *), UIDevice.current.userInterfaceIdiom == .pad {
+                navigation.tabViewStyle(.sidebarAdaptable)
+            } else {
+                navigation
             }
         }
     }
@@ -65,67 +81,26 @@ struct Overview: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                let forecast = metrics.forecast
-                NavigationLink { ForecastDetail(store: store) } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Prognose zum Monatsende").font(.headline)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
+        GeometryReader { window in
+            let wide = window.size.width >= columnThreshold && !typeSize.isAccessibilitySize
+            let hasDetails = !plan[.history].isEmpty || !metrics.annualIncome.isEmpty || !metrics.specialCosts.isEmpty
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    DashboardLayout.columns(wide && hasDetails) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            primaryCards(metrics, columns: typeSize.isAccessibilitySize ? 1 : (wide && !hasDetails ? 4 : 2))
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        if hasDetails {
+                            VStack(alignment: .leading, spacing: 14) {
+                                detailCards(metrics, wide: wide)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Text("≈ " + euros(forecast.datedBalance))
-                            .font(.system(.largeTitle, design: .rounded, weight: .semibold))
-                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
-                            .accessibilityLabel("Ungefähr " + euros(forecast.datedBalance))
-                        Text(forecast.uncertain.isEmpty ? "Mit datierten Zahlungen" :
-                                "Mit datierten Zahlungen · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
-                            .font(.footnote)
                     }
-                    .foregroundStyle(theme.paper)
-                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.accent, in: RoundedRectangle(cornerRadius: 18))
-                }.buttonStyle(.plain)
-                .accessibilityIdentifier("njora.overview.forecast")
-
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
-                    NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                        metric("Einkommen im " + monthNames[metrics.month], value: euros(metrics.incomeThisMonth))
-                    }
-                    NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                        metric("Fixkosten · Ø pro Monat", value: euros(metrics.fixedCosts))
-                    }
-                    NavigationLink {
-                        MonthlyPlan(plan: store.plan ?? plan, store: store)
-                            .financialTitle("Monatsplan", amount: metrics.available, caption: "Spielraum pro Monat")
-                            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
-                    } label: {
-                        metric("Monatlicher Spielraum", value: euros(metrics.available))
-                    }
-                    NavigationLink { PlanSectionView(section: .loans, store: store) } label: {
-                        metric("Offene Kreditschuld", value: euros(plan[.loans].sum("balance")))
-                    }
-                }.buttonStyle(.plain)
-
-                if !metrics.annualIncome.isEmpty || !metrics.specialCosts.isEmpty {
-                    VStack(alignment: .leading, spacing: 11) {
-                        Text("Sonderposten in diesem Monat").font(.headline)
-                        ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
-                        ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
-                    }.njoraCard(theme.card)
+                    Notice(text: store.notice(in: .overview))
                 }
-                if !plan[.history].isEmpty {
-                    NavigationLink { PlanSectionView(section: .history, store: store) } label: {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack { Text("Kontostände im Verlauf").font(.headline); Spacer(); Image(systemName: "chevron.right") }
-                            BalanceChart(plan: plan)
-                        }.njoraCard(theme.card)
-                    }.buttonStyle(.plain)
-                }
-                Notice(text: store.notice(in: .overview))
+                .padding(22).frame(maxWidth: DashboardLayout.maxWidth).frame(maxWidth: .infinity)
             }
-            .padding(22).frame(maxWidth: 860).frame(maxWidth: .infinity)
+            .refreshable { await store.refresh(in: .overview) }
         }
         .background(theme.paper)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -146,14 +121,77 @@ struct Overview: View {
                         .accessibilityIdentifier("njora.overview.checkIn")
                 }
             }
-            .padding(.horizontal, 18).padding(.vertical, 8)
-            .frame(maxWidth: 860)
+            .padding(.horizontal, 22).padding(.vertical, 8)
+            .frame(maxWidth: DashboardLayout.maxWidth)
             .frame(maxWidth: .infinity)
             .background(theme.paper)
         }
-        .refreshable { await store.refresh(in: .overview) }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
     }
+    @ScaledMetric(relativeTo: .body) private var columnThreshold: CGFloat = 820
+
+    @ViewBuilder private func primaryCards(_ metrics: PlanMetrics, columns: Int) -> some View {
+        let forecast = metrics.forecast
+        NavigationLink { ForecastDetail(store: store) } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Prognose zum Monatsende").font(.headline)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
+                }
+                Text("≈ " + euros(forecast.datedBalance))
+                    .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
+                    .accessibilityLabel("Ungefähr " + euros(forecast.datedBalance))
+                Text(forecast.uncertain.isEmpty ? "Mit datierten Zahlungen" :
+                        "Mit datierten Zahlungen · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
+                    .font(.footnote)
+            }
+            .foregroundStyle(theme.paper)
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.accent, in: RoundedRectangle(cornerRadius: 18))
+        }.buttonStyle(.plain)
+        .accessibilityIdentifier("njora.overview.forecast")
+
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: columns), spacing: 12) {
+            NavigationLink { PlanSectionView(section: .income, store: store) } label: {
+                metric("Einkommen im " + monthNames[metrics.month], value: euros(metrics.incomeThisMonth))
+            }
+            NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
+                metric("Fixkosten · Ø pro Monat", value: euros(metrics.fixedCosts))
+            }
+            NavigationLink {
+                MonthlyPlan(plan: store.plan ?? plan, store: store)
+                    .financialTitle("Monatsplan", width: DashboardLayout.maxWidth, amount: metrics.available, caption: "Spielraum pro Monat")
+                    .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+            } label: {
+                metric("Monatlicher Spielraum", value: euros(metrics.available))
+            }
+            NavigationLink { PlanSectionView(section: .loans, store: store) } label: {
+                metric("Offene Kreditschuld", value: euros(plan[.loans].sum("balance")))
+            }
+        }.buttonStyle(.plain)
+    }
+
+    @ViewBuilder private func detailCards(_ metrics: PlanMetrics, wide: Bool) -> some View {
+        if !metrics.annualIncome.isEmpty || !metrics.specialCosts.isEmpty {
+            VStack(alignment: .leading, spacing: 11) {
+                Text("Sonderposten in diesem Monat").font(.headline)
+                ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
+                ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
+            }.njoraCard(theme.card)
+        }
+        if !plan[.history].isEmpty {
+            NavigationLink { PlanSectionView(section: .history, store: store) } label: {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack { Text("Kontostände im Verlauf").font(.headline); Spacer(); Image(systemName: "chevron.right") }
+                    BalanceChart(plan: plan, height: wide ? 250 : 170)
+                }.njoraCard(theme.card)
+            }.buttonStyle(.plain)
+            .accessibilityIdentifier("njora.overview.history")
+        }
+    }
+
     private func balanceActionIcon(_ name: String) -> some View {
         Image(systemName: name)
             .font(.body.weight(.semibold))
@@ -260,59 +298,88 @@ struct MonthlyPlan: View {
     @Environment(\.njoraAppearance) private var theme
     let plan: Plan
     @ObservedObject var store: NjoraStore
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var columnThreshold: CGFloat = 820
+
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
-        List {
-            Section("Monatsdurchschnitt") {
-                NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                    LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
-                }
-                NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                    LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
-                }
-            }
-            let categories = metrics.rankedCategories
-            if !categories.isEmpty {
-                Section {
-                    ForEach(categories, id: \.name) { category in
-                        NavigationLink {
-                            PlanSectionView(section: .expenses, store: store, category: category.name)
-                        } label: {
-                            let share = metrics.income > 0 ? category.amount / metrics.income : nil
-                            VStack(alignment: .leading, spacing: 6) {
-                                LabeledAmount(label: category.name, amount: category.amount,
-                                              detail: share.map { $0.formatted(.percent.precision(.fractionLength(0...1)).locale(Locale(identifier: "de_DE"))) })
-                                GeometryReader { area in
-                                    let ratio = min(1, max(0, share ?? 0))
-                                    ZStack(alignment: .leading) {
-                                        Capsule().fill(theme.accent.opacity(0.14))
-                                        Capsule().fill(theme.accent).frame(width: area.size.width * ratio)
-                                    }
-                                }
-                                .frame(height: 4)
-                                .accessibilityHidden(true)
+        let categories = metrics.rankedCategories
+        GeometryReader { window in
+            let wide = window.size.width >= columnThreshold && !typeSize.isAccessibilitySize
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    DashboardLayout.columns(wide && !categories.isEmpty) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Monatsdurchschnitt").font(.headline).accessibilityAddTraits(.isHeader)
+                            monthRow(section: .income) {
+                                LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
                             }
-                            .padding(.vertical, 5)
-                            .accessibilityElement(children: .combine)
+                            Divider()
+                            monthRow(section: .expenses) {
+                                LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
+                            }
+                        }
+                        .njoraCard(theme.card)
+                        if !categories.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Durchschnittliche Kosten je Kategorie").font(.headline).accessibilityAddTraits(.isHeader)
+                                Text(metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                ForEach(categories, id: \.name) { category in
+                                    Divider()
+                                    categoryRow(category, income: metrics.income)
+                                }
+                            }
+                            .njoraCard(theme.card)
                         }
                     }
-                } header: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Durchschnittliche Kosten je Kategorie")
-                        Text(metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
-                            .font(.caption).fontWeight(.regular)
-                    }.textCase(nil)
+                    Notice(text: store.notice(in: .month))
                 }
+                .padding(22).frame(maxWidth: DashboardLayout.maxWidth).frame(maxWidth: .infinity)
             }
-            Notice(text: store.notice(in: .month))
-        }.scrollContentBackground(.hidden).background(theme.paper)
             .refreshable { await store.refresh(in: .month) }
+        }.background(theme.paper)
+    }
+
+    private func categoryRow(_ category: (name: String, amount: Double), income: Double) -> some View {
+        monthRow(section: .expenses, category: category.name) {
+            let share = income > 0 ? category.amount / income : nil
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledAmount(label: category.name, amount: category.amount,
+                              detail: share.map { $0.formatted(.percent.precision(.fractionLength(0...1)).locale(Locale(identifier: "de_DE"))) })
+                GeometryReader { area in
+                    let ratio = min(1, max(0, share ?? 0))
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(theme.accent.opacity(0.14))
+                        Capsule().fill(theme.accent).frame(width: area.size.width * ratio)
+                    }
+                }
+                .frame(height: 4)
+                .accessibilityHidden(true)
+            }
+            .padding(.vertical, 5)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func monthRow<Label: View>(section: PlanSection, category: String? = nil, @ViewBuilder label: () -> Label) -> some View {
+        NavigationLink {
+            PlanSectionView(section: section, store: store, category: category)
+        } label: {
+            HStack(spacing: 12) {
+                label().frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
 struct BalanceChart: View {
     @Environment(\.njoraAppearance) private var theme
     let plan: Plan
+    var height: CGFloat = 170
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
         Chart(plan[.history].suffix(30)) { snapshot in
@@ -322,7 +389,7 @@ struct BalanceChart: View {
                 PointMark(x: .value("Datum", day), y: .value("Stand", metrics.net(for: snapshot)))
                     .foregroundStyle(theme.accent)
             }
-        }.frame(height: 170)
+        }.frame(height: height)
     }
 }
 
@@ -347,7 +414,7 @@ struct LabeledAmount: View {
 }
 
 extension View {
-    fileprivate func financialTitle(_ title: String, amount: Double?, caption: String) -> some View {
+    fileprivate func financialTitle(_ title: String, width: CGFloat = DashboardLayout.readingWidth, amount: Double?, caption: String) -> some View {
         self.navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -357,6 +424,9 @@ extension View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 FinancialTitle(title: title, amount: amount, caption: caption)
+                    .padding(.horizontal, 22).padding(.vertical, 8)
+                    .frame(maxWidth: width).frame(maxWidth: .infinity)
+                    .background { DashboardPaper() }
             }
     }
 
@@ -366,8 +436,12 @@ extension View {
     }
 }
 
-private struct FinancialTitle: View {
+private struct DashboardPaper: View {
     @Environment(\.njoraAppearance) private var theme
+    var body: some View { theme.paper }
+}
+
+private struct FinancialTitle: View {
     let title: String
     let amount: Double?
     let caption: String
@@ -390,8 +464,6 @@ private struct FinancialTitle: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18).padding(.vertical, 8)
-        .background(theme.paper)
     }
 
     private var heading: some View {
@@ -521,7 +593,9 @@ struct PlanSectionView: View {
                 }
                 Notice(text: store.notice(in: .section(section)))
             }
-            .scrollContentBackground(.hidden).background(theme.paper)
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: DashboardLayout.readingWidth).frame(maxWidth: .infinity)
+            .background(theme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
             .financialTitle(category ?? section.title, amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
             .toolbar {
