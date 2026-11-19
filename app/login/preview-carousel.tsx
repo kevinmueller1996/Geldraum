@@ -97,9 +97,11 @@ export default function PreviewCarousel() {
         const depth = (1 + Math.cos(radians)) / 2;
         const style = { "--turn": angle + "deg", "--untilt": -angle + "deg",
           "--tilt": -25 * Math.sin(radians) + "deg", opacity: 0.24 + 0.76 * depth } as CSSProperties;
-        return <img className="nj-phone" data-screen={index} key={screen.title} style={style}
-          src={screen.image} width="354" height="770" draggable={false} aria-hidden={index !== active}
-          alt={screen.description} fetchPriority={index === 0 ? "high" : "auto"} />;
+        return <div className="nj-phone" data-screen={index} key={screen.title} style={style} aria-hidden={index !== active}>
+          <img src={screen.image} width="354" height="770" draggable={false}
+            alt={screen.description} fetchPriority={index === 0 ? "high" : "auto"} />
+          <span className="nj-island" aria-hidden="true" />
+        </div>;
       })}
     </div>
     <figcaption><span aria-live="polite" aria-atomic="true">{screens[active].title} · Beispieldaten</span>
