@@ -1,3 +1,4 @@
+import StoreKit
 import SwiftUI
 import UserNotifications
 import WidgetKit
@@ -15,6 +16,7 @@ struct NjoraApp: App {
                 switch store.state {
                 case .loading: ProgressView("Njora wird geöffnet …")
                 case .signedOut: LoginView(store: store, emailAction: $emailAction)
+                case .subscription: SubscriptionView(store: store)
                 case .setup: SetupView(store: store)
                 case .ready: Dashboard(store: store, tab: $tab)
                 case .offline:
@@ -42,6 +44,11 @@ struct NjoraApp: App {
                 }
             }
             .task { await store.restore() }
+            .task {
+                for await result in StoreKit.Transaction.updates {
+                    if case .verified(let transaction) = result { _ = try? await store.confirm(transaction) }
+                }
+            }
             .onOpenURL { url in
                 if url.scheme == "njora", url.host == "widget" {
                     switch url.path {
@@ -63,7 +70,7 @@ struct NjoraApp: App {
 @MainActor
 final class NjoraStore: ObservableObject {
     enum State {
-        case loading, signedOut, setup, ready, offline
+        case loading, signedOut, setup, ready, offline, subscription
         #if DEBUG
         case preview
         #endif
@@ -94,6 +101,7 @@ final class NjoraStore: ObservableObject {
     }
     func notice(in scope: NoticeScope) -> String { notices[scope] ?? "" }
     func clearNotice(in scope: NoticeScope) { notices[scope] = nil }
+    @Published private(set) var billing: BillingStatus?
     @Published private(set) var conflict = false
     private var revision: Int?
     private let api: NjoraAPI
@@ -173,6 +181,7 @@ final class NjoraStore: ObservableObject {
         await api.clearSession()
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [NjoraReminder.identifier])
         user = nil
+        billing = nil
         plan = nil
         revision = nil
         state = .signedOut
@@ -186,13 +195,25 @@ final class NjoraStore: ObservableObject {
         catch { state = .offline; throw error }
     }
 
+    static let subscriptionID = "de.njora.finanzueberblick.monthly"
+
+    func confirm(_ transaction: StoreKit.Transaction) async throws -> Bool {
+        guard transaction.productID == Self.subscriptionID, let token = billing?.accountToken,
+              transaction.appAccountToken == token else { return false }
+        let active = try await api.confirmPurchase(String(transaction.originalID), environment: transaction.environment.rawValue)
+        try await reload()
+        await transaction.finish()
+        return active
+    }
+
     private func reload() async throws {
         let reply = try await api.account()
         conflict = false
         user = reply.user
         plan = reply.plan?.unifiedCosts
         revision = reply.revision
-        state = reply.plan == nil ? .setup : .ready
+        billing = reply.billing
+        state = reply.billing?.active == false ? .subscription : (reply.plan == nil ? .setup : .ready)
     }
 
     @discardableResult
@@ -434,5 +455,87 @@ struct LegalLinksView: View {
             Link("Support", destination: URL(string: "https://njora.de/support")!)
             Link("Impressum", destination: URL(string: "https://njora.de/impressum")!)
         }.font(.footnote)
+    }
+}
+
+private struct SubscriptionView: View {
+    @ObservedObject var store: NjoraStore
+    @State private var product: Product?
+    @State private var introductory = false
+    @State private var working = false
+    @State private var notice = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Njora Monatsabo") {
+                    if let product {
+                        Text(introductory ? "Ein Monat kostenlos, danach \(product.displayPrice) pro Monat." : "\(product.displayPrice) pro Monat.")
+                        Text("Das Abo verlängert sich monatlich, bis du es in deinen Apple-Abonnements kündigst.")
+                        Button(introductory ? "Probemonat starten" : "Monatsabo abschließen") { Task { await purchase(product) } }
+                            .disabled(working)
+                    } else {
+                        Button("Monatsangebot laden") { Task { await load() } }.disabled(working)
+                    }
+                    Button("Käufe wiederherstellen") { Task { await restore() } }.disabled(working)
+                    Notice(text: notice)
+                }
+                Section {
+                    NavigationLink("Konto und Daten verwalten") { SettingsView(store: store) }
+                    LegalLinksView()
+                }
+            }.navigationTitle("Njora abonnieren")
+        }
+        .task {
+            do {
+                for await result in StoreKit.Transaction.currentEntitlements {
+                    if case .verified(let tx) = result, try await store.confirm(tx) { return }
+                }
+            } catch { notice = "Dein bestehender Kauf konnte gerade nicht geprüft werden." }
+            await load()
+        }
+    }
+
+    private func load() async {
+        do {
+            guard let found = try await Product.products(for: [NjoraStore.subscriptionID]).first,
+                  let subscription = found.subscription,
+                  subscription.subscriptionPeriod.unit == .month, subscription.subscriptionPeriod.value == 1 else {
+                notice = "Das Monatsabo ist im App Store gerade nicht verfügbar."
+                return
+            }
+            let offer = subscription.introductoryOffer
+            let eligible = await subscription.isEligibleForIntroOffer
+            introductory = eligible && offer?.paymentMode == .freeTrial && offer?.period.unit == .month && offer?.period.value == 1 && offer?.periodCount == 1
+            product = found
+        } catch { notice = "Das Angebot konnte nicht geladen werden." }
+    }
+
+    private func purchase(_ product: Product) async {
+        guard !working, let token = store.billing?.accountToken else { return }
+        working = true
+        defer { working = false }
+        do {
+            switch try await product.purchase(options: [.appAccountToken(token)]) {
+            case .success(.verified(let tx)):
+                if try await !store.confirm(tx) { notice = "Der Kauf konnte diesem Konto nicht zugeordnet werden." }
+            case .pending: notice = "Dein Kauf wartet auf Bestätigung."
+            case .userCancelled: break
+            default: notice = "Der Kauf konnte nicht bestätigt werden."
+            }
+        } catch { notice = "Die Kaufbestätigung ist ausstehend. Nutze bei Bedarf „Käufe wiederherstellen“." }
+    }
+
+    private func restore() async {
+        guard !working else { return }
+        working = true
+        defer { working = false }
+        do {
+            try await AppStore.sync()
+            for await result in StoreKit.Transaction.currentEntitlements {
+                if case .verified(let tx) = result, try await store.confirm(tx) { return }
+            }
+            notice = "Für dieses Njora-Konto wurde kein aktiver Kauf gefunden."
+        } catch { notice = "Die Wiederherstellung ist gerade nicht möglich." }
     }
 }

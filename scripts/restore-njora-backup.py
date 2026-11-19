@@ -20,10 +20,13 @@ COLUMNS = {
 def restore(source, destination):
     with source.open(encoding="utf-8") as file:
         backup = json.load(file)
-    if backup.get("format") != "njora-database-backup" or backup.get("version") != 1:
+    if backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2):
         raise ValueError("Unbekanntes Sicherungsformat")
     tables = backup["tables"]
-    if set(tables) != set(COLUMNS):
+    columns_by_table = dict(COLUMNS)
+    if backup["version"] == 2:
+        columns_by_table["njora_subscribers"] = ("user_id", "account_token", "stripe_customer", "apple_original", "apple_environment")
+    if set(tables) != set(columns_by_table):
         raise ValueError("Die Sicherung enthält nicht die erwarteten Tabellen")
 
     fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -34,7 +37,7 @@ def restore(source, destination):
             migrations = Path(__file__).resolve().parents[1] / "drizzle"
             for migration in sorted(migrations.glob("*.sql")):
                 db.executescript(migration.read_text(encoding="utf-8"))
-            for table, columns in COLUMNS.items():
+            for table, columns in columns_by_table.items():
                 rows = tables[table]
                 if not isinstance(rows, list) or any(set(row) != set(columns) for row in rows):
                     raise ValueError(f"Unerwartete Spalten in {table}")
@@ -52,7 +55,7 @@ def restore(source, destination):
     except BaseException:
         destination.unlink()
         raise
-    return {table: len(tables[table]) for table in COLUMNS}
+    return {table: len(tables[table]) for table in columns_by_table}
 
 
 def main():

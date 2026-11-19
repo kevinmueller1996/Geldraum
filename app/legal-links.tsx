@@ -5,6 +5,7 @@ export default function LegalLinks() {
       <a href="/datenschutz#cookies">Cookies</a>
       <a href="/impressum">Impressum</a>
       <a href="/nutzungsbedingungen">AGB</a>
+      <a href="/kuendigen">Verträge hier kündigen</a>
       <a href="/support">Support</a>
     </nav>
   );

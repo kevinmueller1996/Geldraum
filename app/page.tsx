@@ -6,6 +6,7 @@ import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { backupPlan } from "./plan-validation";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
+import BillingOffer, { type BillingStatus } from "./billing/offer";
 import LegalLinks from "./legal-links";
 import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
@@ -241,6 +242,7 @@ export default function Home() {
   const [importPreview, setImportPreview] = useState<Plan | null>(null);
   const [importError, setImportError] = useState("");
   const [importText, setImportText] = useState("");
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [cloudUser, setCloudUser] = useState<CloudUser | null>(null);
   const [isLocalMode, setIsLocalMode] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
@@ -272,7 +274,8 @@ export default function Home() {
           return;
         }
         if (!response.ok) throw new Error("account unavailable");
-        const data = await response.json() as { user: CloudUser; plan: Partial<Plan> | null; revision: number | null; updatedAt: string | null };
+        const data = await response.json() as { billing?: BillingStatus; user: CloudUser; plan: Partial<Plan> | null; revision: number | null; updatedAt: string | null };
+        setBilling(data.billing ?? null);
         setCloudUser(data.user);
         setRemoteRevision(data.revision);
         setRemoteUpdatedAt(data.updatedAt);
@@ -732,6 +735,13 @@ export default function Home() {
     </div>
   );
 
+  if (billing && !billing.active && activeView !== "more") return (
+    <main className="legal-page"><article>
+      <BillingOffer billing={billing} />
+      <button type="button" className="text-action" onClick={() => navigate("more")}>Konto, Datenexport und Löschung</button>
+      <LegalLinks />
+    </article></main>
+  );
   return (
     <main id="top" className="page-shell">
       <header className="topbar">
@@ -876,7 +886,8 @@ export default function Home() {
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
-          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : syncStatus === "error" || syncStatus === "conflict" ? "Änderungen nicht gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p><label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
+          {billing && <article className="account-card"><BillingOffer billing={billing} /></article>}
+          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : syncStatus === "error" || syncStatus === "conflict" ? "Änderungen nicht gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p>{billing && <p>Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.</p>}<label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
           <article className="privacy-card"><span>{cloudUser?.local ? "Lokale Entwicklung" : "Dein persönlicher Bereich"}</span><p>{cloudUser?.local ? "Auf localhost ist keine Anmeldung nötig. Die Daten bleiben in der lokalen Entwicklungsdatenbank und werden nicht mit einem Online-Account synchronisiert." : "Deine Finanzdaten werden deinem angemeldeten Account zugeordnet und zwischen deinen Geräten synchronisiert. Eine Bankverbindung ist nicht erforderlich."}</p></article>
           <LegalLinks />
         </section>}

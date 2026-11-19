@@ -465,6 +465,16 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if let billing = store.billing {
+                Section("Abonnement") {
+                    if billing.provider == "apple" {
+                        Link("Apple-Abo verwalten oder kündigen", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                        Text("Kündige dein Apple-Abo auch dann bei Apple, wenn du dein Njora-Konto löschst.").font(.footnote)
+                    } else if billing.provider == "stripe" {
+                        Text("Dein Web-Abo verwaltest du im Kontobereich von njora.de.")
+                    }
+                }
+            }
             Section("Profil") {
                 if let email = store.user?.email { Text(email).foregroundStyle(.secondary) }
                 PlanField(title: "Name des Finanzplans", text: $name)
@@ -543,6 +553,8 @@ struct SettingsView: View {
             Button("Konto endgültig löschen", role: .destructive) {
                 Task { await store.endSession(deleteAccount: true, in: .settings); if store.state == .signedOut { dismiss() } }
             }
+        } message: {
+            Text("Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.")
         }
     }
 

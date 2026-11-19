@@ -18,7 +18,14 @@ struct APIError: LocalizedError {
     }
 }
 
+struct BillingStatus: Decodable {
+    let active: Bool
+    let accountToken: UUID
+    let provider: String?
+}
+
 struct AccountPayload: Decodable {
+    let billing: BillingStatus?
     struct User: Decodable { let displayName: String; let email: String }
     let authenticated: Bool
     let user: User
@@ -122,6 +129,14 @@ actor NjoraAPI {
     }
 
     func account() async throws -> AccountPayload { try await request("/api/account") }
+
+    func confirmPurchase(_ transaction: String, environment: String) async throws -> Bool {
+        struct Reply: Decodable { let active: Bool }
+        let reply: Reply = try await request("/api/billing", method: "POST", body: [
+            "action": .string("apple"), "transaction": .string(transaction), "environment": .string(environment)
+        ])
+        return reply.active
+    }
 
     func save(_ plan: Plan, revision: Int?) async throws -> Int {
         struct Saved: Decodable { let revision: Int }

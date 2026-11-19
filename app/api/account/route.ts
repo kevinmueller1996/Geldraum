@@ -1,3 +1,4 @@
+import { billingEnabled, membership, removeBillingAccount, subscriber } from "../../billing/subscription";
 import { normalizePlanCategories } from "../../recurring-costs";
 import { isPlan } from "../../plan-validation";
 import { env } from "cloudflare:workers";
@@ -109,9 +110,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const { db, id } = await upsertUser(identity, true);
+    const billing = billingEnabled() && !identity.local ? await membership(await subscriber(id)) : null;
     const result = await db.prepare("SELECT plan_json, revision, updated_at FROM finance_plans WHERE user_id = ?").bind(id).first<{ plan_json: string; revision: number; updated_at: string }>();
     return json({
-      authenticated: true,
+      authenticated: true, billing,
       user: { displayName: identity.displayName, email: identity.email, local: identity.local },
       plan: result ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
       revision: result?.revision ?? null,
@@ -130,6 +132,7 @@ export async function PUT(request: NextRequest) {
   if (!identity) return json({ authenticated: false }, 401);
 
   try {
+    if (billingEnabled() && !identity.local && !(await membership(await subscriber(identity.id))).active) return json({error:"Für Änderungen brauchst du ein aktives Njora-Abo."},402);
     const body = await request.json() as { plan?: unknown; revision?: number | null };
     if (!isPlan(body.plan)) return json({ error: "Ungültiger Finanzplan." }, 400);
     const planJson = JSON.stringify(normalizePlanCategories(body.plan));
@@ -167,6 +170,7 @@ export async function DELETE(request: NextRequest) {
     const db = await ensureSchema();
     const id = identity.id;
     await db.batch([
+      ...await removeBillingAccount(id),
       db.prepare("DELETE FROM finance_plans WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM user_activity WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").bind(id),
