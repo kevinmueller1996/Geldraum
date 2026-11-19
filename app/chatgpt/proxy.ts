@@ -38,6 +38,11 @@ export async function proxyPlugin(request: Request, action: string) {
     const value = res.headers.get(name);
     if (value) out.set(name,value);
   }
+  // The hosted backend can attach its site-wide CSP after rendering the consent page.
+  // On our public issuer, only the registered ChatGPT callback may receive this form redirect.
+  if (action === "authorize") {
+    out.set("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self' https://chatgpt.com/connector_platform_oauth_redirect; frame-ancestors 'none'; base-uri 'none'");
+  }
   return new Response(res.body,{status:res.status,headers:out});
 }
 
