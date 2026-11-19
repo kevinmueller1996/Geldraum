@@ -14,11 +14,6 @@ struct Dashboard: View {
                     Overview(plan: plan, store: store)
                         .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
-                        .safeAreaInset(edge: .top, spacing: 0) {
-                            NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
-                                FinancialTitle(title: "Heute", amount: PlanMetrics(plan: plan).net, caption: "Kontostand")
-                            }.buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 8).background(NjoraTheme.paper)
-                        }
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                 }.tabItem { Label("Heute", systemImage: "sun.max") }.tag(DashboardTab.today)
                 NavigationStack {
@@ -70,20 +65,27 @@ struct Overview: View {
         let metrics = PlanMetrics(plan: plan)
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                NavigationLink {
-                    MonthlyPlan(plan: store.plan ?? plan, store: store)
-                        .financialTitle("Monatsplan", amount: metrics.available, caption: "Spielraum pro Monat")
-                        .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
-                } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack { Text("Monatlicher Spielraum").font(.headline); Spacer(); Image(systemName: "chevron.right") }
-                        Text(euros(metrics.available)).font(.system(.largeTitle, design: .rounded, weight: .bold)).monospacedDigit()
-                        Text("Regelmäßiges Einkommen abzüglich Fixkosten").font(.footnote)
+                let forecast = metrics.forecast
+                NavigationLink { ForecastDetail(store: store) } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("Prognose zum Monatsende").font(.headline)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
+                        }
+                        Text("≈ " + euros(forecast.datedBalance))
+                            .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
+                            .accessibilityLabel("Ungefähr " + euros(forecast.datedBalance))
+                        Text(forecast.uncertain.isEmpty ? "Mit datierten Zahlungen" :
+                                "Mit datierten Zahlungen · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
+                            .font(.footnote)
                     }
                     .foregroundStyle(NjoraTheme.paper)
                     .padding(20).frame(maxWidth: .infinity, alignment: .leading)
                     .background(NjoraTheme.accent, in: RoundedRectangle(cornerRadius: 18))
                 }.buttonStyle(.plain)
+                .accessibilityIdentifier("njora.overview.forecast")
 
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: typeSize.isAccessibilitySize ? 1 : 2), spacing: 12) {
                     NavigationLink { PlanSectionView(section: .income, store: store) } label: {
@@ -92,21 +94,17 @@ struct Overview: View {
                     NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
                         metric("Fixkosten · Ø pro Monat", value: euros(metrics.fixedCosts))
                     }
-                    NavigationLink { ForecastDetail(store: store) } label: {
-                        let forecast = metrics.forecast
-                        metric("Prognose zum Monatsende", value: forecast.uncertain.isEmpty ? euros(forecast.datedBalance) : "Spanne ansehen")
+                    NavigationLink {
+                        MonthlyPlan(plan: store.plan ?? plan, store: store)
+                            .financialTitle("Monatsplan", amount: metrics.available, caption: "Spielraum pro Monat")
+                            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+                    } label: {
+                        metric("Monatlicher Spielraum", value: euros(metrics.available))
                     }
                     NavigationLink { PlanSectionView(section: .loans, store: store) } label: {
                         metric("Offene Kreditschuld", value: euros(plan[.loans].sum("balance")))
                     }
                 }.buttonStyle(.plain)
-                if plan[.accounts].isEmpty {
-                    NavigationLink("Erstes Konto anlegen") { PlanSectionView(section: .accounts, store: store) }
-                } else {
-                    Button { checkIn = true } label: {
-                        Label("Kontostände aktualisieren", systemImage: "arrow.clockwise")
-                    }.buttonStyle(.bordered)
-                }
 
                 if !metrics.annualIncome.isEmpty || !metrics.specialCosts.isEmpty {
                     VStack(alignment: .leading, spacing: 11) {
@@ -128,9 +126,42 @@ struct Overview: View {
             .padding(22).frame(maxWidth: 860).frame(maxWidth: .infinity)
         }
         .background(NjoraTheme.paper)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 8) {
+                NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
+                    FinancialTitle(title: "Heute", amount: metrics.net, caption: "Kontostand")
+                }
+                .buttonStyle(.plain)
+                if plan[.accounts].isEmpty {
+                    NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
+                        balanceActionIcon("plus")
+                    }
+                    .accessibilityLabel("Erstes Konto anlegen")
+                } else {
+                    Button { checkIn = true } label: { balanceActionIcon("pencil") }
+                        .accessibilityLabel("Kontostände aktualisieren")
+                        .accessibilityHint("Öffnet den Check-in für deine Konten.")
+                        .accessibilityIdentifier("njora.overview.checkIn")
+                }
+            }
+            .padding(.horizontal, 18).padding(.vertical, 8)
+            .frame(maxWidth: 860)
+            .frame(maxWidth: .infinity)
+            .background(NjoraTheme.paper)
+        }
         .refreshable { await store.refresh(in: .overview) }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
     }
+    private func balanceActionIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.body.weight(.semibold))
+            .foregroundStyle(NjoraTheme.accent)
+            .frame(width: 34, height: 34)
+            .background(NjoraTheme.accent.opacity(0.10), in: Circle())
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+    }
+
     private func metric(_ title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.subheadline).foregroundStyle(.secondary)
