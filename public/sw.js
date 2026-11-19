@@ -1,7 +1,8 @@
-const VERSION = "njora-mobile-v3";
+const VERSION = "njora-mobile-v4";
 const STATIC_CACHE = `${VERSION}-static`;
 const OFFLINE_PAGE = "/offline.html";
 const PRECACHE = [
+  "/",
   OFFLINE_PAGE,
   "/manifest.webmanifest",
   "/favicon.png",
@@ -33,7 +34,17 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match(OFFLINE_PAGE)));
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        if (url.pathname === "/" && !url.search && response.ok && !response.redirected && response.headers.get("content-type")?.includes("text/html")) {
+          await (await caches.open(STATIC_CACHE)).put("/", response.clone());
+        }
+        return response;
+      } catch {
+        return (url.pathname === "/" && await caches.match("/")) || await caches.match(OFFLINE_PAGE);
+      }
+    })());
     return;
   }
 
@@ -52,5 +63,13 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "NJORA_WARM_SHELL" && Array.isArray(event.data.assets)) {
+    event.waitUntil((async () => {
+      const cache = await caches.open(STATIC_CACHE);
+      await Promise.allSettled(event.data.assets.map(value => new URL(value, self.location.origin)).filter(url =>
+        url.origin === self.location.origin && (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/assets/")))
+        .map(async url => { if (!await cache.match(url.href)) await cache.add(url.href); }));
+    })());
+  }
   if (event.data === "NJORA_VERSION") event.source?.postMessage(VERSION);
 });

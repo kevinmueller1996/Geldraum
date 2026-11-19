@@ -1,4 +1,5 @@
 import "server-only";
+import { expireMarker } from "../browser-session";
 
 const DEFAULT_BACKEND_ORIGIN = "https://klarbudget-kevin-2026.alpher5.chatgpt.site";
 const REQUIRED_D1_VARIABLES = [
@@ -70,6 +71,7 @@ export async function proxyApiRequest(request: Request) {
       const value = cookie.trimStart();
       if (value.startsWith("__Host-njora_session=") || value.startsWith("geldraum_session=")) {
         responseHeaders.append("set-cookie", cookie);
+        responseHeaders.append("set-cookie", expireMarker(request.url));
       }
     }
     responseHeaders.set("Cache-Control", "no-store");

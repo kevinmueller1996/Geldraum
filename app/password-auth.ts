@@ -1,3 +1,4 @@
+import { expireMarker } from "./browser-session";
 import { env } from "cloudflare:workers";
 import { compare as bcryptCompare, hash as bcryptHash } from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
@@ -224,6 +225,7 @@ export function setSessionCookie(response: NextResponse, token: string, request:
     path: "/",
     maxAge: SESSION_SECONDS,
   });
+  response.headers.append("Set-Cookie", expireMarker(request.url));
 }
 
 export function clearSessionCookie(response: NextResponse, request: NextRequest) {
@@ -238,6 +240,7 @@ export function clearSessionCookie(response: NextResponse, request: NextRequest)
       maxAge: 0,
     });
   }
+  response.headers.append("Set-Cookie", expireMarker(request.url));
 }
 
 export async function registerPasswordAccount(email: string, password: string | undefined, requiresVerification: boolean) {

@@ -159,7 +159,7 @@ export default function LoginPage() {
           {error && <p className="login-error" role="alert">{error}</p>}
           {notice && <p className="login-notice" role="status">{notice}</p>}
           {needsVerification && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("resend-verification")}>Bestätigungs-E-Mail erneut senden</button>}
-          {mode === "register" && <small>Für dein kostenloses Konto gelten die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Hier findest du die <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</small>}
+          {mode === "register" && <small>Du erstellst zunächst dein Konto. Das Monatsabo für deinen Finanzplan schließt du separat ab. Es gelten die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Hier findest du die <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</small>}
           <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Sicher anmelden" : local ? "Konto erstellen" : "Bestätigungslink senden"}<b>→</b></button>
           {mode === "login" && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("forgot-password")}>Passwort vergessen?</button>}
         </form>

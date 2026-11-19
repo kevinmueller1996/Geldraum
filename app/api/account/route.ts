@@ -1,6 +1,8 @@
+import { browserSession, wrongSession } from "../../browser-session-server";
 import { billingEnabled, membership, removeBillingAccount, subscriber } from "../../billing/subscription";
 import { normalizePlanCategories } from "../../recurring-costs";
 import { isPlan } from "../../plan-validation";
+import { markerName } from "../../browser-session";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { isLocalHostname } from "../../local-host";
@@ -99,6 +101,23 @@ async function upsertUser(identity: Identity, recordAccess = false) {
 }
 
 export async function GET(request: NextRequest) {
+  if (await wrongSession(request)) return json({error: "Die Sitzung hat gewechselt."}, 412);
+  const response = await getAccount(request);
+  if (response.ok && request.headers.get("x-njora-browser") === "1") {
+    const token = await browserSession(request);
+    if (token) {
+      response.headers.set("X-Njora-Browser-Session", token);
+      const name = markerName(request.nextUrl.hostname);
+      if (request.cookies.get(name)?.value !== token) {
+        response.headers.append("Set-Cookie", name + "=" + token + "; Path=/; SameSite=Lax; Max-Age=2592000" +
+          (isLocalHostname(request.nextUrl.hostname) ? "" : "; Secure"));
+      }
+    }
+  }
+  return response;
+}
+
+async function getAccount(request: NextRequest) {
   if (needsCloudflareBackendProxy()) {
     const response = await proxyApiRequest(request);
     if (response.status !== 200 || !response.headers.get("content-type")?.includes("application/json")) return response;
@@ -125,6 +144,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  if (await wrongSession(request)) return json({error: "Die Sitzung hat gewechselt."}, 412);
   if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!isSameOrigin(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return json({ error: "JSON erwartet." }, 415);
@@ -160,6 +180,7 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (await wrongSession(request)) return json({error: "Die Sitzung hat gewechselt."}, 412);
   if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!isSameOrigin(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   const identity = await requestIdentity(request);

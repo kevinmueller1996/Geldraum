@@ -1,9 +1,12 @@
 "use client";
 
+import { currentSession, offlineCopy, updateCopy, mergeDraft, reconcile, pending, Conflict, SessionChanged, type Copy, type Remote, type Choice } from "./browser-plan";
+import { expireMarker } from "./browser-session";
 import { Capacitor } from "@capacitor/core";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { backupPlan } from "./plan-validation";
+import BalanceHistory from "./balance-history";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
 import { AppearancePicker, useAppearance } from "./appearance-picker";
@@ -23,7 +26,7 @@ type Account = { bookingDay?: number; id: string; name: string; type: "bank" | "
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
 type View = "home" | "expenses" | "month" | "loans" | "goals" | "more";
 type EditorScope = "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
-type Plan = {
+export type Plan = {
   name: string;
   liquidity: number;
   categoryColors: Record<string, string>;
@@ -38,9 +41,9 @@ type Plan = {
   checkInCadence: "daily" | "weekly";
   scenario: { name: string; cost: number; equity: number };
 };
-type CloudUser = { displayName: string; email: string; local?: boolean };
+export type CloudUser = { displayName: string; email: string; local?: boolean };
 type AuthStatus = "loading" | "authenticated" | "anonymous" | "unavailable";
-type SyncStatus = "idle" | "saving" | "saved" | "error" | "conflict";
+type SyncStatus = "idle" | "saving" | "saved" | "pending" | "offline" | "error" | "conflict";
 
 const STORAGE_KEY = "klarbudget-plan-v3";
 const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
@@ -249,7 +252,12 @@ export default function Home() {
   const [isLocalMode, setIsLocalMode] = useState(false);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
-  const [remoteRevision, setRemoteRevision] = useState<number | null>(null);
+  const current = useRef<Copy | undefined>(undefined);
+  const baseline = useRef<Plan | null>(null);
+  const channel = useRef<BroadcastChannel | null>(null);
+  const syncNow = useRef<() => void>(() => {});
+  const clash = useRef<Remote | null>(null);
+  const [problem, setProblem] = useState("");
   const [remoteUpdatedAt, setRemoteUpdatedAt] = useState<string | null>(null);
   const [legacyPlan, setLegacyPlan] = useState<Plan | null>(null);
   const [showLegacyPrompt, setShowLegacyPrompt] = useState(false);
@@ -260,71 +268,165 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    async function hydrate() {
-      const localRuntime = isLocalHostname(window.location.hostname);
-      setIsLocalMode(localRuntime);
-      try {
-        const response = await fetch("/api/account", { cache: "no-store" });
-        if (cancelled) return;
-        if (response.status === 401) {
-          if (!localRuntime) {
-            window.location.replace("/login");
-            return;
-          }
-          setAuthStatus("unavailable");
-          setReady(true);
-          return;
-        }
-        if (!response.ok) throw new Error("account unavailable");
-        const data = await response.json() as { billing?: BillingStatus; user: CloudUser; plan: Partial<Plan> | null; revision: number | null; updatedAt: string | null };
-        setBilling(data.billing ?? null);
-        setCloudUser(data.user);
-        setRemoteRevision(data.revision);
-        setRemoteUpdatedAt(data.updatedAt);
-        setAuthStatus("authenticated");
-        if (data.plan) {
-          const loaded = normalizePlan(data.plan);
-          setPlan(loaded);
-          setDraft(loaded);
-          setSyncStatus("saved");
-        } else {
-          const fresh = emptyPlan(data.user.displayName.split(" ")[0] || "Mein Budget");
-          setDraft(fresh);
-          let localPlan: Plan | null = null;
+    let running = false;
+    let again = false;
+    let delay = 2000;
+    let timer: ReturnType<typeof setTimeout>;
+    const localRuntime = isLocalHostname(window.location.hostname);
+    setIsLocalMode(localRuntime);
+
+    function show(copy: Copy) {
+      if (cancelled || copy.session !== currentSession()) return;
+      const first = !current.current;
+      current.current = copy;
+      setBilling(copy.billing ?? null);
+      setCloudUser(copy.user);
+      setPlan(copy.draft);
+      setAuthStatus("authenticated");
+      setRemoteUpdatedAt(copy.updatedAt);
+      setReady(true);
+      if (first) {
+        setDraft(copy.draft ?? emptyPlan(copy.user.displayName.split(" ")[0] || "Mein Budget"));
+        if (!copy.draft) {
           try {
-            const saved = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(PREVIOUS_STORAGE_KEY);
-            localPlan = saved ? normalizePlan(JSON.parse(saved) as Partial<Plan>) : migrateOldProfile();
-          } catch {
-            localPlan = null;
-          }
-          if (localPlan) {
-            setLegacyPlan(localPlan);
-            setShowLegacyPrompt(true);
-          }
+            const saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(PREVIOUS_STORAGE_KEY);
+            const legacy = saved ? normalizePlan(JSON.parse(saved)) : migrateOldProfile();
+            if (legacy) { setLegacyPlan(legacy); setShowLegacyPrompt(true); }
+          } catch { /* An unreadable legacy export does not affect the account. */ }
         }
-      } catch {
-        if (!cancelled) setAuthStatus("unavailable");
-      } finally {
-        if (!cancelled) setReady(true);
       }
     }
-    void hydrate();
-    return () => { cancelled = true; };
+
+    async function exchange() {
+      if (cancelled) return;
+      const previous = current.current;
+      if (previous && previous.session !== currentSession()) { location.reload(); return; }
+      const headers: Record<string,string> = {"x-njora-browser": "1"};
+      if (previous) headers["x-njora-browser-session"] = previous.session;
+      const response = await fetch("/api/account", {headers, cache: "no-store", signal: AbortSignal.timeout(15000)});
+      if (cancelled) return;
+      if (response.status === 401 || response.status === 412) {
+        if (!previous || currentSession() === previous.session) document.cookie = expireMarker(location.href);
+        if (!localRuntime) { location.replace(response.status === 401 ? "/login" : "/"); return; }
+      }
+      if (!response.ok) throw new Error("Der Cloud-Abgleich ist gerade nicht möglich.");
+      const reply = await response.json() as Remote;
+      if (reply.plan) reply.plan = normalizePlan(reply.plan);
+      const session = response.headers.get("x-njora-browser-session");
+      if (!session || session !== currentSession() || (previous && reply.user.email !== previous.user.email)) throw new SessionChanged();
+      const email = reply.user.email;
+      let overlap = false;
+      const copy = await updateCopy(email, session, saved => {
+        const bound = saved ? {...saved, session, billing: reply.billing, user: reply.user}
+          : {...reply, session, draft: reply.plan, sending: null};
+        try { return reconcile(bound, reply); }
+        catch (e) { if (!(e instanceof Conflict)) throw e; overlap = true; return bound; }
+      });
+      if (!copy || cancelled) return;
+      show(copy);
+      if (overlap) { clash.current = reply; setSyncStatus("conflict"); return; }
+      clash.current = null;
+      if (copy.billing?.active === false || !pending(copy)) {
+        setSyncStatus(pending(copy) ? "pending" : "saved"); setProblem(""); return;
+      }
+      const sent = await updateCopy(email, session, saved => {
+        if (!saved || saved.session !== session) throw new SessionChanged();
+        return {...saved, sending: saved.draft};
+      });
+      if (!sent?.sending) return;
+      const saved = await fetch("/api/account", {method: "PUT", headers: {"Content-Type":"application/json", "x-njora-browser-session":session},
+        body: JSON.stringify({plan:storagePlan(sent.sending), revision:sent.revision}), signal:AbortSignal.timeout(15000)});
+      if (saved.status === 409 || saved.status === 401 || saved.status === 412 || saved.status === 402) throw new Error("Der Kontostand wird erneut geprüft.");
+      if (!saved.ok) throw new Error(saved.status === 400 || saved.status === 413 ? "Der Finanzplan wurde von der Cloud abgelehnt. Bitte prüfe deine Eingaben." : "Die Cloud ist gerade nicht erreichbar.");
+      const ack = await saved.json() as {revision:number; updatedAt:string};
+      const latest = await updateCopy(email, session, stored => {
+        if (!stored || stored.session !== session) throw new SessionChanged();
+        if (stored.revision !== sent.revision) return stored;
+        return {...stored, plan:sent.sending, sending:null, revision:ack.revision, updatedAt:ack.updatedAt};
+      });
+      if (!latest || cancelled) return;
+      show(latest);
+      again ||= pending(latest);
+      setSyncStatus(pending(latest) ? "pending" : "saved"); setProblem("");
+    }
+
+    async function sync() {
+      clearTimeout(timer);
+      if (running) { again = true; return; }
+      if (cancelled) return;
+      running = true;
+      try {
+        if (navigator.locks) await navigator.locks.request("njora-cloud-sync", exchange);
+        else await exchange();
+        delay = 2000;
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof SessionChanged && current.current) { location.reload(); return; }
+        if (!current.current) { setAuthStatus("unavailable"); setReady(true); }
+        else {
+          setSyncStatus(pending(current.current) ? "pending" : "offline");
+          setProblem(err instanceof Error && err.message.startsWith("Der Finanzplan") ? err.message : "");
+        }
+        timer = setTimeout(sync, delay);
+        delay = Math.min(delay * 2, 120000);
+      } finally {
+        running = false;
+        if (!cancelled && again) { again = false; void sync(); }
+      }
+    }
+    syncNow.current = () => { void sync(); };
+    const resume = () => { if (!document.hidden) void sync(); };
+    const changed = () => {
+      if (current.current && current.current.session !== currentSession()) { location.reload(); return; }
+      resume();
+    };
+    const messages = typeof BroadcastChannel === "function" ? new BroadcastChannel("njora-finance") : null;
+    channel.current = messages;
+    if (messages) messages.onmessage = changed;
+    window.addEventListener("online", resume);
+    window.addEventListener("pageshow", changed);
+    window.addEventListener("storage", changed);
+    document.addEventListener("visibilitychange", changed);
+    void (async () => {
+      try {
+        const session = currentSession();
+        const cached = session && await offlineCopy(session);
+        if (cached && !cancelled) { show(cached); setSyncStatus(pending(cached) ? "pending" : "offline"); }
+      } finally { if (!cancelled) void sync(); }
+    })().catch(() => {});
+    return () => { cancelled = true; messages?.close(); channel.current = null; clearTimeout(timer); window.removeEventListener("online",resume);
+      window.removeEventListener("pageshow",changed); window.removeEventListener("storage",changed); document.removeEventListener("visibilitychange",changed); };
+  }, []);
+
+  const hasPlan = Boolean(plan);
+  const [today, setToday] = useState(() => localDay());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      clearTimeout(timer);
+      const now = new Date();
+      setToday(localDay(now));
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      timer = setTimeout(refresh, midnight.getTime() - now.getTime() + 50);
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
 
   useEffect(() => {
-    const modalOpen = checkingIn || editing || savingsOpen || showLegacyPrompt || (authStatus === "authenticated" && !plan);
+    const modalOpen = billing?.active !== false && (checkingIn || editing || savingsOpen || showLegacyPrompt || (authStatus === "authenticated" && !hasPlan));
     if (!modalOpen) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const dialog = document.querySelector<HTMLElement>("[role='dialog']");
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary") ?? []);
-    window.setTimeout(() => focusable()[0]?.focus(), 20);
+    const focusTimer = window.setTimeout(() => focusable()[0]?.focus(), 20);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (checkingIn) setCheckingIn(false);
         else if (savingsOpen) setSavingsOpen(false);
-        else if (editing && plan) { setEditing(false); setEditorScope(null); setEditorTarget(null); }
+        else if (editing && hasPlan) { setEditing(false); setEditorScope(null); setEditorTarget(null); }
         return;
       }
       if (event.key !== "Tab") return;
@@ -337,15 +439,16 @@ export default function Home() {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
+      window.clearTimeout(focusTimer);
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [authStatus, checkingIn, editing, onboardingStep, plan, savingsOpen, showLegacyPrompt]);
+  }, [authStatus, billing?.active, checkingIn, editing, onboardingStep, hasPlan, savingsOpen, showLegacyPrompt]);
 
   const active = useMemo(() => orderedPlan(plan ?? demoPlan), [plan]);
   const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category), ...draft.commitments.flatMap(item => item.category ? [item.category] : [])])];
   const metrics = useMemo(() => {
-    const now = new Date();
+    const now = new Date(today + "T12:00:00");
     const income = active.incomes.filter((item) => !item.annual).reduce((sum, item) => sum + item.amount, 0);
     const annualIncome = active.incomes.filter((item) => item.annual).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualIncome = active.incomes.filter((item) => item.annual && item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
@@ -366,7 +469,7 @@ export default function Home() {
     const forecast = monthEndForecast(netBalance, now, active);
     const totalDebt = active.commitments.reduce((sum, item) => sum + item.balance, 0);
     return { income, annualIncome, currentAnnualIncome, fixedCosts, payments, goalNeed, available, unallocated, burden, bufferMonths, bankBalance, creditBalance, netBalance, monthDelta, forecast, totalDebt };
-  }, [active]);
+  }, [active, today]);
 
   const groupedExpenses = useMemo(() => {
     const groups = new Map<string, { category: string; value: number; color: string; expenses: Expense[]; loans: Commitment[] }>();
@@ -413,6 +516,7 @@ export default function Home() {
   }
 
   function openEditor() {
+    baseline.current = plan;
     setImportPreview(null);
     setImportError("");
     setDraft(structuredClone(orderedPlan(plan ?? emptyPlan())));
@@ -422,6 +526,7 @@ export default function Home() {
   }
 
   function openFocusedEditor(section: EditorScope, add?: "account" | "income" | "expense" | "loan" | "goal" | "security" | "saving", target?: string) {
+    baseline.current = plan;
     const next = structuredClone(orderedPlan(plan ?? emptyPlan()));
     let nextTarget = target ?? null;
     if (add === "account") next.accounts.push({ id: uid(), name: "", type: "bank", balance: 0 });
@@ -456,37 +561,52 @@ export default function Home() {
     setEditorTarget(null);
   }
 
-  async function persistPlan(next: Plan, revision = remoteRevision, updateDraft: (draft: Plan) => Plan = () => next) {
+  async function persistPlan(next: Plan, base = plan) {
+    const copy = current.current;
+    if (!copy || copy.billing?.active === false) return false;
     setSyncStatus("saving");
     try {
-      const response = await fetch("/api/account", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: storagePlan(next), revision }),
+      const result = await updateCopy(copy.user.email, copy.session, saved => {
+        if (!saved || saved.session !== copy.session) throw new SessionChanged();
+        if (saved.billing?.active === false) throw new Error("Für Änderungen brauchst du ein aktives Abo.");
+        return {...saved, draft:mergeDraft(base, next, saved.draft)};
       });
-      if (response.status === 409) {
-        setSyncStatus("conflict");
-        return false;
-      }
-      if (!response.ok) throw new Error("save failed");
-      const result = await response.json() as { revision: number; updatedAt: string };
-      setRemoteRevision(result.revision);
-      setRemoteUpdatedAt(result.updatedAt);
-      setPlan(next);
-      setDraft(updateDraft);
-      setSyncStatus("saved");
+      if (!result) throw new Error();
+      current.current = result;
+      setPlan(result.draft);
+      channel.current?.postMessage("plan");
+      setSyncStatus(clash.current ? "conflict" : "pending");
+      setProblem("");
+      syncNow.current();
       return true;
-    } catch {
-      setSyncStatus("error");
-      return false;
+    } catch (error) {
+      if (error instanceof SessionChanged) { location.reload(); return false; }
+      setProblem(error instanceof Conflict ? "Dieser Eintrag wurde während der Bearbeitung geändert. Öffne ihn erneut."
+        : "Der Browser konnte die Änderung nicht speichern. Prüfe den verfügbaren Speicher.");
+      setSyncStatus("error"); return false;
     }
+  }
+
+  async function resolveConflict(choice: Choice) {
+    const copy = current.current, remote = clash.current;
+    if (!copy || !remote) return;
+    try {
+      const result = await updateCopy(copy.user.email, copy.session, saved => {
+        if (!saved || saved.session !== copy.session) throw new SessionChanged();
+        return reconcile(saved, remote, choice);
+      });
+      if (result) {
+        current.current = result; clash.current = null; setPlan(result.draft); setProblem("");
+        setSyncStatus("pending"); syncNow.current();
+      }
+    } catch { setProblem("Die Auswahl konnte nicht gespeichert werden."); }
   }
 
   async function savePlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.name.trim()) { setSyncStatus("error"); return; }
     const clean = normalizePlan({ ...draft, name: draft.name.trim(), savings: draft.savings.map((item) => ({ ...item, name: item.name.trim(), symbol: item.kind === "security" ? item.symbol?.trim().toUpperCase() : undefined })) });
-    if (await persistPlan(clean)) {
+    if (await persistPlan(clean, baseline.current)) {
       setEditing(false);
       setEditorScope(null);
       setEditorTarget(null);
@@ -547,6 +667,7 @@ export default function Home() {
   }
 
   function openCheckIn() {
+    baseline.current = plan;
     setCheckInAccounts(structuredClone(active.accounts));
     setCheckInDate(localDay());
     setCheckInNote("");
@@ -555,17 +676,18 @@ export default function Home() {
 
   async function saveCheckIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!plan || !checkInDate || checkInDate > localDay()) return;
+    const initial = baseline.current;
+    if (!initial || !checkInDate || checkInDate > localDay()) return;
     const accounts = checkInAccounts.map((account) => ({ ...account, name: account.name.trim() || "Unbenanntes Konto" }));
     const balances = Object.fromEntries(accounts.map((account) => [account.id, account.balance]));
     const netBalance = accounts.reduce((sum, account) => sum + (account.type === "credit" ? -account.balance : account.balance), 0);
     const snapshot: Snapshot = { id: uid(), date: checkInDate, balances, note: checkInNote.trim(), netBalance };
     const updated: Plan = {
-      ...plan,
-      accounts: checkInDate === localDay() ? accounts : plan.accounts,
-      snapshots: [...plan.snapshots.filter((item) => item.date !== snapshot.date), snapshot].sort((a, b) => a.date.localeCompare(b.date)),
+      ...initial,
+      accounts: checkInDate === localDay() ? accounts : initial.accounts,
+      snapshots: [...initial.snapshots.filter((item) => item.date !== snapshot.date), snapshot].sort((a, b) => a.date.localeCompare(b.date)),
     };
-    if (await persistPlan(updated)) setCheckingIn(false);
+    if (await persistPlan(updated, initial)) setCheckingIn(false);
   }
 
   function previewImport() {
@@ -627,8 +749,12 @@ export default function Home() {
     if (deleteConfirmation !== "LÖSCHEN") return;
     setDeletingAccount(true);
     try {
-      const response = await fetch("/api/account", { method: "DELETE" });
+      const copy = current.current;
+      if (!copy) return;
+      const response = await fetch("/api/account", { method: "DELETE", headers: {"x-njora-browser-session":copy.session} });
       if (!response.ok) throw new Error("delete failed");
+      await updateCopy(copy.user.email, copy.session, () => undefined, true);
+      channel.current?.postMessage("session");
       window.localStorage.removeItem(STORAGE_KEY);
       window.localStorage.removeItem(PREVIOUS_STORAGE_KEY);
       window.localStorage.removeItem(OLD_STORAGE_KEY);
@@ -640,11 +766,19 @@ export default function Home() {
   }
 
   async function signOut() {
+    const copy = current.current;
+    if (!copy) return;
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
-      window.location.href = "/login";
-    }
+      const stored = await offlineCopy(copy.session);
+      if (stored && pending(stored)) {
+        setProblem("Bitte gleiche deine offenen Änderungen vor dem Abmelden ab."); syncNow.current(); return;
+      }
+      const response = await fetch("/api/auth/logout", {method:"POST", headers:{"x-njora-browser-session":copy.session}});
+      if (!response.ok) throw new Error();
+      await updateCopy(copy.user.email, copy.session, saved => saved && (saved.session !== copy.session || pending(saved)) ? saved : undefined, true);
+      channel.current?.postMessage("session");
+      location.replace("/login");
+    } catch { setProblem("Abmelden ist fehlgeschlagen. Bitte prüfe die Verbindung."); }
   }
 
   function openSavings() {
@@ -728,12 +862,17 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  const saveNotice = (syncStatus === "error" || syncStatus === "conflict") && (
-    <div className="save-notice" role="alert">
+  const syncLabel = {idle:"", saving:"Wird auf diesem Gerät gespeichert …", saved:"Mit der Cloud abgeglichen",
+    pending:"Lokal gespeichert · Cloud-Abgleich ausstehend", offline:"Offline · Letzter gespeicherter Stand",
+    conflict:"Versionskonflikt beim Cloud-Abgleich", error:"Änderung konnte nicht gespeichert werden"}[syncStatus];
+  const saveNotice = (problem || syncStatus === "conflict" || syncStatus === "pending" || syncStatus === "offline") && (
+    <div className="save-notice" role="status">
+      <span>{problem || syncLabel}</span>
       {syncStatus === "conflict" ? <>
-        <span>Ein anderer Stand wurde gespeichert. Deine Eingaben sind noch im Formular.</span>
-        <button type="button" onClick={() => { if (window.confirm("Entwurf verwerfen und aktuellen Plan laden?")) window.location.reload(); }}>Aktuellen Plan laden</button>
-      </> : <span>Speichern fehlgeschlagen. Prüfe die Verbindung und versuche es erneut.</span>}
+        <span>Unabhängige Änderungen bleiben erhalten. Welche Werte sollen bei Überschneidungen gelten?</span>
+        <button type="button" onClick={() => resolveConflict("device")}>Meine Werte behalten</button>
+        <button type="button" onClick={() => resolveConflict("cloud")}>Cloud-Werte behalten</button>
+      </> : <button type="button" onClick={() => syncNow.current()}>Erneut abgleichen</button>}
     </div>
   );
 
@@ -758,22 +897,21 @@ export default function Home() {
         <button className="profile-button" type="button" onClick={() => navigate("more")} aria-label="Konto und Einstellungen"><span aria-hidden="true">{active.name.charAt(0).toUpperCase()}</span><b>{active.name}</b></button>
       </header>
 
-      {!editing && !checkingIn && !savingsOpen && plan && saveNotice}
+      {!editing && !checkingIn && !savingsOpen && (plan || billing?.active === false) && saveNotice}
 
       <div className="app-content">
         {activeView === "home" && <section className="view home-view" aria-labelledby="home-title">
-          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Heute</h1></div><button type="button" className="dashboard-account-link" onClick={openCheckIn}><TitleAmount value={metrics.netBalance} label="Kontostand" /></button></div>
-          <button type="button" className="dashboard-balance" onClick={() => navigate("month")}>
-            <span>Monatlicher Spielraum</span>
-            <strong>{exactEuros.format(metrics.available)}</strong>
-            <span>Regelmäßiges Einkommen abzüglich Fixkosten</span>
+          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Heute</h1></div><button type="button" className="dashboard-account-link" title={updateDue ? "Check-in fällig · Kontostände aktualisieren" : "Kontostände aktualisieren"} aria-label="Kontostände aktualisieren" onClick={openCheckIn}><TitleAmount value={metrics.netBalance} label="Kontostand bearbeiten" /></button></div>
+          <div className="njora-columns"><div className="njora-column">
+          <button type="button" className="dashboard-balance" aria-expanded={showForecast} aria-controls="forecast-detail" onClick={() => setShowForecast(!showForecast)}>
+            <span>Prognose zum Monatsende</span>
+            <strong>≈ {exactEuros.format(metrics.forecast.datedBalance)}</strong>
+            <span>Mit datierten Zahlungen{metrics.forecast.uncertain.length > 0 ? ` · ${metrics.forecast.uncertain.length} ${metrics.forecast.uncertain.length === 1 ? "Buchung" : "Buchungen"} offen` : ""}</span>
           </button>
           <div className="dashboard-metrics">
             <button type="button" onClick={() => openFocusedEditor("income")}><span>Einkommen im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
             <button type="button" onClick={() => showCosts("home")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
-            <button type="button" aria-expanded={showForecast} aria-controls="forecast-detail" onClick={() => setShowForecast(!showForecast)}>
-              <span>Prognose zum Monatsende</span><strong>{metrics.forecast.uncertain.length ? "Spanne ansehen" : exactEuros.format(metrics.forecast.datedBalance)}</strong>
-            </button>
+            <button type="button" onClick={() => navigate("month")}><span>Monatlicher Spielraum</span><strong>{exactEuros.format(metrics.available)}</strong></button>
             <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
           </div>
           {showForecast && <section id="forecast-detail" className="detail-card">
@@ -800,18 +938,18 @@ export default function Home() {
             <p>Die Rechnung setzt einen aktuellen Kontostand voraus. Frühere Fälligkeiten gelten als gebucht. Spätere zählen vollständig. Ungeplante Ausgaben sind offen.</p>
             <small>Letzter Check-in · {lastUpdateLabel}</small>
           </section>}
-          <button type="button" className="dashboard-checkin" onClick={openCheckIn}>
-            <strong>Kontostände aktualisieren</strong><small>{euro(metrics.bankBalance, true)} verfügbar · {euro(metrics.creditBalance, true)} Karten</small><small>{updateDue ? "Check-in fällig · " : ""}{lastUpdateLabel}</small>
-          </button>
+          </div><div className="njora-column">
+          {plan && <BalanceHistory plan={plan} />}
           <div className="dashboard-specials">
             <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} aria-label={`Sonderposten im ${currentMonthName} anzeigen und bearbeiten`}><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen →</p></button>
           </div>
           <details className="dashboard-income"><summary>Einkommen im Detail</summary><article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article></details>
+          </div></div>
         </section>}
 
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
-          <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
-          <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label="Fixkosten" value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
+          <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
+          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label="Fixkosten" value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
           <article className="detail-card flow-detail">
             <div className="section-title compact"><div><h2>Durchschnittliche Kosten je Kategorie</h2><small>{metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen."}</small></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong>{metrics.income > 0 && <span>{incomePercent.format(metrics.fixedCosts / metrics.income)} verplant</span>}</div></div>
             {metrics.income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / metrics.income * 100}%`, backgroundColor: item.color }} key={item.label} />)}</div>}
@@ -820,6 +958,7 @@ export default function Home() {
               return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true">›</span></button>;
             })}</div>
           </article>
+          </div>
         </section>}
 
         {activeView === "expenses" && <section className="view" aria-labelledby="expenses-title">
@@ -881,16 +1020,17 @@ export default function Home() {
 
         {activeView === "more" && <section className="view" aria-labelledby="more-title">
           <ViewHeader id="more-title" eyebrow="Account & Einstellungen" title="Dein persönlicher Bereich" copy={cloudUser?.local ? "Lokale Datenhaltung und die Pflege deines Finanzplans an einem Ort." : "Synchronisierung, Datenschutz und die Pflege deines Finanzplans an einem Ort."} />
-          <article className="detail-card annual-card"><div className="section-title compact"><div><h2>Fälligkeiten im Jahresverlauf</h2></div></div><div className="month-strip">{months.map((month, index) => {
+          {billing?.active !== false && <><article className="detail-card annual-card"><div className="section-title compact"><div><h2>Fälligkeiten im Jahresverlauf</h2></div></div><div className="month-strip">{months.map((month, index) => {
             const sum = active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, index)).reduce((total, item) => total + item.amount, 0);
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
           })}</div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button></article>
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
+          </>}
           <AppearancePicker {...appearance} />
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
           {billing && <article className="account-card"><BillingOffer billing={billing} /></article>}
-          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncStatus === "saving" ? "Wird gespeichert" : syncStatus === "error" || syncStatus === "conflict" ? "Änderungen nicht gespeichert" : cloudUser?.local ? "Lokal gespeichert" : "Online synchronisiert"}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p>{billing && <p>Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.</p>}<label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
+          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncLabel}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p>{billing && <p>Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.</p>}<label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
           <article className="privacy-card"><span>{cloudUser?.local ? "Lokale Entwicklung" : "Dein persönlicher Bereich"}</span><p>{cloudUser?.local ? "Auf localhost ist keine Anmeldung nötig. Die Daten bleiben in der lokalen Entwicklungsdatenbank und werden nicht mit einem Online-Account synchronisiert." : "Deine Finanzdaten werden deinem angemeldeten Account zugeordnet und zwischen deinen Geräten synchronisiert. Eine Bankverbindung ist nicht erforderlich."}</p></article>
           <LegalLinks />
         </section>}
@@ -898,17 +1038,17 @@ export default function Home() {
 
       <nav className="bottom-nav" aria-label="Mobile Hauptnavigation">
         <MobileNavButton icon="◉" label="Heute" active={activeView === "home"} onClick={() => navigate("home")} />
-        <MobileNavButton icon="%" label="Monat" active={activeView === "month"} onClick={() => navigate("month")} />
+        <MobileNavButton icon="%" label="Monatsplan" active={activeView === "month"} onClick={() => navigate("month")} />
         <MobileNavButton icon="↘" label="Kredite" active={activeView === "loans"} onClick={() => navigate("loans")} />
         <MobileNavButton icon="◇" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />
-        <MobileNavButton icon="●" label="Account" active={activeView === "more"} onClick={() => navigate("more")} />
+        <MobileNavButton icon="●" label="Mehr" active={activeView === "more"} onClick={() => navigate("more")} />
       </nav>
 
       <footer><span>Njora</span><p>{cloudUser?.local ? "Lokal gespeichert · ohne Anmeldung" : "Persönlich synchronisiert · ohne Kontoanbindung"}</p><span>Verstehe, was war. Gestalte, was kommt.</span></footer>
 
-      {showLegacyPrompt && legacyPlan && <div className="modal-backdrop"><section className="migration-card" role="dialog" aria-modal="true" aria-labelledby="migration-title"><span className="migration-icon">↗</span><p className="eyebrow">Lokale Daten gefunden</p><h2 id="migration-title">Gehört dieser Finanzplan dir?</h2><p>{cloudUser?.local ? "Auf diesem Gerät liegt ein früherer lokaler Plan. Du kannst ihn jetzt in die lokale Entwicklungsdatenbank übernehmen." : "Auf diesem Gerät liegt ein früherer lokaler Plan. Erst mit deiner Bestätigung wird er deinem persönlichen Account zugeordnet und online synchronisiert."}</p><div><button className="secondary-button" type="button" onClick={() => setShowLegacyPrompt(false)}>Neu beginnen</button><button className="primary-button" type="button" onClick={importLegacyPlan} disabled={syncStatus === "saving"}>Ja, sicher übernehmen <b>→</b></button></div><small>{cloudUser?.local ? "Nach der Übernahme werden die alten lokalen Browserschlüssel entfernt." : "Nach erfolgreicher Übernahme werden die alten lokalen Schlüssel entfernt."}</small></section></div>}
+      {billing?.active !== false && showLegacyPrompt && legacyPlan && <div className="modal-backdrop"><section className="migration-card" role="dialog" aria-modal="true" aria-labelledby="migration-title"><span className="migration-icon">↗</span><p className="eyebrow">Lokale Daten gefunden</p><h2 id="migration-title">Gehört dieser Finanzplan dir?</h2><p>{cloudUser?.local ? "Auf diesem Gerät liegt ein früherer lokaler Plan. Du kannst ihn jetzt in die lokale Entwicklungsdatenbank übernehmen." : "Auf diesem Gerät liegt ein früherer lokaler Plan. Erst mit deiner Bestätigung wird er deinem persönlichen Account zugeordnet und online synchronisiert."}</p><div><button className="secondary-button" type="button" onClick={() => setShowLegacyPrompt(false)}>Neu beginnen</button><button className="primary-button" type="button" onClick={importLegacyPlan} disabled={syncStatus === "saving"}>Ja, sicher übernehmen <b>→</b></button></div><small>{cloudUser?.local ? "Nach der Übernahme werden die alten lokalen Browserschlüssel entfernt." : "Nach erfolgreicher Übernahme werden die alten lokalen Schlüssel entfernt."}</small></section></div>}
 
-      {!plan && !showLegacyPrompt && <div className="modal-backdrop onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+      {billing?.active !== false && !plan && !showLegacyPrompt && <div className="modal-backdrop onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <div className="onboarding-top"><Brand /><span>Kurzer Fragebogen · etwa 3 Minuten</span></div>
         <div className="onboarding-progress-copy"><span>Schritt {onboardingStep + 1} von {onboardingSteps.length}</span><strong>{onboardingSteps[onboardingStep]}</strong></div>
         <div className="onboarding-progress" role="progressbar" aria-label="Fortschritt bei der Einrichtung" aria-valuemin={1} aria-valuemax={onboardingSteps.length} aria-valuenow={onboardingStep + 1}><i style={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }} /></div>
@@ -1030,12 +1170,12 @@ export default function Home() {
               <p>{importPreview.accounts.length} Konten · {importPreview.commitments.length} Kredite · {importPreview.snapshots.length} Check-ins</p>
               <p>Diese Sicherung ersetzt deinen aktuellen Finanzplan vollständig.</p>
               <button type="button" onClick={() => setImportPreview(null)}>Abbrechen</button>
-              <button type="button" onClick={confirmImport} disabled={syncStatus === "saving" || syncStatus === "conflict"}>Aktuellen Plan ersetzen</button>
+              <button type="button" onClick={confirmImport} disabled={syncStatus === "saving"}>Aktuellen Plan ersetzen</button>
             </div>}
           </details>}
 
           {saveNotice}
-          <div className="editor-actions"><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : syncStatus === "error" || syncStatus === "conflict" ? "Änderungen nicht gespeichert" : cloudUser?.local ? "Lokal gespeichert · ohne Anmeldung" : "Persönlich synchronisiert · ohne Kontoanbindung"}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b>→</b></button></div>
+          <div className="editor-actions"><span>{syncLabel}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b>→</b></button></div>
         </form>
       </section></div>}
 
