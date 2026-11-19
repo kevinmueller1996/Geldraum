@@ -106,6 +106,7 @@ function uid() {
 }
 
 const roundedEuros = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+const incomePercent = new Intl.NumberFormat("de-DE", { style: "percent", maximumFractionDigits: 1 });
 const exactEuros = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
 
 function euro(value: number, exact = false) {
@@ -860,11 +861,11 @@ export default function Home() {
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
           <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label="Fixkosten" value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
           <article className="detail-card flow-detail">
-            <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Durchschnittliche Kosten je Kategorie</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.fixedCosts / metrics.income) * 100) : 0}% verplant</span></div></div>
-            <div className="stacked-bar" aria-label="Verteilung der geplanten Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${metrics.fixedCosts ? (item.value / metrics.fixedCosts) * 100 : 0}%`, backgroundColor: item.color }} key={item.label} />)}</div>
+            <div className="section-title compact"><div><h2>Durchschnittliche Kosten je Kategorie</h2><small>{metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen."}</small></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong>{metrics.income > 0 && <span>{incomePercent.format(metrics.fixedCosts / metrics.income)} verplant</span>}</div></div>
+            {metrics.income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / metrics.income * 100}%`, backgroundColor: item.color }} key={item.label} />)}</div>}
             <div className="flow-list">{monthOutflows.map((item) => {
-              const percent = metrics.fixedCosts ? Math.round((item.value / metrics.fixedCosts) * 100) : 0;
-              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}<small>{percent}%</small></b><span aria-hidden="true">›</span></button>;
+              const share = metrics.income > 0 ? item.value / metrics.income : null;
+              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true">›</span></button>;
             })}</div>
           </article>
         </section>}

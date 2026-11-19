@@ -228,16 +228,17 @@ struct MonthlyPlan: View {
             }
             let categories = metrics.rankedCategories
             if !categories.isEmpty {
-                Section("Durchschnittliche Kosten je Kategorie") {
+                Section {
                     ForEach(categories, id: \.name) { category in
                         NavigationLink {
                             PlanSectionView(section: .expenses, store: store, category: category.name)
                         } label: {
-                            VStack(alignment: .leading, spacing: 9) {
-                                LabeledAmount(label: category.name, amount: category.amount)
+                            let share = metrics.income > 0 ? category.amount / metrics.income : nil
+                            VStack(alignment: .leading, spacing: 6) {
+                                LabeledAmount(label: category.name, amount: category.amount,
+                                              detail: share.map { $0.formatted(.percent.precision(.fractionLength(0...1)).locale(Locale(identifier: "de_DE"))) })
                                 GeometryReader { area in
-                                    let largest = max(categories.first?.amount ?? 0, 0)
-                                    let ratio = largest > 0 ? max(0, category.amount) / largest : 0
+                                    let ratio = min(1, max(0, share ?? 0))
                                     ZStack(alignment: .leading) {
                                         Capsule().fill(NjoraTheme.accent.opacity(0.14))
                                         Capsule().fill(NjoraTheme.accent).frame(width: area.size.width * ratio)
@@ -250,6 +251,12 @@ struct MonthlyPlan: View {
                             .accessibilityElement(children: .combine)
                         }
                     }
+                } header: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Durchschnittliche Kosten je Kategorie")
+                        Text(metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
+                            .font(.caption).fontWeight(.regular)
+                    }.textCase(nil)
                 }
             }
             Notice(text: store.notice(in: .month))
@@ -277,6 +284,7 @@ struct LabeledAmount: View {
     let label: String
     let amount: Double
     var emphasis = false
+    var detail: String? = nil
     var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack { Text(label).fixedSize(horizontal: true, vertical: false); Spacer(); number.fixedSize() }
@@ -284,8 +292,11 @@ struct LabeledAmount: View {
         }
     }
     private var number: some View {
-        Text(euros(amount)).monospacedDigit().fontWeight(emphasis ? .semibold : .regular)
-            .foregroundStyle(amount < 0 ? Color.red : emphasis ? NjoraTheme.positive : Color.primary)
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(euros(amount)).monospacedDigit().fontWeight(emphasis ? .semibold : .regular)
+                .foregroundStyle(amount < 0 ? Color.red : emphasis ? NjoraTheme.positive : Color.primary)
+            if let detail { Text(detail).font(.caption).monospacedDigit().foregroundStyle(.secondary) }
+        }
     }
 }
 
