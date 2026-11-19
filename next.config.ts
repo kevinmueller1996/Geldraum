@@ -30,6 +30,24 @@ const nextConfig: NextConfig = {
       return config;
     },
   } : {}),
+  async redirects() {
+    // Send public page visits directly to the landing page. Offline shell requests,
+    // local development and returning browser sessions keep the dashboard route.
+    return [{
+      source: "/",
+      has: [
+        { type: "host", value: "njora\\.de" },
+        { type: "header", key: "accept", value: ".*text/html.*" },
+      ],
+      missing: [
+        { type: "cookie", key: "__Host-njora_session" },
+        { type: "cookie", key: "geldraum_session" },
+        { type: "cookie", key: "__Host-njora_browser" },
+      ],
+      destination: "/login",
+      permanent: false,
+    }];
+  },
   async headers() {
     return [{
       source: "/(.*)",

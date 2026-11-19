@@ -3,41 +3,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import { isLocalHostname } from "../local-host";
 import LegalLinks from "../legal-links";
+import "./landing.css";
 
 type Mode = "login" | "register";
-
-function ProductOverview() {
-  return <div className="product-shot overview-shot" role="img" aria-label="Njora Startübersicht mit Kontostand, Monatsprognose und Budgetaufteilung">
-    <div className="product-shot-bar"><span className="product-shot-brand"><img src="/njora-mark.png" width="24" height="24" alt="" />NJORA</span><span>Heute&nbsp;&nbsp; Monat&nbsp;&nbsp; Kredite&nbsp;&nbsp; Ziele</span><b>KM</b></div>
-    <div className="product-shot-body">
-      <div className="product-shot-heading"><div><small>Guten Abend, Mia</small><strong>Dein Finanzüberblick</strong></div><button type="button" tabIndex={-1}>Kontostände aktualisieren</button></div>
-      <div className="product-kpi featured"><small>Aktueller Kontostand</small><strong>3.230 €</strong><span>3.850 € verfügbar · 620 € Karten</span><i /></div>
-      <div className="product-kpi"><small>Prognose Monatsende</small><strong>2.740 €</strong><span>auf Basis deiner Planung</span></div>
-      <div className="product-kpi"><small>Frei pro Monat</small><strong>1.570 €</strong><span>nach Rücklagen und Raten</span></div>
-      <div className="product-flow"><div><small>Dein Monat</small><strong>Wohin dein Geld geht</strong></div><span><i />Wohnen</span><span><i />Lebenshaltung</span><span><i />Rücklagen</span><b>4.200 €</b></div>
-    </div>
-  </div>;
-}
-
-function MonthPreview() {
-  return <div className="product-shot compact-shot month-shot" role="img" aria-label="Njora Monatsplan mit Einnahmen, Ausgaben und Jahresrücklage">
-    <div className="mini-shot-head"><span>PLAN FÜR AUGUST</span><b>Wohin dein Geld geht</b></div>
-    <div className="mini-summary"><span><small>Einnahmen</small><strong>4.200 €</strong></span><span><small>Verplant</small><strong>2.630 €</strong></span></div>
-    <div className="mini-distribution"><i style={{ width: "48%" }} /><i style={{ width: "24%" }} /><i style={{ width: "16%" }} /><i style={{ width: "12%" }} /></div>
-    <div className="mini-row"><span><i />Wohnen<small>Miete & Nebenkosten</small></span><b>1.250 €</b></div>
-    <div className="mini-row"><span><i />Lebenshaltung<small>Einkauf & Alltag</small></span><b>620 €</b></div>
-    <div className="mini-row"><span><i />Jahresrücklage<small>Versicherungen & Beiträge</small></span><b>90 €</b></div>
-  </div>;
-}
-
-function GoalsPreview() {
-  return <div className="product-shot compact-shot goals-shot" role="img" aria-label="Njora Zielplanung mit Sparfortschritt und Machbarkeitscheck">
-    <div className="mini-shot-head"><span>ZIELE & PROJEKTE</span><b>Wofür du Raum schaffst</b></div>
-    <div className="goal-preview-card"><div><span>Notgroschen</span><b>70%</b></div><strong>8.400 € <small>von 12.000 €</small></strong><i><b style={{ width: "70%" }} /></i><small>3.600 € offen · flexibel aus Überschuss</small></div>
-    <div className="goal-preview-card coral"><div><span>Großer Wunsch</span><b>30%</b></div><strong>1.800 € <small>von 6.000 €</small></strong><i><b style={{ width: "30%" }} /></i><small>550 € monatlich eingeplant</small></div>
-    <div className="feasibility"><span>Machbarkeitscheck</span><strong>1.020 € bleiben rechnerisch frei.</strong></div>
-  </div>;
-}
 
 export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("login");
@@ -57,7 +25,10 @@ export default function LoginPage() {
     setLocal(isLocalHostname(window.location.hostname));
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "1") window.location.replace("/");
-    if (params.get("start") === "register") setMode("register");
+    if (params.get("start") === "register") {
+      setMode("register");
+      document.getElementById("zugang")?.scrollIntoView({ block: "start" });
+    }
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -108,7 +79,9 @@ export default function LoginPage() {
 
   function openAccess(next: Mode) {
     changeMode(next);
-    window.setTimeout(() => document.getElementById("zugang")?.scrollIntoView({ behavior: "smooth", block: "center" }), 20);
+    const heading = document.getElementById("access-title");
+    heading?.focus({ preventScroll: true });
+    document.getElementById("zugang")?.scrollIntoView({ block: "start" });
   }
 
   async function requestEmailAction(kind: "resend-verification" | "forgot-password") {
@@ -131,27 +104,44 @@ export default function LoginPage() {
     }
   }
 
-  return <main className={`marketing-page ${mode === "register" ? "registration-mode" : "login-mode"}`}>
-    <header className="marketing-header">
-      <a className="marketing-brand" href="#start" aria-label="Njora Start"><img src="/njora-mark.png" width="38" height="38" alt="" /><img src="/njora-wordmark.png" width="112" height="22" alt="Njora" /></a>
-      <nav aria-label="Seitennavigation"><a href="#funktionen">Funktionen</a><a href="#produkt">Produkt</a><a href="#ablauf">So funktioniert’s</a><a href="#datenschutz">Datenschutz</a><a href="#faq">FAQ</a></nav>
-      <button type="button" onClick={() => openAccess("login")}>Anmelden <span>→</span></button>
+  return <main className="nj-landing" id="start">
+    <header className="nj-header nj-wrap">
+      <a className="nj-brand" href="#start" aria-label="Njora Startseite"><img src="/njora-mark.png" width="40" height="40" alt="" /><img src="/njora-wordmark.png" width="105" height="26" alt="Njora" /></a>
+      <nav aria-label="Seitennavigation"><a href="#produkt">Einblick</a><a href="#preis">Preis</a><a href="#faq">Fragen</a></nav>
+      <button className="nj-secondary" type="button" onClick={() => openAccess("login")}>Anmelden</button>
     </header>
 
-    <section className="landing-hero" id="start">
-      <div className="hero-copy">
-        <p className="marketing-eyebrow">Dein persönlicher Finanzüberblick</p>
-        <h1>Verstehe, was war.<br /><em>Gestalte, was kommt.</em></h1>
-        <p className="hero-intro">Njora bringt Kontostände, laufende Kosten, Jahresausgaben, Kredite und Sparziele in eine ruhige Übersicht. Ohne Bankzugriff – du entscheidest, welche Werte du einträgst.</p>
-        <div className="hero-actions"><button type="button" onClick={() => openAccess("register")}>Konto erstellen <span>→</span></button><a href="#produkt">Produkt ansehen</a></div>
-        <ul className="proof-chips"><li>Keine IBAN erforderlich</li><li>Daten exportierbar</li><li>Jederzeit löschbar</li></ul>
-        <ProductOverview />
+    <section className="nj-wrap nj-hero" aria-labelledby="hero-title">
+      <div className="nj-copy">
+        <p className="nj-kicker">Dein persönlicher Finanzplan</p>
+        <h1 id="hero-title">Was bleibt am<br /><em>Monatsende?</em></h1>
+        <p className="nj-lead">Dein Kontostand zeigt dir, was heute da ist. Njora rechnet die anstehenden Einnahmen und Ausgaben dazu. So siehst du, wie viel bis Monatsende voraussichtlich bleibt.</p>
+        <div className="nj-actions"><button type="button" className="nj-primary" onClick={() => openAccess("register")}>Konto erstellen</button><a href="#produkt">Monatsplan ansehen</a></div>
+        <p className="nj-footnote">Manuelle Eingabe · Ohne Bankverbindung</p>
       </div>
+      <figure className="nj-stage">
+        <img className="nj-phone" src="/njora-heute-demo.png" width="354" height="770" alt="Die Heute-Ansicht der iPhone-App mit Monatsendprognose, Einkommen, Fixkosten und Kontoverlauf." fetchPriority="high" />
+        <figcaption>iPhone-Vorschau · Beispieldaten</figcaption>
+      </figure>
+    </section>
 
-      <aside className="landing-auth-card" id="zugang" aria-labelledby="access-title">
-        <p className="marketing-eyebrow">Dein persönlicher Bereich</p>
-        <h2 id="access-title">{mode === "login" ? "Willkommen zurück." : "In wenigen Minuten startklar."}</h2>
-        <p>{mode === "login" ? "Melde dich an und öffne deinen persönlichen Finanzüberblick." : "Bestätige deine E-Mail-Adresse. Danach legst du dein Passwort fest und richtest deinen Finanzplan ein."}</p>
+    <section className="nj-feature nj-wrap" id="produkt" aria-labelledby="plan-title">
+      <div id="funktionen"><p className="nj-kicker">Der Monatsplan</p><h2 id="plan-title">Auch die Jahresrechnung<br /><em>hat ihren Platz.</em></h2>
+        <p>Die Versicherung wird einmal im Jahr fällig, die Miete jeden Monat. Njora rechnet beides auf den Monat um. Kreditraten zählen mit, damit du deinen Spielraum siehst.</p>
+        <p>Für die Monatsendprognose zählt dagegen der Buchungstag. In der App kannst du jede geplante Zahlung öffnen und Betrag oder Fälligkeit anpassen.</p>
+      </div>
+      <figure className="nj-ledger"><figcaption>Ein Monat in Zahlen <small>Beispiel</small></figcaption>
+        <dl><div><dt>Einkommen</dt><dd>3.000 €</dd></div><div><dt>Monatliche Fixkosten</dt><dd>−1.650 €</dd></div><div><dt>Kreditrate</dt><dd>−250 €</dd></div><div><dt>Versicherung <small>600 € im Jahr ÷ 12</small></dt><dd>−50 €</dd></div><div className="nj-total"><dt>Freier Spielraum</dt><dd>1.050 €</dd></div></dl>
+      </figure>
+    </section>
+
+    <section className="nj-access nj-wrap" aria-labelledby="access-title">
+      <div className="nj-price" id="preis"><p className="nj-kicker">Das Njora-Monatsabo</p><h2>0,99 € <small>pro Monat</small></h2><p>Zum Verkaufsstart erhältst du beim ersten Web-Abo 30 Tage kostenlos. Danach verlängert sich das Abo automatisch um jeweils einen Monat.</p>
+        <p>Du kannst jederzeit zum Ende des laufenden Zeitraums kündigen. Die Registrierung allein löst keine Zahlung aus.</p>
+      </div>
+      <aside className="landing-auth-card nj-form" id="zugang">
+        <h2 id="access-title" tabIndex={-1}>{mode === "login" ? "Willkommen zurück." : "Dein Njora-Konto."}</h2>
+        <p>{mode === "login" ? "Öffne deinen persönlichen Finanzplan." : "Wir schicken dir einen Link, über den du deine E-Mail-Adresse bestätigst und dein Passwort festlegst."}</p>
         <div className="auth-tabs" aria-label="Anmeldung oder Registrierung">
           <button type="button" aria-pressed={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Anmelden</button>
           <button type="button" aria-pressed={mode === "register"} className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Konto erstellen</button>
@@ -164,61 +154,21 @@ export default function LoginPage() {
           {notice && <p className="login-notice" role="status">{notice}</p>}
           {needsVerification && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("resend-verification")}>Bestätigungs-E-Mail erneut senden</button>}
           {mode === "register" && <small>Du erstellst zunächst dein Konto. Das Monatsabo für deinen Finanzplan schließt du separat ab. Es gelten die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Hier findest du die <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</small>}
-          <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Sicher anmelden" : local ? "Konto erstellen" : "Bestätigungslink senden"}<b>→</b></button>
+          <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Anmelden" : local ? "Konto erstellen" : "Bestätigungslink senden"}</button>
           {mode === "login" && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("forgot-password")}>Passwort vergessen?</button>}
         </form>
-        <small>Dein Passwort wird als Hash gespeichert.</small>
-        <LegalLinks />
       </aside>
     </section>
 
-    <section className="landing-section benefits-section" id="funktionen">
-      <div className="section-heading"><p className="marketing-eyebrow">Finanzen ohne Tabellenchaos</p><h2>Wissen, was bleibt –<br /><em>bevor der Monat vorbei ist.</em></h2><p>Einzelne Kontostände erzählen nur einen Teil der Geschichte. Njora verbindet deinen heutigen Stand mit regelmäßigen Ausgaben, Jahreskosten, Verpflichtungen und Zielen.</p></div>
-      <div className="benefit-grid">
-        <article><span>01</span><h3>Monat verstehen</h3><p>Erkenne, was regelmäßig hereinkommt, was fest verplant ist und welcher Spielraum bleibt.</p></article>
-        <article><span>02</span><h3>Jahr vorausdenken</h3><p>Lege Versicherungen, Beiträge und andere Jahreskosten ihrem Fälligkeitsmonat zu.</p></article>
-        <article><span>03</span><h3>Ziele realistisch planen</h3><p>Sieh, welcher monatliche Betrag für ein Ziel nötig wäre – gemeinsam mit deinen Verpflichtungen.</p></article>
+    <section className="nj-faq nj-wrap" id="faq" aria-labelledby="faq-title">
+      <div><p className="nj-kicker">Häufige Fragen</p><h2 id="faq-title">Vor dem Start.</h2></div>
+      <div>
+        <details id="ablauf"><summary>Was brauche ich für meinen ersten Plan?</summary><p>Starte mit deinem aktuellen Kontostand, deinem regelmäßigen Einkommen und den wichtigsten Fixkosten. Kredite, Rücklagen und Sparziele kannst du später ergänzen.</p></details>
+        <details id="datenschutz"><summary>Braucht Njora Zugriff auf mein Bankkonto?</summary><p>Du trägst Beträge und Buchungstage selbst ein. Eine IBAN oder Zugangsdaten zum Onlinebanking brauchst du dafür nicht. Deinen Plan kannst du exportieren und dein Konto in den Einstellungen löschen. <a href="/datenschutz">Zum Datenschutz</a></p></details>
+        <details><summary>Wo kann ich Njora nutzen?</summary><p>Die Web-App läuft im Browser auf Handy, Tablet und Computer. Die native App für iPhone und iPad wird für den App Store vorbereitet.</p></details>
+        <details><summary>Wie kündige ich mein Web-Abo?</summary><p>Du kannst dein Abo online kündigen. Wenn du während der Gratisphase zum Ende der Testzeit kündigst, fällt keine erste Monatszahlung an. <a href="/kuendigen">Zur Kündigung</a></p></details>
       </div>
     </section>
-
-    <section className="landing-section product-section" id="produkt">
-      <div className="section-heading centered"><p className="marketing-eyebrow">Ein ruhiger Blick auf deine Zahlen</p><h2>Eine Zahl für heute.<br /><em>Ein Blick auf morgen.</em></h2><p>Die Produktansichten zeigen Njora mit vollständig erfundenen Demodaten.</p></div>
-      <div className="product-feature overview-feature"><div><p className="marketing-eyebrow">Deine Startübersicht</p><h3>Erkennen, was sich gerade verändert.</h3><p>Kontostände aktualisieren, Monatsprognose prüfen und Veränderungen früh erkennen – ohne erst mehrere Konten und Tabellen abzugleichen.</p><ul><li>Aktueller Nettostand</li><li>Prognose zum Monatsende</li><li>Verfügbarer Spielraum</li></ul></div><ProductOverview /></div>
-      <div className="product-feature-grid">
-        <article className="product-feature-card"><MonthPreview /><div><p className="marketing-eyebrow">Monatsplan</p><h3>Regelmäßiges und Unregelmäßiges gehört zusammen.</h3><p>Njora verteilt Jahreskosten rechnerisch auf den Monat und zeigt, wie viel bereits verplant ist.</p></div></article>
-        <article className="product-feature-card"><GoalsPreview /><div><p className="marketing-eyebrow">Ziele & Kredite</p><h3>Planen, ohne Verpflichtungen auszublenden.</h3><p>Sparziele, Kredite und verfügbarer Überschuss bleiben in derselben Planung sichtbar.</p></div></article>
-      </div>
-    </section>
-
-    <section className="landing-section steps-section" id="ablauf">
-      <div className="section-heading"><p className="marketing-eyebrow">So funktioniert Njora</p><h2>Einmal einrichten.<br /><em>Kurz aktuell halten.</em></h2></div>
-      <ol className="steps-list"><li><span>1</span><div><h3>Grundlage erfassen</h3><p>Konten, Einkommen und wichtige Ausgaben in einem kurzen, geführten Fragebogen eintragen.</p></div></li><li><span>2</span><div><h3>Regelmäßig einchecken</h3><p>Aktuelle Kontostände in wenigen Augenblicken aktualisieren.</p></div></li><li><span>3</span><div><h3>Mit Klarheit entscheiden</h3><p>Monatsverlauf, Verpflichtungen und Ziele gemeinsam betrachten.</p></div></li></ol>
-      <p className="planning-note">Prognosen basieren auf deinen Eingaben und dienen als Planungshilfe, nicht als Finanzberatung.</p>
-    </section>
-
-    <section className="privacy-section" id="datenschutz">
-      <div><p className="marketing-eyebrow">Datenminimierung statt Bankzugriff</p><h2>Deine Zahlen brauchen<br /><em>keine Kontoverknüpfung.</em></h2><p>Für Njora reichen selbst eingetragene Namen und Beträge. Eine IBAN oder Verbindung zu deinem Onlinebanking ist nicht erforderlich.</p></div>
-      <ul><li><span>✓</span><div><strong>Kein Klartext-Passwort</strong><small>Wir speichern dein Passwort als gesalzenen Hash.</small></div></li><li><span>✓</span><div><strong>Persönlich zugeordnet</strong><small>Deine Finanzdaten bleiben deinem Konto zugeordnet.</small></div></li><li><span>✓</span><div><strong>Exportierbar</strong><small>Du kannst deinen Finanzplan als Datei mitnehmen.</small></div></li><li><span>✓</span><div><strong>Löschbar</strong><small>Account und Finanzdaten lassen sich in der App löschen.</small></div></li></ul>
-    </section>
-
-    <section className="landing-section test-cta-section">
-      <img src="/njora-mark.png" width="130" height="130" alt="" />
-      <p className="marketing-eyebrow">Njora mitgestalten</p><h2>Mehr Überblick beginnt<br /><em>mit dem ersten Eintrag.</em></h2><p>Erstelle dein Konto und richte deinen Finanzplan mit deinen eigenen Zahlen ein.</p>
-      <div className="hero-actions centered-actions"><button type="button" onClick={() => openAccess("register")}>Konto erstellen <span>→</span></button><button className="text-action" type="button" onClick={() => openAccess("login")}>Schon registriert? Anmelden</button></div>
-    </section>
-
-    <section className="landing-section faq-section" id="faq">
-      <div className="section-heading"><p className="marketing-eyebrow">Häufige Fragen</p><h2>Klarheit beginnt<br /><em>vor dem ersten Eintrag.</em></h2></div>
-      <div className="faq-list">
-        <details><summary>Muss ich mein Bankkonto verbinden?<span>+</span></summary><p>Nein. Du trägst nur die Bezeichnungen und Beträge ein, die du für deine Übersicht nutzen möchtest.</p></details>
-        <details><summary>Welche Daten brauche ich für den Start?<span>+</span></summary><p>Ein Profilname, mindestens ein Kontostand und ein monatliches Einkommen reichen aus. Weitere Angaben sind optional und können später ergänzt werden.</p></details>
-        <details><summary>Wie entstehen die Prognosen?<span>+</span></summary><p>Njora berechnet sie aus deinen eingetragenen Einnahmen, Ausgaben, Buchungstagen, Jahreskosten und Verpflichtungen.</p></details>
-        <details><summary>Kann ich meine Daten mitnehmen oder löschen?<span>+</span></summary><p>Ja. Du kannst deinen Finanzplan exportieren und deinen Account einschließlich der zugehörigen Finanzdaten löschen.</p></details>
-        <details><summary>Wann wird die E-Mail-Adresse bestätigt?<span>+</span></summary><p>Bei der Registrierung senden wir dir einen Bestätigungslink. Über diesen Link legst du dein Passwort fest.</p></details>
-        <details><summary>Ersetzt Njora eine Finanzberatung?<span>+</span></summary><p>Nein. Njora ist ein persönliches Planungs- und Übersichtswerkzeug.</p></details>
-      </div>
-    </section>
-
-    <footer className="marketing-footer"><a className="marketing-brand" href="#start"><img src="/njora-mark.png" width="34" height="34" alt="" /><img src="/njora-wordmark.png" width="105" height="20" alt="Njora" /></a><p>Verstehe, was war. <em>Gestalte, was kommt.</em></p><small>© {new Date().getFullYear()} Njora · Persönlicher Finanzüberblick</small></footer>
+    <footer className="nj-footer nj-wrap"><span>Njora · Rheinland Solutions</span><LegalLinks /></footer>
   </main>;
 }
