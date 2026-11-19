@@ -17,7 +17,6 @@ type Commitment = { bookingDay?: number; category?: string; id: string; name: st
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
 type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" | "cash" | "other";
 type SavingAsset = { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
-type SecuritySuggestion = { symbol: string; name: string; exchange: string; exchangeName: string; type: "Aktie" | "ETF" | "Fonds" };
 type Account = { bookingDay?: number; id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
 type View = "home" | "expenses" | "month" | "loans" | "goals" | "more";
@@ -40,7 +39,6 @@ type Plan = {
 type CloudUser = { displayName: string; email: string; local?: boolean };
 type AuthStatus = "loading" | "authenticated" | "anonymous" | "unavailable";
 type SyncStatus = "idle" | "saving" | "saved" | "error" | "conflict";
-type QuoteStatus = "idle" | "loading" | "updated" | "error";
 
 const STORAGE_KEY = "klarbudget-plan-v3";
 const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
@@ -234,8 +232,6 @@ export default function Home() {
   const [editorTarget, setEditorTarget] = useState<string | null>(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [savingsOpen, setSavingsOpen] = useState(false);
-  const [quoteStatus, setQuoteStatus] = useState<QuoteStatus>("idle");
-  const [quoteMessage, setQuoteMessage] = useState("");
   const [showForecast, setShowForecast] = useState(false);
   const [costDetail, setCostDetail] = useState<{ category?: string; from: "home" | "month" }>({ from: "home" });
   const [activeView, setActiveView] = useState<View>("home");
@@ -649,71 +645,6 @@ export default function Home() {
 
   function openSavings() {
     setSavingsOpen(true);
-    setQuoteMessage("");
-    const staleSecurity = plan?.savings.some((item) => {
-      if (item.kind !== "security" || !item.symbol?.trim()) return false;
-      const updatedAt = item.quoteUpdatedAt ? new Date(item.quoteUpdatedAt).getTime() : Number.NaN;
-      return !Number.isFinite(updatedAt) || Date.now() - updatedAt > 15 * 60 * 1000;
-    });
-    if (staleSecurity) void refreshQuotes();
-  }
-
-  async function refreshQuotes() {
-    if (!plan || quoteStatus === "loading") return;
-    const securities = plan.savings.filter((item) => item.kind === "security" && item.symbol?.trim());
-    if (!securities.length) {
-      setQuoteStatus("idle");
-      setQuoteMessage("Lege zuerst ein Wertpapier mit Börsensymbol an.");
-      return;
-    }
-    setQuoteStatus("loading");
-    setQuoteMessage("");
-    try {
-      type QuoteResult = {
-        quotes: Array<{ symbol: string; name: string; price: number; priceEur: number; currency: string; marketTime: string; venue?: string }>;
-        errors: Array<{ symbol: string }>;
-      };
-      const symbols = [...new Set(securities.map((item) => item.symbol!.trim().toUpperCase()))];
-      const result: QuoteResult = { quotes: [], errors: [] };
-      for (let start = 0; start < symbols.length; start += 20) {
-        const response = await fetch("/api/market/quotes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbols: symbols.slice(start, start + 20) }),
-        });
-        if (!response.ok) throw new Error("quote request failed");
-        const batch = await response.json() as QuoteResult;
-        result.quotes.push(...batch.quotes);
-        result.errors.push(...batch.errors);
-      }
-      const quotes = new Map(result.quotes.map((quote) => [quote.symbol, quote]));
-      const updates = new Map(plan.savings.flatMap((item) => {
-        const quote = item.kind === "security" && quotes.get(item.symbol?.trim().toUpperCase() ?? "");
-        if (!quote || (item.quoteUpdatedAt && Date.parse(quote.marketTime) < Date.parse(item.quoteUpdatedAt))) return [];
-        if (item.quoteUpdatedAt === quote.marketTime && item.price === quote.price && item.priceEur === quote.priceEur
-          && item.currency === quote.currency && item.quoteVenue === quote.venue) return [];
-        return [[item.id, { item, quote }] as const];
-      }));
-      const applyQuotes = (current: Plan): Plan => ({
-        ...current,
-        savings: current.savings.map((item) => {
-          const update = updates.get(item.id);
-          if (!update || item.kind !== "security") return item;
-          const { item: previous, quote } = update;
-          if (item.symbol !== previous.symbol || item.price !== previous.price || item.priceEur !== previous.priceEur
-            || item.quoteUpdatedAt !== previous.quoteUpdatedAt) return item;
-          return { ...item, price: quote.price, priceEur: quote.priceEur, currency: quote.currency, quoteUpdatedAt: quote.marketTime, quoteVenue: quote.venue };
-        }),
-      });
-      if (updates.size && !await persistPlan(applyQuotes(plan), remoteRevision, applyQuotes)) throw new Error("quote save failed");
-      setQuoteStatus(result.errors.length ? "error" : "updated");
-      setQuoteMessage(result.errors.length
-        ? `${result.quotes.length} von ${symbols.length} Kursen abgerufen.`
-        : `${result.quotes.length} Kurs${result.quotes.length === 1 ? "" : "e"} abgerufen.`);
-    } catch {
-      setQuoteStatus("error");
-      setQuoteMessage("Kurse konnten gerade nicht aktualisiert werden. Die zuletzt gespeicherten Werte bleiben erhalten.");
-    }
   }
 
   function updateList<T extends keyof Pick<Plan, "incomes" | "expenses" | "annualCosts" | "commitments" | "goals" | "savings" | "accounts">>(key: T, index: number, patch: Partial<Plan[T][number]>) {
@@ -780,7 +711,7 @@ export default function Home() {
   }
   if (editorScope === "savings" && editorTarget) {
     const saving = draft.savings.find((item) => item.id === editorTarget);
-    currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Börsensymbol und Stückzahl genügen. Den aktuellen Kurs kannst du anschließend automatisch abgleichen." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
+    currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Trage Stückzahl und Kurs je Stück in Euro ein." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
   }
 
   function showCosts(from: "home" | "month", category?: string) {
@@ -932,7 +863,7 @@ export default function Home() {
           <button className="savings-overview-card" type="button" onClick={openSavings} aria-label="Depot und Ersparnisse öffnen">
             <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
             {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
-            <small>{savingsMetrics.latestQuote ? `Letzter Kursabgleich ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Wertpapiere werden nach Symbol und Stückzahl bewertet"}</small>
+            <small>{savingsMetrics.latestQuote ? `Letzter Kursstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Wertpapiere werden mit dem eingetragenen Kurs bewertet"}</small>
           </button>
           <article className="detail-card goal-allocation"><div className="section-title compact"><div><p className="eyebrow">Machbarkeitscheck</p><h2>Was deine Termine erfordern</h2></div></div>{active.goals.map((goal) => <div className="allocation-line" key={goal.id}><span>{goal.name}<small>{goal.targetDate ? `bis ${new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T12:00:00`))}` : "ohne festen Termin"}</small></span><strong>{goal.targetDate ? `${euro(goalMonthlyNeed(goal))} / Monat` : "flexibel"}</strong></div>)}<div className="allocation-total"><span>Rechnerischer Bedarf aus Terminzielen</span><strong>{euro(metrics.goalNeed)}</strong></div><p className={`goal-feasibility ${metrics.goalNeed > metrics.available ? "warning" : ""}`}>{metrics.goalNeed === 0 ? "Ohne Zieldatum bleibt dein gesamter Überschuss frei verteilbar." : metrics.goalNeed <= metrics.available ? `Nach allen Terminzielen blieben rechnerisch ${euro(metrics.available - metrics.goalNeed)} pro Monat frei.` : `Die Terminziele übersteigen deinen Überschuss um ${euro(metrics.goalNeed - metrics.available)} pro Monat.`}</p></article>
         </section>}
@@ -1055,19 +986,19 @@ export default function Home() {
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>}
           </EditorSection>}
 
-          {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title="Depot & Ersparnisse" subtitle="Wertpapiere automatisch bewerten, andere Rücklagen manuell pflegen">
+          {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title="Depot & Ersparnisse" subtitle="Stückzahl und Kurs in Euro oder den aktuellen Sparstand eintragen">
             {draft.savings.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="saving-editor-item" key={item.id}>
               <div className={`editor-row ${item.kind === "security" ? "saving-security-edit" : "saving-balance-edit"}`}>
-                {item.kind === "security" ? <SecurityAutocomplete id={item.id} value={item.name} onChange={(value) => updateList("savings", index, { name: value })} onSelect={(suggestion) => updateList("savings", index, { name: suggestion.name, symbol: suggestion.symbol, price: 0, priceEur: 0, currency: "EUR", quoteUpdatedAt: undefined, quoteVenue: undefined })} /> : <input aria-label="Bezeichnung der Ersparnis" value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder="z. B. Notgroschen" />}
+                <input aria-label="Bezeichnung der Ersparnis" value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder={item.kind === "security" ? "Wertpapiername" : "z. B. Notgroschen"} />
                 <select aria-label="Art der Ersparnis" value={item.kind} onChange={(e) => updateList("savings", index, { kind: e.target.value as SavingKind })}>{Object.entries(savingKindLabels).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}</select>
                 {item.kind === "security" ? <>
                   <input aria-label="Börsensymbol" value={item.symbol ?? ""} onChange={(e) => updateList("savings", index, { symbol: e.target.value.toUpperCase() })} placeholder="Symbol, z. B. SAP.DE" autoCapitalize="characters" />
                   <DecimalInput signed={false} aria-label="Stückzahl" value={item.quantity} onValueChange={(value) => updateList("savings", index, { quantity: Math.max(value, 0) })} placeholder="Stückzahl" />
-                  <span className="currency-input"><DecimalInput signed={false} aria-label="Kurs in Euro" value={item.priceEur} onValueChange={(value) => updateList("savings", index, { priceEur: Math.max(value, 0), price: Math.max(value, 0), currency: "EUR", quoteUpdatedAt: undefined, quoteVenue: undefined })} placeholder="Kurs in EUR" /><b>€</b></span>
+                  <span className="currency-input"><DecimalInput signed={false} aria-label="Kurs in Euro" value={item.priceEur} onValueChange={(value) => updateList("savings", index, { priceEur: Math.max(value, 0), price: Math.max(value, 0), currency: "EUR", quoteUpdatedAt: new Date().toISOString(), quoteVenue: "Manuell" })} placeholder="Kurs in EUR" /><b>€</b></span>
                 </> : <span className="currency-input"><DecimalInput signed={false} aria-label="Aktueller Sparstand" value={item.balance} onValueChange={(value) => updateList("savings", index, { balance: Math.max(value, 0) })} placeholder="Aktueller Stand" /><b>€</b></span>}
                 <RemoveButton onClick={() => removeListItem("savings", index)} />
               </div>
-              {item.kind === "security" && <div className="saving-quote-hint"><span>Aktueller Wert <b>{euro(savingValue(item))}</b></span><small>{item.quoteUpdatedAt ? [marketPrice(item.price ?? 0, item.currency), item.quoteVenue, `Kurs vom ${dateTimeLabel(item.quoteUpdatedAt)}`].filter(Boolean).join(" · ") : item.symbol ? `${item.symbol} automatisch gewählt · Kurs nach dem Speichern aktualisierbar` : "Unternehmen suchen und aus der Liste auswählen"}</small></div>}
+              {item.kind === "security" && <div className="saving-quote-hint"><span>Aktueller Wert <b>{euro(savingValue(item))}</b></span><small>{item.quoteUpdatedAt ? [marketPrice(item.price ?? 0, item.currency), item.quoteVenue, `Kurs vom ${dateTimeLabel(item.quoteUpdatedAt)}`].filter(Boolean).join(" · ") : "Kurs je Stück in Euro eintragen"}</small></div>}
             </div>)}
             {!editorTarget && <div className="saving-add-actions"><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }] })}>Wertpapier</AddButton><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "dayMoney", balance: 0 }] })}>Sparform</AddButton></div>}
           </EditorSection>}
@@ -1098,16 +1029,15 @@ export default function Home() {
       {savingsOpen && <div className="modal-backdrop"><section className="savings-card" role="dialog" aria-modal="true" aria-labelledby="savings-title">
         <div className="editor-header"><div><p className="eyebrow">Vermögen & Depot</p><h2 id="savings-title">Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /><button type="button" className="close-button" onClick={() => setSavingsOpen(false)} aria-label="Schließen">×</button></div>
         <p>Getrennt vom Kontostand und der Monatsprognose.</p>
-        <div className="savings-toolbar"><button className="secondary-button" type="button" onClick={refreshQuotes} disabled={quoteStatus === "loading"}>{quoteStatus === "loading" ? "Kurse werden geladen …" : "Wertpapierkurse aktualisieren"}</button><div><button type="button" onClick={() => openFocusedEditor("savings", "security")}>+ Wertpapier</button><button type="button" onClick={() => openFocusedEditor("savings", "saving")}>+ Sparform</button></div></div>
+        <div className="savings-toolbar"><div><button type="button" onClick={() => openFocusedEditor("savings", "security")}>+ Wertpapier</button><button type="button" onClick={() => openFocusedEditor("savings", "saving")}>+ Sparform</button></div></div>
         {saveNotice}
-          {quoteMessage && <p className={`quote-status ${quoteStatus}`} role="status">{quoteMessage}</p>}
         <div className="savings-list">{savingsMetrics.items.length ? savingsMetrics.items.map((item) => <article key={item.id}>
           <i style={{ backgroundColor: savingKindColors[item.kind] }} />
-          <div><strong>{item.name || savingKindLabels[item.kind]}</strong><small>{item.kind === "security" ? `${item.symbol || "Symbol fehlt"} · ${item.quantity || 0} Stück${item.quoteUpdatedAt ? ` · ${marketPrice(item.price ?? 0, item.currency)} · ${item.quoteVenue || "Quelle nicht gespeichert"} · ${dateTimeLabel(item.quoteUpdatedAt)}` : ""}` : savingKindLabels[item.kind]}</small></div>
+          <div><strong>{item.name || savingKindLabels[item.kind]}</strong><small>{item.kind === "security" ? `${item.symbol ? item.symbol + " · " : ""}${item.quantity || 0} Stück${item.quoteUpdatedAt ? ` · ${marketPrice(item.price ?? 0, item.currency)} · ${item.quoteVenue || "Quelle nicht gespeichert"} · ${dateTimeLabel(item.quoteUpdatedAt)}` : ""}` : savingKindLabels[item.kind]}</small></div>
           <span><b>{euro(item.value)}</b><small>{savingsMetrics.total ? `${Math.round((item.value / savingsMetrics.total) * 100)}%` : "0%"}</small></span>
           <button className="edit-chip" type="button" onClick={() => openFocusedEditor("savings", undefined, item.id)}>Ändern</button>
         </article>) : <div className="savings-empty"><span>◇</span><strong>Noch keine Ersparnisse erfasst</strong><p>Füge dein erstes Wertpapier, Tagesgeldkonto oder eine andere Rücklage hinzu.</p></div>}</div>
-        <p className="market-note">Quelle und Handelszeit stehen am jeweiligen Kurs. Kurse von Yahoo Finance sind zeitverzögert. Marktwerte sind unverbindlich.</p>
+        <p className="market-note">Der Depotwert ergibt sich aus Stückzahl und eingetragenem Kurs in Euro.</p>
       </section></div>}
 
       {checkingIn && <div className="modal-backdrop"><section className="checkin-card" role="dialog" aria-modal="true" aria-labelledby="checkin-title">
@@ -1124,91 +1054,6 @@ export default function Home() {
       </section></div>}
     </main>
   );
-}
-
-function SecurityAutocomplete({ id, value, onChange, onSelect }: { id: string; value: string; onChange: (value: string) => void; onSelect: (suggestion: SecuritySuggestion) => void }) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const [suggestions, setSuggestions] = useState<SecuritySuggestion[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const listId = `security-suggestions-${id}`;
-
-  useEffect(() => {
-    const query = value.trim();
-    if (!open || query.length < 2) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/market/search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
-        if (!response.ok) throw new Error("search failed");
-        const result = await response.json() as { suggestions?: SecuritySuggestion[] };
-        const nextSuggestions = result.suggestions ?? [];
-        setSuggestions(nextSuggestions);
-        setActiveIndex(nextSuggestions.length ? 0 : -1);
-      } catch (searchError) {
-        if ((searchError as Error).name !== "AbortError") {
-          setSuggestions([]);
-          setError(true);
-        }
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    }, 240);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [open, value]);
-
-  function choose(suggestion: SecuritySuggestion) {
-    setOpen(false);
-    setSuggestions([]);
-    setActiveIndex(-1);
-    onSelect(suggestion);
-  }
-
-  return <div className="security-search-field">
-    <input
-      role="combobox"
-      aria-label="Aktie oder ETF suchen"
-      aria-autocomplete="list"
-      aria-expanded={open && value.trim().length >= 2}
-      aria-controls={listId}
-      aria-activedescendant={activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
-      value={value}
-      onChange={(event) => {
-        const nextValue = event.target.value;
-        onChange(nextValue);
-        setOpen(true);
-        if (nextValue.trim().length < 2) { setSuggestions([]); setLoading(false); setError(false); setActiveIndex(-1); }
-        else { setLoading(true); setError(false); }
-      }}
-      onFocus={() => { setOpen(true); if (value.trim().length >= 2) { setLoading(true); setError(false); } }}
-      onBlur={() => window.setTimeout(() => setOpen(false), 120)}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowDown" && suggestions.length) { event.preventDefault(); setActiveIndex((current) => Math.min(current + 1, suggestions.length - 1)); }
-        if (event.key === "ArrowUp" && suggestions.length) { event.preventDefault(); setActiveIndex((current) => Math.max(current - 1, 0)); }
-        if (event.key === "Enter" && activeIndex >= 0) { event.preventDefault(); choose(suggestions[activeIndex]); }
-        if (event.key === "Escape") setOpen(false);
-      }}
-      placeholder="Aktie oder ETF suchen"
-      autoComplete="off"
-    />
-    {open && value.trim().length >= 2 && <div className="security-suggestions" id={listId} role="listbox">
-      {loading ? <p>Wertpapiere werden gesucht …</p> : error ? <p>Suche gerade nicht erreichbar</p> : suggestions.length ? suggestions.map((suggestion, index) => <button
-        id={`${listId}-${index}`}
-        className={activeIndex === index ? "active" : ""}
-        type="button"
-        role="option"
-        aria-selected={activeIndex === index}
-        onMouseDown={(event) => event.preventDefault()}
-        onMouseEnter={() => setActiveIndex(index)}
-        onClick={() => choose(suggestion)}
-        key={`${suggestion.symbol}-${suggestion.exchange}`}
-      ><span>{suggestion.name.charAt(0).toUpperCase()}</span><div><strong>{suggestion.name}</strong><small>Handelsplatz wird automatisch gewählt</small></div><b>{suggestion.type}</b></button>) : <p>Kein passendes Wertpapier gefunden</p>}
-    </div>}
-  </div>;
 }
 
 function Brand() {

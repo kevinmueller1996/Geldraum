@@ -162,55 +162,6 @@ final class NjoraStore: ObservableObject {
         return await run(in: scope) { try await self.reload() }
     }
 
-    func search(_ query: String) async throws -> [SecuritySuggestion] { try await api.search(query) }
-
-    func refreshQuotes(ifNeeded: Bool = false) async {
-        guard state == .ready, let plan else { return }
-        if ifNeeded {
-            let cutoff = Date().addingTimeInterval(-15 * 60)
-            let staleSecurity = plan[.savings].contains { item in
-                item.fields.text("kind") == "security" && !item.fields.text("symbol").isEmpty
-                    && (PlanDate.parseTradeTime(item.fields.text("quoteUpdatedAt")) ?? .distantPast) < cutoff
-            }
-            guard staleSecurity else { return }
-        }
-        let symbols = Set(plan[.savings].filter { $0.fields.text("kind") == "security" }
-            .map { $0.fields.text("symbol").uppercased() }.filter { !$0.isEmpty }).sorted()
-        guard !symbols.isEmpty else { notices[.section(.savings)] = "Lege zuerst ein Wertpapier mit Börsensymbol an."; return }
-        await run(in: .section(.savings)) {
-            let quotes = try await self.api.quotes(symbols)
-            guard !quotes.isEmpty else {
-                self.notices[.section(.savings)] = "Für deine Wertpapiere ist gerade kein neuer Kurs verfügbar."
-                return
-            }
-            let bySymbol = Dictionary(quotes.map { ($0.symbol, $0) }, uniquingKeysWith: { first, _ in first })
-            var changed = plan
-            changed[.savings] = plan[.savings].map { item in
-                guard item.fields.text("kind") == "security",
-                      let quote = bySymbol[item.fields.text("symbol").uppercased()] else { return item }
-                if let previousTime = PlanDate.parseTradeTime(item.fields.text("quoteUpdatedAt")),
-                   let tradeTime = PlanDate.parseTradeTime(quote.marketTime), previousTime > tradeTime { return item }
-                var updated = item
-                updated.fields["price"] = .number(quote.price)
-                updated.fields["priceEur"] = .number(quote.priceEur)
-                updated.fields["currency"] = .string(quote.currency)
-                updated.fields["quoteUpdatedAt"] = .string(quote.marketTime)
-                updated.fields["quoteVenue"] = quote.venue.map(JSONValue.string)
-                return updated
-            }
-            if changed[.savings] != plan[.savings] {
-                try Task.checkCancellation()
-                // Once the write has started, finish it even if the depot view disappears.
-                let pending = Task { [changed, revision = self.revision, api = self.api] in
-                    try await api.save(changed, revision: revision)
-                }
-                self.revision = try await pending.value
-                self.plan = changed
-            }
-            self.notices[.section(.savings)] = "\(quotes.count) von \(symbols.count) Kursen abgerufen."
-        }
-    }
-
     func endSession(deleteAccount: Bool, in scope: NoticeScope = .account) async {
         await run(in: scope) {
             try await self.api.endSession(deleteAccount: deleteAccount)

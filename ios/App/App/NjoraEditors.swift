@@ -133,7 +133,6 @@ struct PlanEditor: View {
     @State private var item: PlanItem
     @State private var amounts: [String: String] = [:]
     @State private var validation = ""
-    @State private var showSearch = false
 
     init(section: PlanSection, item: PlanItem, plan: Plan, store: NjoraStore) {
         self.section = section
@@ -172,13 +171,7 @@ struct PlanEditor: View {
             }
             .onDisappear { store.clearNotice(in: .editor) }
             .interactiveDismissDisabled(store.busy)
-            .sheet(isPresented: $showSearch) {
-                SecuritySearchView(store: store) { result in
-                    if item.fields.text("symbol") != result.symbol { resetPrice() }
-                    item.fields["symbol"] = .string(result.symbol)
-                    item.fields["name"] = .string(result.name)
-                }
-            }
+
         }
     }
 
@@ -246,9 +239,8 @@ struct PlanEditor: View {
                     if item.fields.text("symbol") != $0.uppercased() { resetPrice() }
                     item.fields["symbol"] = .string($0.uppercased())
                 })).textInputAutocapitalization(.characters).autocorrectionDisabled()
-                Button("Wertpapier suchen") { showSearch = true }
                 amount("Stückzahl", key: "quantity", unit: "Stück")
-                LabeledAmount(label: "Letzter Kurs in EUR", amount: item.fields.amount("priceEur"))
+                amount("Kurs je Stück in Euro", key: "priceEur")
             } else {
                 amount("Aktueller Stand", key: "balance")
             }
@@ -304,6 +296,7 @@ struct PlanEditor: View {
     }
 
     private func resetPrice() {
+        amounts.removeValue(forKey: "priceEur")
         item.fields["price"] = .number(0)
         item.fields["priceEur"] = .number(0)
         item.fields["currency"] = .string("EUR")
@@ -332,10 +325,16 @@ struct PlanEditor: View {
         }
         if section == .savings && changed.fields.text("kind") == "security" {
             let symbol = changed.fields.text("symbol").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard symbol.range(of: #"^[A-Z0-9.^=_:-]{1,30}$"#, options: .regularExpression) != nil else {
+            guard symbol.isEmpty || symbol.range(of: #"^[A-Z0-9.^=_:-]{1,30}$"#, options: .regularExpression) != nil else {
                 validation = "Bitte gib ein gültiges Börsensymbol ein."; return
             }
             changed.fields["symbol"] = .string(symbol)
+            if amounts["priceEur"] != nil {
+                changed.fields["price"] = changed.fields["priceEur"]
+                changed.fields["currency"] = .string("EUR")
+                changed.fields["quoteVenue"] = .string("Manuell")
+                changed.fields["quoteUpdatedAt"] = .string(ISO8601DateFormatter().string(from: Date()))
+            }
             for key in ["quantity", "price", "priceEur"] where changed.fields[key] == nil {
                 changed.fields[key] = .number(0)
             }
@@ -355,52 +354,6 @@ struct PlanEditor: View {
 
 func editableAmount(_ value: Double) -> String {
     value.formatted(.number.grouping(.never).precision(.fractionLength(0...10)).locale(Locale(identifier: "de_DE")))
-}
-
-struct SecuritySearchView: View {
-    let store: NjoraStore
-    let choose: (SecuritySuggestion) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var query = ""
-    @State private var suggestions: [SecuritySuggestion] = []
-    @State private var message = ""
-
-    var body: some View {
-        NavigationStack {
-            List {
-                TextField("Name, ISIN oder Symbol", text: $query).autocorrectionDisabled()
-                Notice(text: message)
-                ForEach(suggestions) { item in
-                    Button {
-                        choose(item)
-                        dismiss()
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(item.name)
-                            Text("\(item.symbol) · \(item.exchangeName)").font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .planFormStyle()
-            .navigationTitle("Wertpapier suchen")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } } }
-            .task(id: query) {
-                let input = query.trimmingCharacters(in: .whitespacesAndNewlines)
-                suggestions = []
-                message = ""
-                guard (2...64).contains(input.count) else { return }
-                do {
-                    try await Task.sleep(for: .milliseconds(300))
-                    let result = try await store.search(input)
-                    try Task.checkCancellation()
-                    suggestions = result
-                    if result.isEmpty { message = "Keine Wertpapiere gefunden." }
-                } catch where Task.isCancelled { }
-                catch { message = "Die Wertpapiersuche ist gerade nicht erreichbar." }
-            }
-        }
-    }
 }
 
 struct CheckInView: View {

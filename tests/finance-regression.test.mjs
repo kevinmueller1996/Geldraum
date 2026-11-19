@@ -3,7 +3,6 @@ import test from "node:test";
 import { acceptsAmountEdit, parseAmount } from "../app/amount.ts";
 import { loanProjection } from "../app/loan-projection.ts";
 import { backupPlan } from "../app/plan-validation.ts";
-import { loadDelayedQuotes } from "../app/market/delayed.ts";
 
 test("German currency grouping agrees with the native input", () => {
   for (const [text, value] of [["40.000", 40000], ["-1.234,56", -1234.56], ["0.125", 0.125], ["7,95", 7.95], ["12.34,56", null], ["1e5", null]]) {
@@ -39,16 +38,6 @@ test("empty or damaged backups cannot replace a plan, older complete exports sti
   assert.deepEqual(backupPlan(plan), { ...plan, savings: [] });
   assert.equal(backupPlan({ ...plan, savings: null }), null);
   assert.equal(backupPlan({ ...plan, scenario: { cost: "kaputt" } }), null);
-});
-
-test("delayed quotes keep the trade time, and missing dates do not masquerade as fresh prices", async (t) => {
-  const meta = { symbol: "SAP.DE", regularMarketPrice: 200, currency: "EUR", regularMarketTime: 1700000000 };
-  t.mock.method(globalThis, "fetch", async () => Response.json({ chart: { result: [{ meta }] } }));
-  const [quote] = await loadDelayedQuotes(["SAP.DE"]);
-  assert.equal(quote.marketTime, new Date(1700000000000).toISOString());
-  assert.match(quote.venue, /Yahoo Finance.*zeitverzögert/);
-  delete meta.regularMarketTime;
-  assert.deepEqual(await loadDelayedQuotes(["SAP.DE"]), []);
 });
 
 test("recurring costs use monthly averages and the scheduled due months", async () => {

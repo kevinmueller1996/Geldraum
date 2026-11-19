@@ -118,10 +118,9 @@ Eine nur teilweise konfigurierte D1-Verbindung meldet einen Fehler.
 
 ## gettex-Kurse aktivieren
 
-Ohne konfigurierten gettex-Zugang verwendet Njora für die Suche und für herkömmliche Börsensymbole den bisherigen Yahoo-Finance-Abruf. Solche Kurse erscheinen mit Anbieter und Handelszeit als zeitverzögert. Fehlgeschlagene Abrufe lassen den letzten gespeicherten Kurs bestehen.
+In Web und iOS tragen Nutzer den Kurs je Stück in Euro selbst ein. Stückzahl und Kurs bestimmen den Depotwert. Die API liefert ohne freigeschalteten Zugang keine Marktdaten.
 
-Mit freigeschaltetem Zugang ruft Njora den letzten gettex-Handel über dxFeed REST ab. Web und iOS nutzen
-dasselbe Backend. Für den Betrieb muss der bereitgestellte Zugang die Nutzung
+Mit freigeschaltetem Zugang ruft Njora den letzten gettex-Handel über dxFeed REST ab. Für den Betrieb muss der bereitgestellte Zugang die Nutzung
 von gettex-Echtzeitdaten für externe Anzeige, Depotbewertung und die Speicherung
 des jeweils letzten Kurses im Finanzplan abdecken.
 

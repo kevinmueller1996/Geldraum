@@ -1,4 +1,3 @@
-import { searchDelayed } from "../../../market/delayed";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { findInstruments, hasGettexSettings, loadProfiles, marketConfig, marketUnavailable } from "../../../market/gettex";
@@ -18,7 +17,7 @@ export async function GET(request: NextRequest) {
   if (query.length < 2 || query.length > 64) return json({ suggestions: [] });
 
   try {
-    if (!hasGettexSettings(env)) return json({ suggestions: await searchDelayed(query), provider: "Yahoo Finance", delayed: true });
+    if (!hasGettexSettings(env)) return json({ suggestions: [], provider: null });
     const instruments = await loadProfiles(marketConfig(env));
     return json({ suggestions: findInstruments(instruments, query) });
   } catch {

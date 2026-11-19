@@ -26,23 +26,6 @@ struct AccountPayload: Decodable {
     let revision: Int?
 }
 
-struct SecuritySuggestion: Decodable, Identifiable {
-    let symbol: String
-    let name: String
-    let exchangeName: String
-    var id: String { symbol }
-}
-
-struct SecurityQuote: Decodable {
-    let symbol: String
-    let name: String
-    let price: Double
-    let priceEur: Double
-    let currency: String
-    let marketTime: String
-    let venue: String?
-}
-
 struct EmailAction: Identifiable {
     enum Kind { case confirmation, reset }
     let kind: Kind
@@ -170,23 +153,6 @@ actor NjoraAPI {
         struct Ended: Decodable { let deleted: Bool?; let signedOut: Bool? }
         let _: Ended = try await request(deleteAccount ? "/api/account" : "/api/auth/logout", method: deleteAccount ? "DELETE" : "POST")
         clearSession()
-    }
-
-    func search(_ query: String) async throws -> [SecuritySuggestion] {
-        struct Reply: Decodable { let suggestions: [SecuritySuggestion] }
-        let reply: Reply = try await request("/api/market/search", query: [URLQueryItem(name: "q", value: query)])
-        return reply.suggestions
-    }
-
-    func quotes(_ symbols: [String]) async throws -> [SecurityQuote] {
-        struct Reply: Decodable { let quotes: [SecurityQuote] }
-        var result: [SecurityQuote] = []
-        for start in stride(from: 0, to: symbols.count, by: 20) {
-            let chunk = symbols[start..<min(start + 20, symbols.count)]
-            let reply: Reply = try await request("/api/market/quotes", method: "POST", body: ["symbols": .array(chunk.map(JSONValue.string))])
-            result.append(contentsOf: reply.quotes)
-        }
-        return result
     }
 
     private func authenticate(_ path: String, fields: Record) async throws {

@@ -1,4 +1,3 @@
-import { loadDelayedQuotes } from "../../../market/delayed";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { gettexSymbol, hasGettexSettings, loadTrades, marketConfig, marketProvider, marketUnavailable } from "../../../market/gettex";
@@ -31,17 +30,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const eligible = symbols.filter((symbol) => gettexSymbol.test(symbol));
-    const others = symbols.filter((symbol) => !gettexSymbol.test(symbol));
-    const [trades, delayed] = await Promise.allSettled([
-      eligible.length && hasGettexSettings(env) ? loadTrades(marketConfig(env), eligible) : Promise.resolve([]),
-      loadDelayedQuotes(others),
-    ]);
-    const quotes = [...(trades.status === "fulfilled" ? trades.value : []), ...(delayed.status === "fulfilled" ? delayed.value : [])];
-    const found = new Set(quotes.map((quote) => quote.symbol));
-    const errors = symbols.filter((symbol) => !found.has(symbol)).map((symbol) => ({ symbol }));
-    if (!quotes.length) return json({ error: "Für die angefragten Wertpapiere ist kein Kurs verfügbar." }, 503);
-    return json({ quotes, errors, provider: others.length ? (eligible.length ? "Mehrere Anbieter" : "Yahoo Finance") : marketProvider,
-      delayed: quotes.some((quote) => quote.venue.includes("zeitverzögert")) });
+    if (!hasGettexSettings(env) || !eligible.length) {
+      return json({ quotes: [], errors: symbols.map(symbol => ({ symbol })), provider: null });
+    }
+    const quotes = await loadTrades(marketConfig(env), eligible);
+    const found = new Set(quotes.map(quote => quote.symbol));
+    return json({ quotes, errors: symbols.filter(symbol => !found.has(symbol)).map(symbol => ({ symbol })), provider: marketProvider });
   } catch {
     return json({ error: marketUnavailable }, 503);
   }

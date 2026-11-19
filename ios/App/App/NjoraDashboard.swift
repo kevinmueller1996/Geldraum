@@ -423,12 +423,6 @@ struct PlanSectionView: View {
                 if section == .history, !items.isEmpty {
                     Section("Kontostände im Verlauf") { BalanceChart(plan: plan) }
                 }
-                if section == .savings, items.contains(where: { $0.fields.text("kind") == "security" }) {
-                    Section {
-                        Button("Wertpapierkurse aktualisieren") { Task { await store.refreshQuotes() } }.disabled(store.busy)
-                        Text("Quelle und Handelszeit stehen am Kurs. Kurse von Yahoo Finance sind zeitverzögert.").font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
                 if !loans.isEmpty {
                     Section("Kredite") {
                         ForEach(loans) { loan in
@@ -493,9 +487,6 @@ struct PlanSectionView: View {
             .scrollContentBackground(.hidden).background(NjoraTheme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
             .financialTitle(category ?? section.title, amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
-            .task {
-                if section == .savings { await store.refreshQuotes(ifNeeded: true) }
-            }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     if section != .history {

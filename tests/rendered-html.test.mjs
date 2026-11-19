@@ -280,9 +280,8 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(page, /Njora starten/);
   assert.match(page, /function onboardingIssue/);
   assert.match(page, /Depot & Ersparnisse/);
-  assert.match(page, /Wertpapierkurse aktualisieren/);
-  assert.match(page, /aria-autocomplete="list"/);
-  assert.match(page, /Handelsplatz wird automatisch gewählt/);
+  assert.match(page, /Kurs in Euro/);
+  assert.doesNotMatch(page + quoteRoute + searchRoute, /finance\.yahoo|loadDelayedQuotes|searchDelayed/);
   assert.doesNotMatch(page, /localStorage\.setItem/);
   assert.match(page, /Account und Finanzdaten löschen/);
   assert.doesNotMatch(page + loginPage + route + quoteRoute + searchRoute, /signin-with-chatgpt|signout-with-chatgpt|getChatGPTUser/);
