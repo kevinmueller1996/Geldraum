@@ -41,7 +41,7 @@ export function isPlan(value: unknown): value is Record<string, unknown> {
       && (item.kind !== "security" || (isText(item.symbol, 30) && isMoney(item.quantity) && isMoney(item.price) && isMoney(item.priceEur) && isText(item.currency, 10)
         && (item.quoteUpdatedAt === undefined || isText(item.quoteUpdatedAt, 40))
         && (item.quoteVenue === undefined || isText(item.quoteVenue, 80)))))
-    && validList(value.accounts, 30, (item) => isText(item.id, 100) && isText(item.name, 120) && (item.type === "bank" || item.type === "credit" || item.type === "cash") && isMoney(item.balance)
+    && validList(value.accounts, 30, (item) => isText(item.id, 100) && isText(item.name, 120) && (item.type === "bank" || item.type === "credit" || item.type === "cash") && validBookingDay(item.bookingDay) && isMoney(item.balance)
       && (item.category === undefined || isText(item.category, 80))
       && (item.monthlyPayment === undefined || (isMoney(item.monthlyPayment) && Number(item.monthlyPayment) >= 0)))
     && validList(value.snapshots, 500, (item) => isText(item.id, 100) && isText(item.date, 20) && isRecord(item.balances) && Object.values(item.balances).every(isMoney) && isText(item.note, 500) && (item.netBalance === undefined || isMoney(item.netBalance)));

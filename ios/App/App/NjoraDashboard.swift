@@ -144,11 +144,14 @@ struct Overview: View {
 
 private struct ForecastDetail: View {
     @ObservedObject var store: NjoraStore
+    @State private var selectedCard: PlanItem?
     @State private var selectedEntry: ForecastEntry?
     @State private var checkingBalance = false
     var body: some View {
         if let plan = store.plan {
-            let forecast = PlanMetrics(plan: plan).forecast
+            let metrics = PlanMetrics(plan: plan)
+            let forecast = metrics.forecast
+            let cards = metrics.cardSettlements
             List {
                 Section("Rechnung ab heute") {
                     Button { checkingBalance = true } label: {
@@ -174,6 +177,20 @@ private struct ForecastDetail: View {
                         Text("Unten sind alle offenen Ausgaben berücksichtigt, oben alle offenen Einnahmen.").font(.footnote)
                     }
                 }
+                if !cards.isEmpty {
+                    Section {
+                        ForEach(cards, id: \.account.id) { card in
+                            Button { selectedCard = card.account } label: {
+                                HStack {
+                                    LabeledAmount(label: card.account.name, amount: card.account.fields.amount("balance"),
+                                                  detail: card.date.map { $0.formatted(.dateTime.day().month(.wide).year().locale(Locale(identifier: "de_DE"))) } ?? "Abbuchungstag offen")
+                                    disclosure
+                                }.contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    } header: { Text("Nächster Kreditkartenausgleich") }
+                    footer: { Text("Der offene Kartenbetrag ist im Nettokontostand bereits berücksichtigt.") }
+                }
                 Section {
                     Text("Die Rechnung setzt einen aktuellen Kontostand voraus. Frühere Fälligkeiten gelten als gebucht. Spätere zählen vollständig. Ungeplante Ausgaben sind offen.")
                     if let date = plan[.history].map({ $0.fields.text("date") }).max(), let last = PlanDate.parse(date) {
@@ -181,6 +198,7 @@ private struct ForecastDetail: View {
                     }
                 }.font(.footnote).foregroundStyle(.secondary)
             }
+            .sheet(item: $selectedCard) { PlanEditor(section: .accounts, item: $0, plan: plan, store: store) }
             .sheet(item: $selectedEntry) { entry in
                 PlanEditor(section: entry.section, item: entry.item, plan: plan, store: store)
             }
@@ -559,7 +577,7 @@ private struct PlanItemRow: View {
             fields.integer("bookingDay").flatMap { $0 > 0 ? "am " + String($0) + "." : nil },
             item.frequency == .monthly ? nil : monthNames[safe: fields.integer("month") ?? -1].map { "Fällig im " + $0 + (item.frequency == .quarterly ? " und alle drei Monate" : "") }
         ].compactMap { $0 }.joined(separator: " · ")
-        case .accounts: fields.text("type") == "credit" ? "Kreditkarte" : nil
+        case .accounts: fields.text("type") == "credit" ? ["Kreditkarte", item.bookingDayLabel.map { "Ausgleich " + $0 } ?? "Abbuchungstag offen"].joined(separator: " · ") : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
         case .loans: [item.loanCategory, euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
         case .goals:

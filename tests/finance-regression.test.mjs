@@ -179,3 +179,22 @@ test("insurance aliases merge across costs, loans and colors, preserving every p
   assert.deepEqual(clean.categoryColors, { Versicherungen: "b" });
   assert.deepEqual(normalizePlanCategories(clean), clean);
 });
+
+test("monthly credit card settlement dates use the local calendar without changing the net forecast", async () => {
+  const { upcomingCardSettlements, monthEndForecast } = await import("../app/recurring-costs.ts");
+  const account = { id: "card", name: "Karte", type: "credit", balance: 220, bookingDay: 31 };
+  const plan = { accounts: [account], incomes: [], expenses: [], annualCosts: [], commitments: [], name: "Plan", goals: [], snapshots: [] };
+  const feb = new Date(2028, 1, 29, 20);
+  const [settlement] = upcomingCardSettlements(plan.accounts, feb);
+  assert.equal(settlement.date.getTime(), new Date(2028, 1, 29).getTime());
+  const january = upcomingCardSettlements([{ ...account, bookingDay: 12 }], new Date(2026, 11, 18));
+  assert.equal(january[0].date.getTime(), new Date(2027, 0, 12).getTime());
+  assert.equal(upcomingCardSettlements([{ ...account, bookingDay: undefined }], feb)[0].date, null);
+  assert.deepEqual(upcomingCardSettlements([{ ...account, type: "bank" }, { ...account, balance: 0 }], feb), []);
+  const forecast = monthEndForecast(1000 - account.balance, feb, plan);
+  assert.deepEqual([forecast.low, forecast.datedBalance, forecast.high], [780, 780, 780]);
+  assert.equal(backupPlan(plan).accounts[0].bookingDay, 31);
+  for (const invalid of [-1, 32, 2.5, "12"]) {
+    assert.equal(backupPlan({ ...plan, accounts: [{ ...account, bookingDay: invalid }] }), null);
+  }
+});

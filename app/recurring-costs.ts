@@ -104,6 +104,25 @@ export function byTargetDate(a: { targetDate?: string }, b: { targetDate?: strin
 type ForecastItem = { id: string; name: string; bookingDay?: number };
 export type ForecastRow = { id: string; itemId: string; section: "income" | "expenses" | "loans"; name: string; amount: number; day: number; monthUnknown: boolean };
 
+type CardAccount = { id: string; name: string; type: string; balance: number; bookingDay?: number };
+
+export function upcomingCardSettlements(accounts: CardAccount[], today: Date) {
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  function nextDate(day: number | undefined) {
+    if (!day || !Number.isInteger(day) || day < 1 || day > 31) return null;
+    for (const offset of [0, 1]) {
+      const month = today.getMonth() + offset;
+      const last = new Date(today.getFullYear(), month + 1, 0).getDate();
+      const date = new Date(today.getFullYear(), month, Math.min(day, last));
+      if (date >= start) return date;
+    }
+    return null;
+  }
+  return accounts.filter(account => account.type === "credit" && account.balance > 0)
+    .map(account => ({ account, date: nextDate(account.bookingDay) }))
+    .sort((a, b) => (a.date?.getTime() ?? Infinity) - (b.date?.getTime() ?? Infinity) || a.account.name.localeCompare(b.account.name, "de"));
+}
+
 export function monthEndForecast(balance: number, today: Date, plan: {
   incomes: (ForecastItem & { amount: number; annual: boolean; month?: number })[];
   expenses: Expense[];

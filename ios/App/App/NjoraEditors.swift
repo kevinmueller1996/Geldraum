@@ -190,6 +190,7 @@ struct PlanEditor: View {
             }
             let card = item.fields.text("type") == "credit"
             amount(card ? "Offener Kartenbetrag" : "Aktueller Stand", key: "balance", signed: true, cardBalance: card)
+            if card { bookingDayPicker("Monatlicher Abbuchungstag") }
         case .income:
             amount("Betrag", key: "amount", signed: true)
             Toggle("Jährliche Einnahme", isOn: Binding(get: { item.fields.flag("annual") }, set: { value in
@@ -198,7 +199,7 @@ struct PlanEditor: View {
                 else { item.fields.removeValue(forKey: "month") }
             }))
             if item.fields.flag("annual") { monthPicker() }
-            bookingDayPicker
+            bookingDayPicker()
         case .expenses:
             Picker("Zahlungsrhythmus", selection: Binding(get: { item.frequency }, set: { frequency in
                 item.fields["frequency"] = .string(frequency.rawValue)
@@ -211,7 +212,7 @@ struct PlanEditor: View {
             amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true)
             if item.frequency != .monthly { monthPicker() }
             categoryPicker(default: "Wohnen")
-            bookingDayPicker
+            bookingDayPicker()
         case .annual:
             amount("Jahresbetrag", key: "amount", signed: true)
             monthPicker()
@@ -219,7 +220,7 @@ struct PlanEditor: View {
             categoryPicker(default: "Kreditraten")
             amount("Restschuld", key: "balance")
             amount("Monatsrate", key: "payment")
-            bookingDayPicker
+            bookingDayPicker()
             amount("Jahreszins", key: "interestRate", unit: "%")
             amount("Restlaufzeit", key: "termMonths", unit: "Monate", integer: true)
             amount("Monatliche Sondertilgung", key: "extraPayment")
@@ -285,8 +286,8 @@ struct PlanEditor: View {
         }.pickerStyle(.menu)
     }
 
-    private var bookingDayPicker: some View {
-        Picker("Buchungstag", selection: Binding(get: { item.fields.integer("bookingDay") ?? 0 }, set: { item.fields["bookingDay"] = .number(Double($0)) })) {
+    private func bookingDayPicker(_ label: String = "Buchungstag") -> some View {
+        Picker(label, selection: Binding(get: { item.fields.integer("bookingDay") ?? 0 }, set: { item.fields["bookingDay"] = .number(Double($0)) })) {
             Text("Kein fester Tag").tag(0)
             ForEach(1...31, id: \.self) { Text("\($0).").tag($0) }
         }
@@ -317,6 +318,7 @@ struct PlanEditor: View {
             validation = "Bitte gib eine Bezeichnung mit höchstens 120 Zeichen ein."; return
         }
         changed.fields["name"] = .string(name)
+        if section == .accounts && changed.fields.text("type") != "credit" { changed.fields.removeValue(forKey: "bookingDay") }
         for (key, value) in amounts {
             guard let number = germanAmount(value),
                   key != "termMonths" || (number >= 0 && number.rounded() == number),

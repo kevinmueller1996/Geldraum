@@ -399,6 +399,25 @@ struct PlanMetrics {
             $0.frequency != .monthly && $0.frequency.isDue(in: month, anchor: $0.fields.integer("month") ?? 0)
         }
     }
+    // Card balances are already deducted in net. Settlement changes the two account balances together.
+    var cardSettlements: [(account: PlanItem, date: Date?)] {
+        let start = calendar.startOfDay(for: today)
+        func nextDate(_ account: PlanItem) -> Date? {
+            guard let day = account.fields.integer("bookingDay"), (1...31).contains(day),
+                  let month = calendar.dateInterval(of: .month, for: start) else { return nil }
+            for first in [month.start, month.end] {
+                let last = calendar.range(of: .day, in: .month, for: first)?.count ?? 31
+                if let date = calendar.date(byAdding: .day, value: min(day, last) - 1, to: first), date >= start { return date }
+            }
+            return nil
+        }
+        return plan[.accounts].filter { $0.fields.text("type") == "credit" && $0.fields.amount("balance") > 0 }
+            .map { (account: $0, date: nextDate($0)) }
+            .sorted {
+                let first = $0.date ?? .distantFuture, second = $1.date ?? .distantFuture
+                return first == second ? $0.account.name.localizedStandardCompare($1.account.name) == .orderedAscending : first < second
+            }
+    }
     var forecast: MonthForecast {
         let day = calendar.component(.day, from: today)
         let lastDay = calendar.range(of: .day, in: .month, for: today)?.count ?? 31
