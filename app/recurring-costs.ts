@@ -41,17 +41,34 @@ export function normalizePlanCategories(plan: unknown) {
   return result;
 }
 
-export const frequencies = { monthly: "Monatlich", quarterly: "Quartalsweise", annual: "Jährlich" } as const;
+export const frequencies = { monthly: "Monatlich", quarterly: "Quartalsweise", annual: "Jährlich", once: "Einmalig" } as const;
 export type Frequency = keyof typeof frequencies;
 
-type ExpenseSchedule = { amount: number; frequency?: Frequency; month?: number };
+export type RateChange = { date: string; amount: number };
+type ExpenseSchedule = {
+  amount: number; frequency?: Frequency; month?: number; dueDate?: string; paid?: boolean; rateChanges?: RateChange[];
+};
 const intervalMonths = { monthly: 1, quarterly: 3, annual: 12 };
 
-export function monthlyExpense(item: ExpenseSchedule) {
-  return item.amount / intervalMonths[item.frequency ?? "monthly"];
+export function localISO(date: Date) {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
 
-export function isExpenseDue(item: ExpenseSchedule, month: number) {
+export function expenseAmount(item: ExpenseSchedule, day = localISO(new Date())) {
+  let amount = item.amount, latest = "";
+  for (const rate of item.rateChanges ?? []) {
+    if (rate.date <= day && rate.date > latest) { amount = rate.amount; latest = rate.date; }
+  }
+  return amount;
+}
+
+export function monthlyExpense(item: ExpenseSchedule, day?: string) {
+  if (item.frequency === "once") return 0;
+  return expenseAmount(item, day) / intervalMonths[item.frequency ?? "monthly"];
+}
+
+export function isExpenseDue(item: ExpenseSchedule, month: number, year = new Date().getFullYear()) {
+  if (item.frequency === "once") return !item.paid && item.dueDate?.slice(0, 7) === localISO(new Date(year, month, 1)).slice(0, 7);
   return (month - (item.month ?? 0)) % intervalMonths[item.frequency ?? "monthly"] === 0;
 }
 
@@ -84,7 +101,7 @@ export function storagePlan<T extends { expenses: Expense[]; annualCosts: Annual
   return { ...plan, annualCosts, expenses: plan.expenses.filter(item => !ids.has(item.id)) };
 }
 
-type DueEntry = { month?: number; bookingDay?: number; annual?: boolean; frequency?: Frequency };
+type DueEntry = { dueDate?: string; month?: number; bookingDay?: number; annual?: boolean; frequency?: Frequency };
 
 export function byDueDate(section: "expenses" | "annualCosts" | "incomes") {
   function monthOf(item: DueEntry) {
@@ -92,7 +109,10 @@ export function byDueDate(section: "expenses" | "annualCosts" | "incomes") {
       || (section === "incomes" && !item.annual);
     return monthly ? -1 : (item.month ?? 12);
   }
-  return (a: DueEntry, b: DueEntry) => monthOf(a) - monthOf(b) || (a.bookingDay || 32) - (b.bookingDay || 32);
+  return (a: DueEntry, b: DueEntry) => {
+    if (a.frequency === "once" && b.frequency === "once") return (a.dueDate ?? "").localeCompare(b.dueDate ?? "");
+    return monthOf(a) - monthOf(b) || (a.bookingDay || 32) - (b.bookingDay || 32);
+  };
 }
 
 export function byTargetDate(a: { targetDate?: string }, b: { targetDate?: string }) {
@@ -102,7 +122,7 @@ export function byTargetDate(a: { targetDate?: string }, b: { targetDate?: strin
 }
 
 type ForecastItem = { id: string; name: string; bookingDay?: number };
-export type ForecastRow = { id: string; itemId: string; section: "income" | "expenses" | "loans"; name: string; amount: number; day: number; monthUnknown: boolean };
+export type ForecastRow = { id: string; itemId: string; section: "income" | "expenses" | "loans"; name: string; amount: number; day: number; monthUnknown: boolean; dueDate?: string };
 
 type CardAccount = { id: string; name: string; type: string; balance: number; bookingDay?: number };
 
@@ -144,7 +164,18 @@ export function monthEndForecast(balance: number, today: Date, plan: {
     }
   }
   for (const item of plan.expenses) {
-    if (isExpenseDue(item, month)) include("expenses", item, -item.amount);
+    if (item.frequency === "once") {
+      if (!item.dueDate || item.paid) continue;
+      if (item.dueDate <= localISO(today)) {
+        uncertain.push({ id: "expenses:" + item.id, itemId: item.id, section: "expenses", name: item.name,
+          amount: -item.amount, day: Number(item.dueDate.slice(-2)), monthUnknown: false, dueDate: item.dueDate });
+      } else if (isExpenseDue(item, month, today.getFullYear())) {
+        include("expenses", { ...item, bookingDay: Number(item.dueDate.slice(-2)) }, -item.amount);
+      }
+    } else if (isExpenseDue(item, month, today.getFullYear())) {
+      const due = item.bookingDay ? Math.min(item.bookingDay, lastDay) : day;
+      include("expenses", item, -expenseAmount(item, localISO(new Date(today.getFullYear(), month, due))));
+    }
   }
   for (const loan of plan.commitments) include("loans", loan, -Math.max(0, loan.payment + (loan.extraPayment ?? 0)));
   scheduled.sort((a, b) => a.day - b.day);

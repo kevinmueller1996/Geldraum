@@ -17,7 +17,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { bookingDay?: number; id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
+import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, expenseAmount, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
 
 type Commitment = { bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -470,7 +470,7 @@ export default function Home() {
     const annualIncome = active.incomes.filter((item) => item.annual).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualIncome = active.incomes.filter((item) => item.annual && item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
     const payments = active.commitments.reduce((sum, item) => sum + monthlyLoanPayment(item), 0);
-    const fixedCosts = active.expenses.reduce((sum, item) => sum + monthlyExpense(item), payments);
+    const fixedCosts = active.expenses.reduce((sum, item) => sum + monthlyExpense(item, today), payments);
     const goalNeed = active.goals.reduce((sum, item) => sum + goalMonthlyNeed(item), 0);
     const available = income - fixedCosts;
     const unallocated = available;
@@ -500,9 +500,10 @@ export default function Home() {
       return group;
     }
     for (const item of active.expenses) {
+      if (item.frequency === "once") continue;
       const group = groupFor(item.category);
       group.expenses.push(item);
-      group.value += monthlyExpense(item);
+      group.value += monthlyExpense(item, today);
     }
     for (const loan of active.commitments) {
       const payment = monthlyLoanPayment(loan);
@@ -512,7 +513,7 @@ export default function Home() {
       group.value += payment;
     }
     return [...groups.values()].sort((a, b) => b.value - a.value || a.category.localeCompare(b.category, "de"));
-  }, [active.expenses, active.commitments, active.categoryColors]);
+  }, [active.expenses, active.commitments, active.categoryColors, today]);
 
   const savingsMetrics = useMemo(() => {
     const items = active.savings.map((item) => ({ ...item, value: savingValue(item) })).sort((a, b) => b.value - a.value);
@@ -566,7 +567,7 @@ export default function Home() {
     return <button className="detail-row forecast-entry" key={row.id} type="button"
       onClick={() => openFocusedEditor(row.section, undefined, target)}>
       <span>{dated ? `${row.day}. · ` : ""}{row.name}
-        {!dated && <small>{row.monthUnknown ? "Monat offen" : row.day ? "Heute fällig" : "Ohne Buchungstag"}</small>}
+        {!dated && <small>{row.dueDate ? "Offen · fällig am " + row.dueDate : row.monthUnknown ? "Monat offen" : row.day ? "Heute fällig" : "Ohne Buchungstag"}</small>}
       </span>
       <b>{exactEuros.format(row.amount)}</b><span aria-hidden="true">›</span>
     </button>;
@@ -989,15 +990,15 @@ export default function Home() {
                 <b>{exactEuros.format(monthlyLoanPayment(loan))}</b><span aria-hidden="true">›</span>
               </button>)}
             </article>}
-            {(["monthly", "quarterly", "annual"] as const).map(frequency => {
+            {(["monthly", "quarterly", "annual", "once"] as const).map(frequency => {
               const entries = costItems.filter(item => (item.frequency ?? "monthly") === frequency);
               if (!entries.length) return null;
-              const title = { monthly: "Monatliche Kosten", quarterly: "Quartalsweise Kosten", annual: "Jährliche Kosten" }[frequency];
+              const title = { monthly: "Monatliche Kosten", quarterly: "Quartalsweise Kosten", annual: "Jährliche Kosten", once: "Einmalige Rechnungen" }[frequency];
               return <article className="detail-card category-card" key={frequency}>
                 <h3>{title}</h3>
                 {entries.map(item => <button className="detail-row forecast-entry" type="button" key={item.id} onClick={() => openFocusedEditor("expenses", undefined, "item:" + item.id)}>
-                  <span>{item.name}<small>{item.category}{frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}{item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</small></span>
-                  <b>{exactEuros.format(item.amount)}</b><span aria-hidden="true">›</span>
+                  <span>{item.name}<small>{item.category}{frequency === "once" ? ` · ${item.dueDate} · ${item.paid ? "Beglichen" : "Offen"}` : frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}{frequency !== "once" && item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</small></span>
+                  <b>{exactEuros.format(expenseAmount(item, today))}</b><span aria-hidden="true">›</span>
                 </button>)}
               </article>;
             })}
@@ -1047,6 +1048,7 @@ export default function Home() {
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
           {billing && <article className="account-card"><BillingOffer billing={billing} /></article>}
+          <article className="account-card"><h3>ChatGPT</h3><a href="/api/chatgpt/manage">Verbindung verwalten</a></article>
           <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncLabel}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p>{billing && <p>Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.</p>}<label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
           <article className="privacy-card"><span>{cloudUser?.local ? "Lokale Entwicklung" : "Dein persönlicher Bereich"}</span><p>{cloudUser?.local ? "Auf localhost ist keine Anmeldung nötig. Die Daten bleiben in der lokalen Entwicklungsdatenbank und werden nicht mit einem Online-Account synchronisiert." : "Deine Finanzdaten werden deinem angemeldeten Account zugeordnet und zwischen deinen Geräten synchronisiert. Eine Bankverbindung ist nicht erforderlich."}</p></article>
           <LegalLinks />
@@ -1093,7 +1095,7 @@ export default function Home() {
             {onboardingStep === 3 && <>
               <p className="eyebrow">Fixkosten</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
               <div className="optional-note"><b>Optional</b><span>Du kannst direkt weitergehen.</span></div>
-              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
             </>}
 
@@ -1141,7 +1143,7 @@ export default function Home() {
 
           {(!editorScope || editorScope === "expenses" || editorScope === "specials") && <EditorSection id="editor-expenses" title="Fixkosten" subtitle="Betrag, Rhythmus und Fälligkeit">
             {editorTarget && !editorTarget.startsWith("item:") && <div className="category-color-editor"><div><span className="category-color-preview" style={{ backgroundColor: draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget] }} /><span><strong>Kategoriefarbe</strong><small>Für Diagramm und Monatsübersicht</small></span></div><label><input aria-label={`Farbe für ${editorTarget}`} type="color" value={draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget]} onChange={(e) => setDraft({ ...draft, categoryColors: { ...draft.categoryColors, [editorTarget]: e.target.value } })} /></label></div>}
-            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /><DecimalInput aria-label="Betrag je Zahlung" value={item.amount} onValueChange={(value) => updateList("expenses", index, { amount: value })} placeholder="Betrag je Zahlung" /><select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select><input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
+            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /><DecimalInput aria-label="Betrag je Zahlung" value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="Betrag je Zahlung" /><select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select>{item.frequency !== "once" && <input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" />}<ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
             {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget ?? "Wohnen", bookingDay: 0, ...(editorScope === "specials" ? { frequency: "annual" as const, month: currentMonth } : {}) }] })}>Ausgabe</AddButton>}
           </EditorSection>}
 
@@ -1270,9 +1272,19 @@ function ExpenseScheduleFields({ item, update }: { item: Expense; update: (patch
   return <div className="payment-fields">
     <label>Zahlungsrhythmus<select value={item.frequency ?? "monthly"} onChange={(event) => {
       const frequency = event.target.value as Frequency;
-      update({ frequency, month: frequency === "monthly" ? undefined : item.month ?? new Date().getMonth() });
+      update({ frequency, month: frequency === "quarterly" || frequency === "annual" ? item.month ?? new Date().getMonth() : undefined,
+        dueDate: frequency === "once" ? item.dueDate ?? localDay() : undefined, paid: frequency === "once" ? Boolean(item.paid) : undefined,
+        amount: expenseAmount(item), rateChanges: frequency === "monthly" ? item.rateChanges : undefined });
     }}>{Object.entries(frequencies).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-    {item.frequency && item.frequency !== "monthly" && <label>Fälligkeitsmonat<select value={item.month ?? 0} onChange={(event) => update({ month: Number(event.target.value) })}>
+    {item.frequency === "once" && <>
+      <label>Fälligkeit<input type="date" value={item.dueDate ?? ""} required onChange={event => update({dueDate: event.target.value})} /></label>
+      <label><input type="checkbox" checked={Boolean(item.paid)} onChange={event => update({paid: event.target.checked})} /> Bezahlt</label>
+    </>}
+    {item.rateChanges?.filter(rate => rate.date > localDay()).map(rate => <label key={rate.date}>Monatsbetrag ab {rate.date}
+      <DecimalInput value={rate.amount} onValueChange={amount => update({rateChanges: item.rateChanges?.map(r => r.date === rate.date ? {...r, amount} : r)})} />
+      <button type="button" onClick={() => update({rateChanges: item.rateChanges?.filter(r => r.date !== rate.date)})}>Änderung entfernen</button>
+    </label>)}
+    {(item.frequency === "annual" || item.frequency === "quarterly") && <label>Fälligkeitsmonat<select value={item.month ?? 0} onChange={(event) => update({ month: Number(event.target.value) })}>
       {months.map((label, index) => <option key={label} value={index}>{label}</option>)}
     </select></label>}
   </div>;

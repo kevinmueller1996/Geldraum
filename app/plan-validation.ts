@@ -14,8 +14,20 @@ function validBookingDay(day: unknown) {
   return day === undefined || (Number.isInteger(day) && Number(day) >= 0 && Number(day) <= 31);
 }
 
+export function validCalendarDay(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + "T12:00:00Z");
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 function validExpenseSchedule(item: Record<string, unknown>) {
   const frequency = item.frequency ?? "monthly";
+  if (item.rateChanges !== undefined) {
+    if (frequency !== "monthly" || !Array.isArray(item.rateChanges) || item.rateChanges.length > 60 ||
+      !item.rateChanges.every(rate => isRecord(rate) && validCalendarDay(rate.date) && isMoney(rate.amount)) ||
+      new Set(item.rateChanges.map(rate => rate.date)).size !== item.rateChanges.length) return false;
+  }
+  if (frequency === "once") return validCalendarDay(item.dueDate) && (item.paid === undefined || typeof item.paid === "boolean");
   return ["monthly", "quarterly", "annual"].includes(String(frequency))
     && ((frequency === "monthly" && item.month === undefined)
       || (Number.isInteger(item.month) && Number(item.month) >= 0 && Number(item.month) < 12));

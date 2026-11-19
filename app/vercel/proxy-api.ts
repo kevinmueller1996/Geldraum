@@ -17,7 +17,7 @@ export function needsCloudflareBackendProxy() {
   return configured === 0;
 }
 
-function backendOrigin() {
+export function backendOrigin() {
   const configured = process.env.GELDRAUM_BACKEND_ORIGIN?.trim();
   const origin = new URL(configured || DEFAULT_BACKEND_ORIGIN);
   if (origin.protocol !== "https:") throw new Error("The backend origin must use HTTPS");

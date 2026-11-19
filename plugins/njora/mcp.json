@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "njora": {
+      "type": "streamable-http",
+      "url": "https://njora.de/api/chatgpt/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": { "mode": "provided", "clientId": "njora-chatgpt", "tokenEndpointAuthMethod": "none" },
+            "baseScopes": ["njora:read"]
+          }
+        }
+      }
+    }
+  }
+}

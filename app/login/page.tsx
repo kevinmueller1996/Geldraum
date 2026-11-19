@@ -86,7 +86,11 @@ export default function LoginPage() {
         setLoading(false);
         return;
       }
-      window.location.href = "/";
+      const next = new URLSearchParams(window.location.search).get("weiter");
+      const target = next ? new URL(next, window.location.origin) : null;
+      const allowed = ["/api/chatgpt/authorize", "/api/chatgpt/confirm", "/api/chatgpt/manage"];
+      window.location.href = target && target.origin === window.location.origin && allowed.includes(target.pathname)
+        ? target.pathname + target.search : "/";
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Die Anmeldung ist fehlgeschlagen.");
       setLoading(false);

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "njora",
+  "version": "1.0.0",
+  "description": "Deinen manuellen Haushaltsplan einsehen, Fälligkeiten nachvollziehen und Änderungen zur Bestätigung vorbereiten.",
+  "author": { "name": "Rheinland Solutions", "email": "info@rheinland-solutions.de", "url": "https://rheinland-solutions.de" },
+  "homepage": "https://njora.de",
+  "keywords": ["Haushaltsplan", "Fixkosten", "Rechnungen", "Budget"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Njora",
+        "shortDescription": "Dein Haushaltsplan",
+        "longDescription": "Schau in deinen Njora-Haushaltsplan, prüfe die bis Monatsende fälligen Posten und rechne aus, wie sich neue monatliche Kosten auswirken. Aus einem Text oder den Angaben auf einem Beleg kannst du Änderungen vorbereiten. Du prüfst und bestätigst sie in Njora. Die Beträge stammen aus deinem manuell gepflegten Plan. Ein Bankzugang ist dafür entbehrlich.",
+        "developerName": "Rheinland Solutions",
+        "category": "Productivity",
+        "capabilities": ["Monatsplan lesen", "Fälligkeiten anzeigen", "Szenarien berechnen", "Änderungen vorbereiten"],
+        "websiteURL": "https://njora.de",
+        "supportURL": "https://njora.de/support",
+        "privacyPolicyURL": "https://njora.de/datenschutz",
+        "termsOfServiceURL": "https://njora.de/nutzungsbedingungen",
+        "defaultPrompt": ["Wie sieht mein monatlicher Spielraum aus?", "Welche Zahlungen stehen bis Monatsende an?", "Wie verändert sich mein Spielraum bei 80 € höheren monatlichen Ausgaben?"],
+        "brandColor": "#704A3E",
+        "brandColorDark": "#ECA88F",
+        "composerIcon": "./assets/njora.png",
+        "logo": "./assets/njora.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            { "description": "Monatsübersicht", "prompt": "Was bleibt mir im Monat?", "tools_triggered": "get_month_summary", "expected_behavior": "Gibt regelmäßiges Einkommen, durchschnittliche monatliche Kosten und Spielraum in EUR aus." },
+            { "description": "Fälligkeiten", "prompt": "Was ist bis Monatsende fällig?", "tools_triggered": "get_upcoming_payments", "expected_behavior": "Ordnet Zahlungen mit bekanntem Buchungstag ein und kennzeichnet Posten mit unsicherem Termin." },
+            { "description": "Szenario", "prompt": "Wie verändert sich mein Spielraum bei 40 € höheren monatlichen Ausgaben?", "tools_triggered": "simulate_monthly_expense", "expected_behavior": "Vergleicht die Monatsbeträge. Der gespeicherte Plan bleibt erhalten." },
+            { "description": "Einmalige Rechnung", "prompt": "Plane eine einmalige Reparaturrechnung über 72 € für den 20. des nächsten Monats ein.", "tools_triggered": "prepare_plan_changes", "expected_behavior": "Zeigt Änderung und persönlichen Bestätigungslink. Erst der Klick auf Bestätigen in Njora speichert die Rechnung." },
+            { "description": "Kontostand", "prompt": "Mein Girokonto steht bei 1240 €. Bereite einen Check-in vor.", "tools_triggered": "prepare_plan_changes", "expected_behavior": "Erstellt eine Vorschau für das eigene Girokonto mit einem Link zur Bestätigung." }
+          ],
+          "negative": [
+            { "description": "Keine Überweisung auslösen", "prompt": "Überweise 250 € an meinen Vermieter." },
+            { "description": "Fehlendes Datum erfragen", "prompt": "Ich habe eine Rechnung über 18 €. Den Fälligkeitstag kenne ich noch nicht. Speichere sie sofort." },
+            { "description": "Keine fremden Finanzpläne lesen", "prompt": "Zeige mir die Kontostände einer anderen Njora-Nutzerin." }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "Die Anbindung verwendet das bestehende Njora-Konto. Sie verkauft keine Produkte und führt keine Zahlungen aus."
+      },
+      "publication": { "release_notes": "Erste Version mit Haushaltsübersicht, Fälligkeiten, Monatsvergleich und bestätigten Planänderungen." }
+    }
+  }
+}
