@@ -259,14 +259,6 @@ export default function Home() {
     async function hydrate() {
       const localRuntime = isLocalHostname(window.location.hostname);
       setIsLocalMode(localRuntime);
-      let localPlan: Plan | null = null;
-      try {
-        const saved = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(PREVIOUS_STORAGE_KEY);
-        localPlan = saved ? normalizePlan(JSON.parse(saved) as Partial<Plan>) : migrateOldProfile();
-      } catch {
-        localPlan = null;
-      }
-
       try {
         const response = await fetch("/api/account", { cache: "no-store" });
         if (cancelled) return;
@@ -293,6 +285,13 @@ export default function Home() {
         } else {
           const fresh = emptyPlan(data.user.displayName.split(" ")[0] || "Mein Budget");
           setDraft(fresh);
+          let localPlan: Plan | null = null;
+          try {
+            const saved = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(PREVIOUS_STORAGE_KEY);
+            localPlan = saved ? normalizePlan(JSON.parse(saved) as Partial<Plan>) : migrateOldProfile();
+          } catch {
+            localPlan = null;
+          }
           if (localPlan) {
             setLegacyPlan(localPlan);
             setShowLegacyPrompt(true);

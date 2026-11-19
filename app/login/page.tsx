@@ -159,6 +159,7 @@ export default function LoginPage() {
           {error && <p className="login-error" role="alert">{error}</p>}
           {notice && <p className="login-notice" role="status">{notice}</p>}
           {needsVerification && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("resend-verification")}>Bestätigungs-E-Mail erneut senden</button>}
+          {mode === "register" && <small>Für dein kostenloses Konto gelten die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Hier findest du die <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</small>}
           <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Sicher anmelden" : local ? "Konto erstellen" : "Bestätigungslink senden"}<b>→</b></button>
           {mode === "login" && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("forgot-password")}>Passwort vergessen?</button>}
         </form>
@@ -193,7 +194,7 @@ export default function LoginPage() {
 
     <section className="privacy-section" id="datenschutz">
       <div><p className="marketing-eyebrow">Datenminimierung statt Bankzugriff</p><h2>Deine Zahlen brauchen<br /><em>keine Kontoverknüpfung.</em></h2><p>Für Njora reichen selbst eingetragene Namen und Beträge. Eine IBAN oder Verbindung zu deinem Onlinebanking ist nicht erforderlich.</p></div>
-      <ul><li><span>✓</span><div><strong>Kein Klartext-Passwort</strong><small>Passwörter werden verschlüsselt gehasht gespeichert.</small></div></li><li><span>✓</span><div><strong>Persönlich zugeordnet</strong><small>Deine Finanzdaten bleiben deinem Konto zugeordnet.</small></div></li><li><span>✓</span><div><strong>Exportierbar</strong><small>Du kannst deinen Finanzplan als Datei mitnehmen.</small></div></li><li><span>✓</span><div><strong>Löschbar</strong><small>Account und Finanzdaten lassen sich in der App löschen.</small></div></li></ul>
+      <ul><li><span>✓</span><div><strong>Kein Klartext-Passwort</strong><small>Wir speichern dein Passwort als gesalzenen Hash.</small></div></li><li><span>✓</span><div><strong>Persönlich zugeordnet</strong><small>Deine Finanzdaten bleiben deinem Konto zugeordnet.</small></div></li><li><span>✓</span><div><strong>Exportierbar</strong><small>Du kannst deinen Finanzplan als Datei mitnehmen.</small></div></li><li><span>✓</span><div><strong>Löschbar</strong><small>Account und Finanzdaten lassen sich in der App löschen.</small></div></li></ul>
     </section>
 
     <section className="landing-section test-cta-section">

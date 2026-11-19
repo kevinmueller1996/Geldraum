@@ -44,6 +44,7 @@ export default function ConfirmEmailPage() {
         <label>Passwort<input type="password" name="password" autoComplete="new-password" minLength={10} maxLength={72} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         <label>Passwort wiederholen<input type="password" name="password-confirmation" autoComplete="new-password" minLength={10} maxLength={72} required value={repeat} onChange={(event) => setRepeat(event.target.value)} /></label>
         {error && <p className="login-error" role="alert">{error}</p>}
+        <small>Mit dem Öffnen deines Kontos akzeptierst du die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Informationen zur Datenverarbeitung findest du im <a href="/datenschutz" target="_blank" rel="noopener">Datenschutz</a>.</small>
         <button className="auth-button" type="submit" disabled={loading}>{loading ? "Wird bestätigt …" : "Konto öffnen"}<b>→</b></button>
       </form>
     </section>

@@ -299,6 +299,9 @@ struct LoginView: View {
                         }
                     }
                 }.textFieldStyle(.roundedBorder)
+                if registering {
+                    Text("Für dein kostenloses Konto gelten die [AGB](https://njora.de/nutzungsbedingungen). Hier findest du die [Datenschutzerklärung](https://njora.de/datenschutz).").font(.footnote)
+                }
                 Button {
                     Task {
                         if registering { await store.mail(action: "register", email: email) }
@@ -361,6 +364,9 @@ struct EmailPasswordView: View {
                 SecureField("Passwort", text: $password).textContentType(.newPassword)
                 SecureField("Passwort wiederholen", text: $repeated).textContentType(.newPassword)
                 Notice(text: store.message)
+                if action.kind == .confirmation {
+                    Text("Mit dem Freischalten deines Kontos akzeptierst du die [AGB](https://njora.de/nutzungsbedingungen).").font(.footnote)
+                }
                 Button("Passwort speichern") {
                     Task { if await store.finish(action, password: password) { dismiss() } }
                 }.disabled(store.busy || password.utf16.count < 10 || password.utf8.count > 72 || password != repeated)
@@ -424,7 +430,7 @@ struct LegalLinksView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Link("Datenschutz", destination: URL(string: "https://njora.de/datenschutz")!)
-            Link("Nutzungsbedingungen", destination: URL(string: "https://njora.de/nutzungsbedingungen")!)
+            Link("AGB und Nutzungsbedingungen", destination: URL(string: "https://njora.de/nutzungsbedingungen")!)
             Link("Support", destination: URL(string: "https://njora.de/support")!)
             Link("Impressum", destination: URL(string: "https://njora.de/impressum")!)
         }.font(.footnote)

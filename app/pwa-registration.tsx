@@ -13,9 +13,14 @@ export default function PwaRegistration() {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
-    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    const enableOffline = () => {
+      if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    };
+    if (window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone) enableOffline();
+    window.addEventListener("appinstalled", enableOffline);
 
     return () => {
+      window.removeEventListener("appinstalled", enableOffline);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
