@@ -112,8 +112,13 @@ test("renders Njora locally without requiring authentication", async () => {
       body: JSON.stringify({ email, password }),
     });
     assert.equal(login.status, 200);
+    assert.equal((await login.json()).user.email, email);
     const loginCookie = login.headers.get("set-cookie") ?? "";
     assert.match(loginCookie, /geldraum_session=/);
+
+    const profileResponse = await fetch(baseUrl + "/api/account", { headers: { Cookie: loginCookie.split(";", 1)[0] } });
+    assert.equal(profileResponse.status, 200);
+    assert.equal((await profileResponse.json()).user.email, email);
 
     const deletion = await fetch(`${baseUrl}/api/account`, {
       method: "DELETE",

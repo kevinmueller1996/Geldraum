@@ -69,6 +69,7 @@ const ACTION_TOKENS_EXPIRY_INDEX_SQL = "CREATE INDEX IF NOT EXISTS auth_action_t
 export type SessionIdentity = {
   id: string;
   displayName: string;
+  email: string;
   emailMask: string;
   local: false;
 };
@@ -408,16 +409,16 @@ export async function getSessionIdentity(request: NextRequest): Promise<SessionI
   if (!token) return null;
   const db = await ensureAuthSchema();
   const tokenHash = bytesToBase64Url(await sha256(token));
-  const row = await db.prepare(`SELECT sessions.user_id, users.display_name, credentials.email_mask
+  const row = await db.prepare(`SELECT sessions.user_id, users.display_name, credentials.email_mask, credentials.email_address
     FROM auth_sessions AS sessions
     JOIN users ON users.id = sessions.user_id
     JOIN auth_credentials AS credentials ON credentials.user_id = sessions.user_id
     WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND credentials.password_salt = ?
       AND (? = 0 OR credentials.email_verified_at IS NOT NULL)`)
     .bind(tokenHash, new Date().toISOString(), PASSWORD_SCHEME, emailVerificationRequired() ? 1 : 0)
-    .first<{ user_id: string; display_name: string; email_mask: string }>();
+    .first<{ user_id: string; display_name: string; email_mask: string; email_address: string | null }>();
   if (!row) return null;
-  return { id: row.user_id, displayName: row.display_name, emailMask: row.email_mask, local: false };
+  return { id: row.user_id, displayName: row.display_name, email: row.email_address ?? row.email_mask, emailMask: row.email_mask, local: false };
 }
 
 export async function destroySession(request: NextRequest) {

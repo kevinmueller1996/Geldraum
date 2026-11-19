@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       await sendAuthEmail(result.email, result.verificationToken, "verify_email");
       return json({ verificationRequired: true, message: VERIFICATION_MESSAGE }, 202);
     }
-    const response = json({ authenticated: true, user: { displayName: result.emailMask, email: result.emailMask } }, 201);
+    const response = json({ authenticated: true, user: { displayName: result.emailMask, email } }, 201);
     setSessionCookie(response, result.token, request);
     return response;
   } catch (error) {

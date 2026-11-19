@@ -8,7 +8,7 @@ import { needsCloudflareBackendProxy, proxyApiRequest } from "../../vercel/proxy
 
 export const dynamic = "force-dynamic";
 
-type Identity = { id: string; displayName: string; emailMask: string; local: boolean };
+type Identity = { id: string; displayName: string; email: string; emailMask: string; local: boolean };
 
 const USER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY NOT NULL,
@@ -52,12 +52,12 @@ function isSameOrigin(request: NextRequest) {
 
 async function requestIdentity(request: NextRequest): Promise<Identity | null> {
   const authenticated = await getSessionIdentity(request);
-  if (authenticated) return { id: authenticated.id, displayName: authenticated.displayName, emailMask: authenticated.emailMask, local: false };
+  if (authenticated) return authenticated;
 
   const hostname = new URL(request.url).hostname;
   if (isLocalHostname(hostname)) {
     const email = "local-preview@geldraum.app";
-    return { id: await userId(email), displayName: "Lokale Version", emailMask: maskEmail(email), local: true };
+    return { id: await userId(email), displayName: "Lokale Version", email, emailMask: maskEmail(email), local: true };
   }
 
   return null;
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
     const result = await db.prepare("SELECT plan_json, revision, updated_at FROM finance_plans WHERE user_id = ?").bind(id).first<{ plan_json: string; revision: number; updated_at: string }>();
     return json({
       authenticated: true,
-      user: { displayName: identity.displayName, email: identity.emailMask, local: identity.local },
+      user: { displayName: identity.displayName, email: identity.email, local: identity.local },
       plan: result ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
       revision: result?.revision ?? null,
       updatedAt: result?.updated_at ?? null,

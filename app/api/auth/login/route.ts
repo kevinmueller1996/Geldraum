@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       if (result.error === "unverified") return json({ error: "Bitte bestätige zuerst deine E-Mail-Adresse.", code: "email_unverified" }, 403);
       return json({ error: "E-Mail-Adresse oder Passwort ist nicht korrekt." }, 401);
     }
-    const response = json({ authenticated: true, user: { displayName: result.emailMask, email: result.emailMask } });
+    const response = json({ authenticated: true, user: { displayName: result.emailMask, email } });
     setSessionCookie(response, result.token, request);
     return response;
   } catch (error) {

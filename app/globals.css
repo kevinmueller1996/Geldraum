@@ -1242,3 +1242,6 @@ button.forecast-entry { width: 100%; text-align: left; font: inherit; color: inh
 button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 0; background: transparent; font: inherit; }
 .month-link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .month-link:hover { filter: brightness(.96); }
+
+.account-card-head > div { min-width: 0; }
+.account-card-head strong { overflow-wrap: anywhere; }
