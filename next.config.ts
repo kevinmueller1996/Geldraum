@@ -42,6 +42,12 @@ const nextConfig: NextConfig = {
         { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
         { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
       ],
+    }, {
+      source: "/api/chatgpt/authorize",
+      headers: [
+        { key: "Content-Security-Policy", value: "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self' https://chatgpt.com/connector_platform_oauth_redirect; frame-ancestors 'none'; base-uri 'none'" },
+        { key: "Referrer-Policy", value: "no-referrer" },
+      ],
     }];
   },
 };
