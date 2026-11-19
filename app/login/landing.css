@@ -68,7 +68,10 @@
 .nj-faq summary::after { content: "+"; position: absolute; right: 2px; color: var(--rust); font-weight: 400; }
 .nj-faq details[open] summary::after { content: "−"; }
 .nj-faq details p { margin: 0 0 20px; }
-.nj-footer { border-top: 1px solid var(--rule); padding-block: 24px; display: flex; justify-content: space-between; gap: 1rem 2rem; align-items: baseline; flex-wrap: wrap; color: var(--sub); font-size: .9rem; }
+.nj-footer { border-top: 1px solid var(--rule); padding-block: 24px; display: flex; justify-content: space-between; gap: 1rem 2rem; align-items: center; flex-wrap: wrap; color: var(--sub); font-size: .9rem; }
+.nj-credit { display: inline-flex; align-items: center; gap: .55rem; white-space: nowrap; }
+.nj-credit a { display: inline-flex; align-items: center; min-height: 32px; }
+.nj-credit img { width: 112px; height: auto; display: block; }
 .nj-footer .legal-links { margin: 0; flex-wrap: wrap; display: flex; gap: .55rem 1rem; }
 .nj-footer .legal-links a { color: var(--sub); font-size: .9rem; padding: .3rem 0; }
 @media (max-width: 740px) {

@@ -169,6 +169,9 @@ export default function LoginPage() {
         <details><summary>Wie kündige ich mein Web-Abo?</summary><p>Du kannst dein Abo online kündigen. Wenn du während der Gratisphase zum Ende der Testzeit kündigst, fällt keine erste Monatszahlung an. <a href="/kuendigen">Zur Kündigung</a></p></details>
       </div>
     </section>
-    <footer className="nj-footer nj-wrap"><span>Njora · Rheinland Solutions</span><LegalLinks /></footer>
+    <footer className="nj-footer nj-wrap">
+      <span className="nj-credit">Njora by <a href="https://www.rheinland-solutions.de/"><img src="/rheinland-solutions.png" width="432" height="89" alt="Rheinland Solutions" /></a></span>
+      <LegalLinks />
+    </footer>
   </main>;
 }
