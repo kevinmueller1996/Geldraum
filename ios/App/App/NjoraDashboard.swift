@@ -219,28 +219,36 @@ struct MonthlyPlan: View {
         let metrics = PlanMetrics(plan: plan)
         List {
             Section("Monatsdurchschnitt") {
-                LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
-                LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
+                NavigationLink { PlanSectionView(section: .income, store: store) } label: {
+                    LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
+                }
+                NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
+                    LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
+                }
             }
             let categories = metrics.rankedCategories
             if !categories.isEmpty {
                 Section("Durchschnittliche Kosten je Kategorie") {
                     ForEach(categories, id: \.name) { category in
-                        VStack(alignment: .leading, spacing: 9) {
-                            LabeledAmount(label: category.name, amount: category.amount)
-                            GeometryReader { area in
-                                let largest = max(categories.first?.amount ?? 0, 0)
-                                let ratio = largest > 0 ? max(0, category.amount) / largest : 0
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(NjoraTheme.accent.opacity(0.14))
-                                    Capsule().fill(NjoraTheme.accent).frame(width: area.size.width * ratio)
+                        NavigationLink {
+                            PlanSectionView(section: .expenses, store: store, category: category.name)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 9) {
+                                LabeledAmount(label: category.name, amount: category.amount)
+                                GeometryReader { area in
+                                    let largest = max(categories.first?.amount ?? 0, 0)
+                                    let ratio = largest > 0 ? max(0, category.amount) / largest : 0
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(NjoraTheme.accent.opacity(0.14))
+                                        Capsule().fill(NjoraTheme.accent).frame(width: area.size.width * ratio)
+                                    }
                                 }
+                                .frame(height: 4)
+                                .accessibilityHidden(true)
                             }
-                            .frame(height: 4)
-                            .accessibilityHidden(true)
+                            .padding(.vertical, 5)
+                            .accessibilityElement(children: .combine)
                         }
-                        .padding(.vertical, 5)
-                        .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -363,6 +371,15 @@ private extension PlanMetrics {
 struct PlanSectionView: View {
     let section: PlanSection
     @ObservedObject var store: NjoraStore
+    var category: String? = nil
+    private func matches(_ name: String) -> Bool {
+        category.map { $0.caseInsensitiveCompare(name) == .orderedSame } ?? true
+    }
+    private var newItem: PlanItem {
+        var item = section.newItem
+        if let category { item.fields["category"] = .string(category) }
+        return item
+    }
     @State private var selection: PlanItem?
     @State private var selectedLoan: PlanItem?
     @State private var pendingRemoval: PlanItem?
@@ -370,12 +387,11 @@ struct PlanSectionView: View {
 
     var body: some View {
         if let plan = store.plan {
-            let items = plan.entriesByDueDate(in: section)
+            let items = plan.entriesByDueDate(in: section).filter { matches($0.expenseCategory) }
             let metrics = PlanMetrics(plan: plan)
             let total = metrics.titleTotal(for: section)
-            let loans = section == .expenses ? metrics.loansWithPayments : []
-            let annual = section == .expenses ? items.filter { $0.frequency == .annual } : []
-            let regular = section == .expenses ? items.filter { $0.frequency != .annual } : items
+            let loans = section == .expenses ? metrics.loansWithPayments.filter { matches($0.loanCategory) } : []
+            let categoryTotal = items.reduce(0) { $0 + $1.monthlyExpense } + loans.reduce(0) { $0 + $1.monthlyLoanPayment }
             List {
                 if section == .income {
                     Section {
@@ -392,7 +408,7 @@ struct PlanSectionView: View {
                     }
                 }
                 if !loans.isEmpty {
-                    Section("Kreditraten · monatlich") {
+                    Section("Kredite") {
                         ForEach(loans) { loan in
                             Button { selectedLoan = loan } label: {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -405,41 +421,48 @@ struct PlanSectionView: View {
                         }
                     }
                 }
-                if !annual.isEmpty {
-                    Section("Jährliche Fixkosten") {
-                        ForEach(annual) { entry in editableRow(entry) }
-                    }
-                }
-                Section {
-                    if items.isEmpty && loans.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(section.emptyMessage).font(.headline)
-                            if section == .history {
-                                if plan[.accounts].isEmpty {
-                                    NavigationLink("Konten verwalten") { PlanSectionView(section: .accounts, store: store) }
-                                } else {
-                                    Button("Ersten Check-in erfassen") { checkIn = true }
-                                }
-                            } else {
-                                Button(section.addTitle) { selection = section.newItem }
-                                    .disabled(store.busy)
+                if section == .expenses {
+                    ForEach(ExpenseFrequency.allCases, id: \.self) { frequency in
+                        let entries = items.filter { $0.frequency == frequency }
+                        if !entries.isEmpty {
+                            Section(frequency.sectionTitle) {
+                                ForEach(entries) { entry in editableRow(entry) }
                             }
                         }
-                        .padding(.vertical, 8)
-                        .listRowBackground(NjoraTheme.card)
                     }
-                    ForEach(section == .history ? Array(regular.reversed()) : regular) { item in
-                        if section == .history {
-                            let label = PlanDate.parse(item.fields.text("date"))?.formatted(date: .abbreviated, time: .omitted) ?? item.fields.text("date")
-                            VStack(alignment: .leading, spacing: 5) {
-                                LabeledAmount(label: label, amount: PlanMetrics(plan: plan).net(for: item))
-                                if !item.fields.text("note").isEmpty {
-                                    Text(item.fields.text("note")).font(.footnote).foregroundStyle(.secondary)
+                }
+                if section != .expenses || (items.isEmpty && loans.isEmpty) {
+                    Section {
+                        if items.isEmpty && loans.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(section.emptyMessage).font(.headline)
+                                if section == .history {
+                                    if plan[.accounts].isEmpty {
+                                        NavigationLink("Konten verwalten") { PlanSectionView(section: .accounts, store: store) }
+                                    } else {
+                                        Button("Ersten Check-in erfassen") { checkIn = true }
+                                    }
+                                } else {
+                                    Button(section.addTitle) { selection = newItem }
+                                        .disabled(store.busy)
                                 }
                             }
-                            .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
-                        } else {
-                            editableRow(item)
+                            .padding(.vertical, 8)
+                            .listRowBackground(NjoraTheme.card)
+                        }
+                        ForEach(section == .history ? Array(items.reversed()) : items) { item in
+                            if section == .history {
+                                let label = PlanDate.parse(item.fields.text("date"))?.formatted(date: .abbreviated, time: .omitted) ?? item.fields.text("date")
+                                VStack(alignment: .leading, spacing: 5) {
+                                    LabeledAmount(label: label, amount: PlanMetrics(plan: plan).net(for: item))
+                                    if !item.fields.text("note").isEmpty {
+                                        Text(item.fields.text("note")).font(.footnote).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
+                            } else {
+                                editableRow(item)
+                            }
                         }
                     }
                 }
@@ -447,15 +470,15 @@ struct PlanSectionView: View {
             }
             .scrollContentBackground(.hidden).background(NjoraTheme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
-            .financialTitle(section.title, amount: total.amount, caption: total.caption)
+            .financialTitle(category ?? section.title, amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
             .task {
                 if section == .savings { await store.refreshQuotes(ifNeeded: true) }
             }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     if section != .history {
-                        Button { selection = section.newItem } label: { Label(section.addTitle, systemImage: "plus") }
-                            .disabled(store.busy || items.count >= (section == .expenses ? section.limit + PlanSection.annual.limit : section.limit))
+                        Button { selection = newItem } label: { Label(section.addTitle, systemImage: "plus") }
+                            .disabled(store.busy || plan[section].count >= (section == .expenses ? section.limit + PlanSection.annual.limit : section.limit))
                             .accessibilityIdentifier("njora.add")
                     }
                     ProfileButton(store: store)
@@ -521,7 +544,7 @@ private struct PlanItemRow: View {
         case .income: fields.flag("annual")
             ? (monthNames[safe: fields.integer("month") ?? -1].map { "Jährlich im \($0)" } ?? "Jährlich · Monat offen")
             : "Monatlich"
-        case .expenses: [fields.text("category"), item.frequency.label,
+        case .expenses: [item.expenseCategory, item.frequency.label,
             fields.integer("bookingDay").flatMap { $0 > 0 ? "am " + String($0) + "." : nil },
             item.frequency == .monthly ? nil : monthNames[safe: fields.integer("month") ?? -1].map { "Fällig im " + $0 + (item.frequency == .quarterly ? " und alle drei Monate" : "") }
         ].compactMap { $0 }.joined(separator: " · ")

@@ -1237,3 +1237,8 @@ button.forecast-entry { width: 100%; text-align: left; font: inherit; color: inh
 .forecast-entry > b { margin-left: auto; white-space: nowrap; }
 .forecast-entry > span:last-child { opacity: .65; }
 .forecast-entry:hover, .forecast-entry:focus-visible { background: var(--surface, rgba(128, 128, 128, .08)); }
+
+.month-link { width: 100%; text-align: left; cursor: pointer; color: inherit; }
+button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 0; background: transparent; font: inherit; }
+.month-link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.month-link:hover { filter: brightness(.96); }

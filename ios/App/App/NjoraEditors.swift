@@ -273,8 +273,8 @@ struct PlanEditor: View {
 
     private func categoryPicker(default fallback: String) -> some View {
         let base = standardExpenseCategories + (section == .loans ? ["Kreditraten"] : [])
-        let used = plan[.expenses].map { $0.fields.text("category") } + plan[.loans].compactMap { $0.fields["category"]?.string }
-        let selected = section == .loans ? item.loanCategory : item.fields.text("category", default: fallback)
+        let used = plan[.expenses].map(\.expenseCategory) + plan[.loans].map(\.loanCategory)
+        let selected = item.costCategory(default: fallback)
         var seen = Set<String>()
         let options = (base + (used + [selected]).sorted()).filter {
             !$0.isEmpty && seen.insert($0.lowercased()).inserted

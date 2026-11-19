@@ -6,6 +6,7 @@ export function expenseCategoryResolver() {
   return (raw: string) => {
     const label = raw.normalize("NFC").replace(/[\u00ad\u200b\u2060\ufeff]/gu, "").trim().replace(/\s+/gu, " ") || "Sonstige";
     const key = label.toLocaleLowerCase("de");
+    if (key === "versicherung") return "Versicherungen";
     if (key.replaceAll(" ", "") === "unterhaltung") return "Unterhaltung";
     const display = labels.get(key) ?? label;
     labels.set(key, display);

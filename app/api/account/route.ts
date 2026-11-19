@@ -132,7 +132,7 @@ export async function PUT(request: NextRequest) {
   try {
     const body = await request.json() as { plan?: unknown; revision?: number | null };
     if (!isPlan(body.plan)) return json({ error: "Ungültiger Finanzplan." }, 400);
-    const planJson = JSON.stringify(body.plan);
+    const planJson = JSON.stringify(normalizePlanCategories(body.plan));
     if (new TextEncoder().encode(planJson).byteLength > 500_000) return json({ error: "Der Finanzplan ist zu groß." }, 413);
 
     const { db, id, now } = await upsertUser(identity);

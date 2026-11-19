@@ -2,7 +2,6 @@
 
 import { Capacitor } from "@capacitor/core";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { backupPlan } from "./plan-validation";
 import DecimalInput from "./decimal-input";
@@ -12,7 +11,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { bookingDay?: number; id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, standardExpenseCategories as categories, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
+import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
 
 type Commitment = { bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -177,12 +176,14 @@ function orderedPlan(plan: Plan): Plan {
     incomes: [...plan.incomes].sort(byDueDate("incomes")),
     expenses: unifiedExpenses(plan.expenses, plan.annualCosts).sort(byDueDate("expenses")),
     annualCosts: [],
+    commitments: [...plan.commitments].sort((a, b) => b.balance - a.balance || a.name.localeCompare(b.name, "de")),
     goals: [...plan.goals].sort(byTargetDate),
   };
 }
 
 function normalizePlan(value: Partial<Plan>): Plan {
   const base = emptyPlan(value.name ?? "");
+  const categoryName = expenseCategoryResolver();
   return {
     ...base,
     ...value,
@@ -190,7 +191,7 @@ function normalizePlan(value: Partial<Plan>): Plan {
     incomes: (value.incomes ?? base.incomes).map((item) => ({ ...item, month: item.annual ? item.month : undefined })),
     expenses: unifiedExpenses(value.expenses ?? base.expenses, value.annualCosts ?? []).map((item) => ({ ...item, bookingDay: item.bookingDay ?? 0 })),
     annualCosts: [],
-    commitments: (value.commitments ?? []).map((item) => ({ ...item, interestRate: item.interestRate ?? 0, termMonths: item.termMonths ?? 0, extraPayment: item.extraPayment ?? 0 })),
+    commitments: (value.commitments ?? []).map((item) => ({ ...item, ...(item.category && { category: categoryName(item.category.trim() || "Kreditraten") }), interestRate: item.interestRate ?? 0, termMonths: item.termMonths ?? 0, extraPayment: item.extraPayment ?? 0 })),
     goals: (value.goals ?? []).map((item) => ({ ...item, targetDate: item.targetDate ?? "" })),
     savings: (value.savings ?? []).map((item) => ({
       ...item,
@@ -235,6 +236,7 @@ export default function Home() {
   const [quoteStatus, setQuoteStatus] = useState<QuoteStatus>("idle");
   const [quoteMessage, setQuoteMessage] = useState("");
   const [showForecast, setShowForecast] = useState(false);
+  const [costDetail, setCostDetail] = useState<{ category?: string; from: "home" | "month" }>({ from: "home" });
   const [activeView, setActiveView] = useState<View>("home");
   const [checkInAccounts, setCheckInAccounts] = useState<Account[]>([]);
   const [checkInDate, setCheckInDate] = useState("");
@@ -423,7 +425,7 @@ export default function Home() {
     let nextTarget = target ?? null;
     if (add === "account") next.accounts.push({ id: uid(), name: "", type: "bank", balance: 0 });
     if (add === "income") next.incomes.push({ id: uid(), name: "", amount: 0, annual: false, month: undefined });
-    if (add === "expense") { const id = uid(); next.expenses.push({ id, name: "", amount: 0, category: target && categories.includes(target) ? target : "Lebenshaltung", bookingDay: 0 }); nextTarget = target && categories.includes(target) ? target : `item:${id}`; }
+    if (add === "expense") { const id = uid(); next.expenses.push({ id, name: "", amount: 0, category: target ?? "Lebenshaltung", bookingDay: 0 }); nextTarget = `item:${id}`; }
     if (add === "loan") { const id = uid(); next.commitments.push({ id, name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }); nextTarget = id; }
     if (add === "goal") { const id = uid(); next.goals.push({ id, name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }); nextTarget = id; }
     if (add === "security") { const id = uid(); next.savings.push({ id, name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }); nextTarget = id; }
@@ -739,6 +741,12 @@ export default function Home() {
     ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
   ];
   const monthOutflows = groupedExpenses.map(({ category: label, value, color }) => ({ label, value, color }));
+  const selectedCostGroup = groupedExpenses.find(group => group.category === costDetail.category);
+  const costItems = costDetail.category ? selectedCostGroup?.expenses ?? [] : active.expenses;
+  const costLoans = (costDetail.category ? selectedCostGroup?.loans ?? [] : active.commitments)
+    .filter(loan => monthlyLoanPayment(loan) > 0)
+    .sort((a, b) => monthlyLoanPayment(b) - monthlyLoanPayment(a) || a.name.localeCompare(b.name, "de"));
+
   const editorCopy: Record<EditorScope, { eyebrow: string; title: string; intro: string }> = {
     accounts: { eyebrow: "Konten & Karten", title: "Konten bearbeiten", intro: "Passe ausschließlich deine Konten und Karten an. Aktuelle Stände pflegst du weiterhin am schnellsten über den Check-in." },
     income: { eyebrow: "Einkommen", title: "Einkommen bearbeiten", intro: "Pflege hier ausschließlich deine monatlichen und jährlichen Einkommensquellen. Jahreszuflüsse erscheinen nur in ihrem hinterlegten Monat." },
@@ -772,6 +780,11 @@ export default function Home() {
   if (editorScope === "savings" && editorTarget) {
     const saving = draft.savings.find((item) => item.id === editorTarget);
     currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Börsensymbol und Stückzahl genügen. Den aktuellen Kurs kannst du anschließend automatisch abgleichen." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
+  }
+
+  function showCosts(from: "home" | "month", category?: string) {
+    setCostDetail({ from, category });
+    navigate("expenses");
   }
 
   function navigate(view: View) {
@@ -814,7 +827,7 @@ export default function Home() {
           </button>
           <div className="dashboard-metrics">
             <button type="button" onClick={() => openFocusedEditor("income")}><span>Einkommen im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
-            <button type="button" onClick={() => navigate("expenses")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
+            <button type="button" onClick={() => showCosts("home")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
             <button type="button" aria-expanded={showForecast} aria-controls="forecast-detail" onClick={() => setShowForecast(!showForecast)}>
               <span>Prognose zum Monatsende</span><strong>{metrics.forecast.uncertain.length ? "Spanne ansehen" : exactEuros.format(metrics.forecast.datedBalance)}</strong>
             </button>
@@ -845,48 +858,43 @@ export default function Home() {
 
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
-          <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} /><SummaryCard label="Geplante Abflüsse" value={metrics.fixedCosts} tone="coral" /></div>
+          <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label="Fixkosten" value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
           <article className="detail-card flow-detail">
             <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Durchschnittliche Kosten je Kategorie</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.fixedCosts / metrics.income) * 100) : 0}% verplant</span></div></div>
             <div className="stacked-bar" aria-label="Verteilung der geplanten Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${metrics.fixedCosts ? (item.value / metrics.fixedCosts) * 100 : 0}%`, backgroundColor: item.color }} key={item.label} />)}</div>
             <div className="flow-list">{monthOutflows.map((item) => {
               const percent = metrics.fixedCosts ? Math.round((item.value / metrics.fixedCosts) * 100) : 0;
-              return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}<small>{percent}%</small></b></div>;
+              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}<small>{percent}%</small></b><span aria-hidden="true">›</span></button>;
             })}</div>
           </article>
         </section>}
 
         {activeView === "expenses" && <section className="view" aria-labelledby="expenses-title">
-          <button type="button" className="edit-chip" onClick={() => navigate("home")}>‹ Heute</button>
-          <div className="section-title financial-heading"><h2 id="expenses-title">Fixkosten</h2><TitleAmount value={metrics.fixedCosts} label="Ø pro Monat" /></div>
+          <button type="button" className="edit-chip" onClick={() => navigate(costDetail.from)}>‹ {costDetail.from === "month" ? "Monatsplan" : "Heute"}</button>
+          <div className="section-title financial-heading"><h2 id="expenses-title">{costDetail.category ?? "Fixkosten"}</h2><TitleAmount value={costDetail.category ? selectedCostGroup?.value ?? 0 : metrics.fixedCosts} label="Ø pro Monat" /></div>
           <div className="category-details">
-            {groupedExpenses.filter(group => group.expenses.some(item => item.frequency !== "annual") || group.loans.length).map(group => (
-              <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}>
-                <div className="category-head">
-                  <div><span className="category-label"><i style={{ backgroundColor: group.color }} />Kategorie</span><h3>{group.category}</h3></div>
-                  <div><strong>{euro(group.value - group.expenses.filter(item => item.frequency === "annual").reduce((sum, item) => sum + monthlyExpense(item), 0), true)} / Monat</strong>
-                    {group.expenses.length > 0 && <button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, group.expenses[0].category)}>Ändern</button>}
-                  </div>
-                </div>
-                {group.expenses.filter(item => item.frequency !== "annual").map(item => <div className="detail-row" key={`expense-${item.id}`}>
-                  <span>{item.name}<small>{frequencies[item.frequency ?? "monthly"]}{item.frequency && item.frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}</small>{item.bookingDay ? <small>Buchung am {item.bookingDay}.</small> : null}</span><b>{euro(item.amount)}</b>
-                </div>)}
-                {[...group.loans].sort((a, b) => (a.bookingDay || 32) - (b.bookingDay || 32)).map(loan => <div className="detail-row" key={`loan-${loan.id}`}>
-                  <span>{loan.name}<small>Monatliche Kreditrate{loan.bookingDay ? ` · am ${loan.bookingDay}.` : ""}</small></span>
-                  <b>{euro(monthlyLoanPayment(loan))}</b>
-                  <button className="edit-chip" type="button" aria-label={`${loan.name} bearbeiten`} onClick={() => openFocusedEditor("loans", undefined, loan.id)}>Ändern</button>
-                </div>)}
-              </article>
-            ))}
-            {active.expenses.some(item => item.frequency === "annual") && <article className="detail-card category-card">
-              <div className="category-head"><h3>Jährliche Fixkosten</h3></div>
-              {active.expenses.filter(item => item.frequency === "annual").map(item => <div className="detail-row" key={item.id}>
-                <span>{item.name}<small>{item.category} · {months[item.month ?? 0]}{item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</small></span>
-                <b>{exactEuros.format(item.amount)} / Jahr</b>
-                <button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, "item:" + item.id)}>Ändern</button>
-              </div>)}
+            {costLoans.length > 0 && <article className="detail-card category-card">
+              <h3>Kredite</h3>
+              {costLoans.map(loan => <button className="detail-row forecast-entry" type="button" key={loan.id} onClick={() => openFocusedEditor("loans", undefined, loan.id)}>
+                <span>{loan.name}<small>{loan.category || "Kreditraten"} · Monatsrate{loan.bookingDay ? ` · am ${loan.bookingDay}.` : ""}</small></span>
+                <b>{exactEuros.format(monthlyLoanPayment(loan))}</b><span aria-hidden="true">›</span>
+              </button>)}
             </article>}
-            <button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense")}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button></div>
+            {(["monthly", "quarterly", "annual"] as const).map(frequency => {
+              const entries = costItems.filter(item => (item.frequency ?? "monthly") === frequency);
+              if (!entries.length) return null;
+              const title = { monthly: "Monatliche Kosten", quarterly: "Quartalsweise Kosten", annual: "Jährliche Kosten" }[frequency];
+              return <article className="detail-card category-card" key={frequency}>
+                <h3>{title}</h3>
+                {entries.map(item => <button className="detail-row forecast-entry" type="button" key={item.id} onClick={() => openFocusedEditor("expenses", undefined, "item:" + item.id)}>
+                  <span>{item.name}<small>{item.category}{frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}{item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</small></span>
+                  <b>{exactEuros.format(item.amount)}</b><span aria-hidden="true">›</span>
+                </button>)}
+              </article>;
+            })}
+            {costDetail.category && <button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses", undefined, costDetail.category)}>Kategorie bearbeiten</button>}
+            <button className="add-card" type="button" onClick={() => openFocusedEditor("expenses", "expense", costDetail.category)}><span>+</span><strong>Neue Ausgabe</strong><small>Betrag, Kategorie und optional Buchungstag</small></button>
+          </div>
         </section>}
 
         {activeView === "loans" && <section className="view" aria-labelledby="loans-title">
@@ -1216,7 +1224,8 @@ function ViewHeader({ id, eyebrow, title, copy, total }: { id: string; eyebrow: 
     <p>{copy}</p></header>;
 }
 
-function SummaryCard({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {
+function SummaryCard({ label, value, tone = "", onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) {
+  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} ›</span><strong>{exactEuros.format(value)}</strong></button>;
   return <article className={`summary-card ${tone}`}><span>{label}</span><strong>{euro(value)}</strong></article>;
 }
 

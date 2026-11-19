@@ -161,6 +161,11 @@ struct Plan: Codable, Equatable {
                 return (month, day > 0 ? day : 32)
             }
             return items.sorted { dueKey($0) < dueKey($1) }
+        case .loans:
+            return items.sorted {
+                let left = $0.fields.amount("balance"), right = $1.fields.amount("balance")
+                return left == right ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : left > right
+            }
         case .goals:
             return items.sorted {
                 let first = $0.fields.text("targetDate"), second = $1.fields.text("targetDate")
@@ -193,6 +198,13 @@ struct Plan: Codable, Equatable {
 enum ExpenseFrequency: String, CaseIterable {
     case monthly, quarterly, annual
 
+    var sectionTitle: String {
+        switch self {
+        case .monthly: "Monatliche Kosten"
+        case .quarterly: "Quartalsweise Kosten"
+        case .annual: "Jährliche Kosten"
+        }
+    }
     var months: Int {
         switch self { case .monthly: 1; case .quarterly: 3; case .annual: 12 }
     }
@@ -212,10 +224,16 @@ struct PlanItem: Identifiable, Equatable {
     var id: String { fields.text("id") }
     var name: String { fields.text("name") }
     var frequency: ExpenseFrequency { ExpenseFrequency(rawValue: fields.text("frequency")) ?? .monthly }
-    var loanCategory: String {
-        let name = fields.text("category").trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? "Kreditraten" : name
+    func costCategory(default fallback: String) -> String {
+        let label = fields.text("category").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        switch label.lowercased() {
+        case "": return fallback
+        case "versicherung", "versicherungen": return "Versicherungen"
+        default: return label
+        }
     }
+    var expenseCategory: String { costCategory(default: "Sonstige") }
+    var loanCategory: String { costCategory(default: "Kreditraten") }
     var bookingDayLabel: String? {
         guard let day = fields.integer("bookingDay"), day > 0 else { return nil }
         return "am \(day)."
@@ -360,7 +378,7 @@ struct PlanMetrics {
             if labels[key] == nil { labels[key] = name }
             totals[key, default: 0] += amount
         }
-        for item in plan[.expenses] { add(item.fields.text("category"), amount: item.monthlyExpense) }
+        for item in plan[.expenses] { add(item.expenseCategory, amount: item.monthlyExpense) }
         for loan in loansWithPayments { add(loan.loanCategory, amount: loan.monthlyLoanPayment) }
         return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value) }.sorted {
             if $0.amount != $1.amount { return $0.amount > $1.amount }
@@ -369,9 +387,8 @@ struct PlanMetrics {
     }
     var loansWithPayments: [PlanItem] {
         plan[.loans].filter { $0.monthlyLoanPayment > 0 }.sorted {
-            let first = $0.fields.integer("bookingDay") ?? 0
-            let second = $1.fields.integer("bookingDay") ?? 0
-            return (first > 0 ? first : 32) < (second > 0 ? second : 32)
+            if $0.monthlyLoanPayment != $1.monthlyLoanPayment { return $0.monthlyLoanPayment > $1.monthlyLoanPayment }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
     var payments: Double { plan[.loans].reduce(0) { $0 + $1.monthlyLoanPayment } }

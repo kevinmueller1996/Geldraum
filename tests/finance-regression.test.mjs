@@ -163,3 +163,19 @@ test("loan booking days survive backups and exclude invalid calendar days", () =
   for (const day of [undefined,0,1,31]) assert.ok(check(day));
   for (const day of [-1,32,2.5,"10"]) assert.equal(check(day),null);
 });
+
+test("insurance aliases merge across costs, loans and colors, preserving every payment", async () => {
+  const { normalizePlanCategories } = await import("../app/recurring-costs.ts");
+  const plan = {
+    expenses: [{ id: "m", category: "Versicherung", amount: 25 }, { id: "q", category: "Versicherungen", amount: 60, frequency: "quarterly" }],
+    annualCosts: [{ id: "a", category: " VERSICHERUNG ", amount: 120 }],
+    commitments: [{ id: "l", category: "versicherung", payment: 100 }],
+    categoryColors: { Versicherung: "a", Versicherungen: "b" }
+  };
+  const clean = normalizePlanCategories(plan);
+  for (const section of ["expenses", "annualCosts", "commitments"]) {
+    assert.deepEqual(clean[section], plan[section].map(entry => ({ ...entry, category: "Versicherungen" })));
+  }
+  assert.deepEqual(clean.categoryColors, { Versicherungen: "b" });
+  assert.deepEqual(normalizePlanCategories(clean), clean);
+});
