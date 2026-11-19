@@ -319,8 +319,9 @@ enum PlanSection: String, CaseIterable, Identifiable {
 }
 
 struct ForecastEntry: Identifiable {
-    let id: String
-    let name: String
+    let section: PlanSection
+    let item: PlanItem
+    var id: String { section.rawValue + "." + item.id }
     let amount: Double
     let day: Int
     let monthUnknown: Bool
@@ -389,7 +390,7 @@ struct PlanMetrics {
             guard amount != 0 else { return }
             let due = min(lastDay, item.fields.integer("bookingDay") ?? 0)
             if due > 0 && due < day { return }
-            let entry = ForecastEntry(id: section.rawValue + "." + item.id, name: item.name, amount: amount,
+            let entry = ForecastEntry(section: section, item: item, amount: amount,
                                       day: due, monthUnknown: monthUnknown)
             if due > day && !monthUnknown { result.scheduled.append(entry) }
             else { result.uncertain.append(entry) }

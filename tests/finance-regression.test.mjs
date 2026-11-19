@@ -140,6 +140,21 @@ test("month-end applies dated flows in full and keeps undated or unconfirmed flo
   assert.equal(february.scheduled[0].day,29);
 });
 
+test("forecast rows identify the original record even with matching names and IDs across lists", async () => {
+  const { monthEndForecast } = await import("../app/recurring-costs.ts");
+  const item = { id: "id:1", name: "Privat" };
+  const result = monthEndForecast(0, new Date(2026, 10, 18), {
+    incomes: [{ ...item, amount: 400, annual: true, month: 10, bookingDay: 24 }],
+    expenses: [{ ...item, amount: 25, category: "Wohnen", frequency: "annual", month: 10 }],
+    commitments: [{ ...item, payment: 120 }]
+  });
+  const rows = [...result.scheduled, ...result.uncertain];
+  assert.deepEqual(rows.map(row => [row.section, row.itemId]), [
+    ["income", item.id], ["expenses", item.id], ["loans", item.id]
+  ]);
+  assert.equal(new Set(rows.map(row => row.id)).size, 3);
+});
+
 test("loan booking days survive backups and exclude invalid calendar days", () => {
   const base = { name:"Plan", incomes:[], accounts:[], annualCosts:[], expenses:[], goals:[], snapshots:[] };
   function check(day) {

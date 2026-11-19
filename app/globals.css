@@ -1232,3 +1232,8 @@ button.dashboard-balance { display:block; width:100%; text-align:left; border:0;
 .dashboard-balance span:last-child { font-size:.82rem; }
 .dashboard-account-link { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
 #forecast-detail { margin:16px 0; }
+
+button.forecast-entry { width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
+.forecast-entry > b { margin-left: auto; white-space: nowrap; }
+.forecast-entry > span:last-child { opacity: .65; }
+.forecast-entry:hover, .forecast-entry:focus-visible { background: var(--surface, rgba(128, 128, 128, .08)); }

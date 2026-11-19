@@ -144,25 +144,28 @@ struct Overview: View {
 
 private struct ForecastDetail: View {
     @ObservedObject var store: NjoraStore
+    @State private var selectedEntry: ForecastEntry?
+    @State private var checkingBalance = false
     var body: some View {
         if let plan = store.plan {
             let forecast = PlanMetrics(plan: plan).forecast
             List {
                 Section("Rechnung ab heute") {
-                    LabeledAmount(label: "Eingetragener Nettokontostand", amount: forecast.balance)
+                    Button { checkingBalance = true } label: {
+                        HStack {
+                            LabeledAmount(label: "Eingetragener Nettokontostand", amount: forecast.balance)
+                            disclosure
+                        }.contentShape(Rectangle())
+                    }.buttonStyle(.plain)
                     ForEach(forecast.scheduled) { row in
-                        LabeledAmount(label: "\(row.day). · " + row.name, amount: row.amount)
+                        entryButton(row, dated: true)
                     }
                     LabeledAmount(label: "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: true)
                 }
                 if !forecast.uncertain.isEmpty {
                     Section("Buchung offen") {
                         ForEach(forecast.uncertain) { row in
-                            VStack(alignment: .leading) {
-                                LabeledAmount(label: row.name, amount: row.amount)
-                                Text(row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
-                                    .font(.footnote).foregroundStyle(.secondary)
-                            }
+                            entryButton(row, dated: false)
                         }
                     }
                     Section("Möglicher Stand am Monatsende") {
@@ -178,10 +181,35 @@ private struct ForecastDetail: View {
                     }
                 }.font(.footnote).foregroundStyle(.secondary)
             }
+            .sheet(item: $selectedEntry) { entry in
+                PlanEditor(section: entry.section, item: entry.item, plan: plan, store: store)
+            }
+            .sheet(isPresented: $checkingBalance) { CheckInView(plan: plan, store: store) }
             .navigationTitle("Monatsendprognose")
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
         }
     }
+    private var disclosure: some View {
+        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+            .foregroundStyle(.tertiary).accessibilityHidden(true)
+    }
+    private func entryButton(_ row: ForecastEntry, dated: Bool) -> some View {
+        Button { selectedEntry = row } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
+                    if !dated {
+                        Text(row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                disclosure
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Eintrag bearbeiten")
+    }
+
 }
 
 struct MonthlyPlan: View {
@@ -190,18 +218,13 @@ struct MonthlyPlan: View {
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
         List {
-            Section("Im Monat verfügbar") {
+            Section("Monatsdurchschnitt") {
                 LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
                 LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
             }
-            Section("Plan bearbeiten") {
-                ForEach([PlanSection.income, .expenses]) { section in
-                    NavigationLink(section.title) { PlanSectionView(section: section, store: store) }
-                }
-            }
             let categories = metrics.rankedCategories
             if !categories.isEmpty {
-                Section("Fixkosten nach Kategorie · pro Monat") {
+                Section("Durchschnittliche Kosten je Kategorie") {
                     ForEach(categories, id: \.name) { category in
                         VStack(alignment: .leading, spacing: 9) {
                             LabeledAmount(label: category.name, amount: category.amount)
@@ -220,13 +243,6 @@ struct MonthlyPlan: View {
                         .accessibilityElement(children: .combine)
                     }
                 }
-            }
-            Section("Sonderposten in diesem Monat") {
-                if metrics.annualIncome.isEmpty && metrics.specialCosts.isEmpty {
-                    Text("Keine Sonderposten").foregroundStyle(.secondary)
-                }
-                ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
-                ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
             }
             Notice(text: store.notice(in: .month))
         }.scrollContentBackground(.hidden).background(NjoraTheme.paper)

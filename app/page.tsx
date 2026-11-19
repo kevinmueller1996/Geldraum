@@ -12,7 +12,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { bookingDay?: number; id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, standardExpenseCategories as categories, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency } from "./recurring-costs";
+import { byDueDate, byTargetDate, standardExpenseCategories as categories, frequencies, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
 
 type Commitment = { bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -21,7 +21,7 @@ type SavingAsset = { id: string; name: string; kind: SavingKind; balance: number
 type SecuritySuggestion = { symbol: string; name: string; exchange: string; exchangeName: string; type: "Aktie" | "ETF" | "Fonds" };
 type Account = { id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
-type View = "home" | "month" | "loans" | "goals" | "more";
+type View = "home" | "expenses" | "month" | "loans" | "goals" | "more";
 type EditorScope = "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
 type Plan = {
   name: string;
@@ -436,6 +436,17 @@ export default function Home() {
     window.setTimeout(() => document.getElementById(`editor-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
   }
 
+  function forecastButton(row: ForecastRow, dated: boolean) {
+    const target = row.section === "expenses" ? "item:" + row.itemId : row.itemId;
+    return <button className="detail-row forecast-entry" key={row.id} type="button"
+      onClick={() => openFocusedEditor(row.section, undefined, target)}>
+      <span>{dated ? `${row.day}. · ` : ""}{row.name}
+        {!dated && <small>{row.monthUnknown ? "Monat offen" : row.day ? "Heute fällig" : "Ohne Buchungstag"}</small>}
+      </span>
+      <b>{exactEuros.format(row.amount)}</b><span aria-hidden="true">›</span>
+    </button>;
+  }
+
   function closeEditor() {
     setEditing(false);
     setEditorScope(null);
@@ -738,9 +749,18 @@ export default function Home() {
     savings: { eyebrow: "Vermögen & Depot", title: "Ersparnisse bearbeiten", intro: "Führe Wertpapiere mit Stückzahl und Börsensymbol oder andere Sparformen mit ihrem aktuellen Stand." },
   };
   let currentEditorCopy = editorScope ? editorCopy[editorScope] : null;
-  if (editorScope === "expenses" && editorTarget) currentEditorCopy = editorTarget.startsWith("item:")
-    ? { eyebrow: "Fixkosten", title: "Neue Ausgabe anlegen", intro: "Erfasse diese eine Ausgabe mit Betrag, Kategorie und optionalem Buchungstag." }
-    : { eyebrow: "Fixkosten", title: `${editorTarget} bearbeiten`, intro: `Hier siehst und änderst du ausschließlich die Einträge aus der Kategorie ${editorTarget}.` };
+  if (editorScope === "income" && editorTarget) {
+    const item = draft.incomes.find(income => income.id === editorTarget);
+    currentEditorCopy = { eyebrow: "Einkommen", title: item?.name || "Einkommen bearbeiten", intro: "Betrag, Rhythmus und Buchungstag dieser Einnahme." };
+  }
+  if (editorScope === "expenses" && editorTarget) {
+    if (editorTarget.startsWith("item:")) {
+      const item = draft.expenses.find(expense => expense.id === editorTarget.slice(5));
+      currentEditorCopy = { eyebrow: "Fixkosten", title: item?.name || "Neue Ausgabe anlegen", intro: "Betrag, Kategorie und Fälligkeit dieser Ausgabe." };
+    } else {
+      currentEditorCopy = { eyebrow: "Fixkosten", title: `${editorTarget} bearbeiten`, intro: `Hier siehst und änderst du ausschließlich die Einträge aus der Kategorie ${editorTarget}.` };
+    }
+  }
   if (editorScope === "loans" && editorTarget) {
     const loan = draft.commitments.find((item) => item.id === editorTarget);
     if (loan) currentEditorCopy = { eyebrow: "Kredit", title: loan.name || "Neuen Kredit anlegen", intro: "Bearbeite ausschließlich diesen Kredit und ergänze bei Bedarf Vertragsdetails für die Prognose." };
@@ -794,7 +814,7 @@ export default function Home() {
           </button>
           <div className="dashboard-metrics">
             <button type="button" onClick={() => openFocusedEditor("income")}><span>Einkommen im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
-            <button type="button" onClick={() => navigate("month")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
+            <button type="button" onClick={() => navigate("expenses")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
             <button type="button" aria-expanded={showForecast} aria-controls="forecast-detail" onClick={() => setShowForecast(!showForecast)}>
               <span>Prognose zum Monatsende</span><strong>{metrics.forecast.uncertain.length ? "Spanne ansehen" : exactEuros.format(metrics.forecast.datedBalance)}</strong>
             </button>
@@ -802,12 +822,12 @@ export default function Home() {
           </div>
           {showForecast && <section id="forecast-detail" className="detail-card">
             <h2>Monatsendprognose</h2>
-            <div className="detail-row"><span>Eingetragener Nettokontostand</span><b>{exactEuros.format(metrics.netBalance)}</b></div>
-            {metrics.forecast.scheduled.map(row => <div className="detail-row" key={row.id}><span>{row.day}. · {row.name}</span><b>{exactEuros.format(row.amount)}</b></div>)}
+            <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Eingetragener Nettokontostand</span><b>{exactEuros.format(metrics.netBalance)}</b><span aria-hidden="true">›</span></button>
+            {metrics.forecast.scheduled.map(row => forecastButton(row, true))}
             <div className="detail-row"><strong>Mit datierten Zahlungen</strong><b>{exactEuros.format(metrics.forecast.datedBalance)}</b></div>
             {metrics.forecast.uncertain.length > 0 && <>
               <h3>Buchung offen</h3>
-              {metrics.forecast.uncertain.map(row => <div className="detail-row" key={row.id}><span>{row.name}<small>{row.monthUnknown ? "Monat offen" : row.day ? "Heute fällig" : "Ohne Buchungstag"}</small></span><b>{exactEuros.format(row.amount)}</b></div>)}
+              {metrics.forecast.uncertain.map(row => forecastButton(row, false))}
               <p><strong>Möglicher Stand am Monatsende</strong><br />{exactEuros.format(metrics.forecast.low)} bis {exactEuros.format(metrics.forecast.high)}</p>
               <p>Unten sind alle offenen Ausgaben berücksichtigt, oben alle offenen Einnahmen.</p>
             </>}
@@ -827,14 +847,18 @@ export default function Home() {
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Wohin dein Geld geht" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
           <div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} /><SummaryCard label="Geplante Abflüsse" value={metrics.fixedCosts} tone="coral" /></div>
           <article className="detail-card flow-detail">
-            <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Dein Monatsbudget</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.fixedCosts / metrics.income) * 100) : 0}% verplant</span></div></div>
+            <div className="section-title compact"><div><p className="eyebrow">Verteilung</p><h2>Durchschnittliche Kosten je Kategorie</h2></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong><span>{metrics.income > 0 ? Math.round((metrics.fixedCosts / metrics.income) * 100) : 0}% verplant</span></div></div>
             <div className="stacked-bar" aria-label="Verteilung der geplanten Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${metrics.fixedCosts ? (item.value / metrics.fixedCosts) * 100 : 0}%`, backgroundColor: item.color }} key={item.label} />)}</div>
             <div className="flow-list">{monthOutflows.map((item) => {
               const percent = metrics.fixedCosts ? Math.round((item.value / metrics.fixedCosts) * 100) : 0;
-              return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{euro(item.value)}<small>{percent}%</small></b></div>;
+              return <div className="flow-item" key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${percent}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}<small>{percent}%</small></b></div>;
             })}</div>
           </article>
-          <div className="section-title financial-heading"><h2>Fixkosten</h2><TitleAmount value={metrics.fixedCosts} label="Ø pro Monat" /></div>
+        </section>}
+
+        {activeView === "expenses" && <section className="view" aria-labelledby="expenses-title">
+          <button type="button" className="edit-chip" onClick={() => navigate("home")}>‹ Heute</button>
+          <div className="section-title financial-heading"><h2 id="expenses-title">Fixkosten</h2><TitleAmount value={metrics.fixedCosts} label="Ø pro Monat" /></div>
           <div className="category-details">
             {groupedExpenses.filter(group => group.expenses.some(item => item.frequency !== "annual") || group.loans.length).map(group => (
               <article className="detail-card category-card" style={{ "--category-color": group.color } as CSSProperties} key={group.category}>
@@ -943,7 +967,7 @@ export default function Home() {
             {onboardingStep === 2 && <>
               <p className="eyebrow">Monatliches Einkommen</p><h2 id="onboarding-title">Was kommt regelmäßig rein?</h2><p className="onboarding-intro">Ein monatlicher Betrag reicht für den Start. Weitere oder jährliche Einnahmen kannst du später ergänzen.</p>
               <div className="onboarding-list">{draft.incomes.filter((item) => !item.annual).map((item) => ({ item, index: draft.incomes.findIndex((entry) => entry.id === item.id) })).map(({ item, index }) => <div className="onboarding-row income" key={item.id}><label><FieldTitle required>Quelle</FieldTitle><input value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /></label><label><FieldTitle required>Monatlicher Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="0" /><b>€</b></span></label><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}</div>
-              <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>
+              {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>}
             </>}
 
             {onboardingStep === 3 && <>
@@ -986,8 +1010,8 @@ export default function Home() {
           </EditorSection>}
 
           {(!editorScope || editorScope === "income") && <EditorSection id="editor-income" title="Einkommen" subtitle="Monatlich und jährlich getrennt">
-            {draft.incomes.map((item, index) => <div className="editor-row income-edit" key={item.id}><input aria-label="Einkommensquelle" value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /><DecimalInput aria-label="Betrag" value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="Betrag" /><select aria-label="Rhythmus" value={item.annual ? "annual" : "monthly"} onChange={(e) => updateList("incomes", index, { annual: e.target.value === "annual", month: e.target.value === "annual" ? item.month : undefined })}><option value="monthly">monatlich</option><option value="annual">jährlich</option></select><select aria-label="Eingangsmonat" disabled={!item.annual} value={item.annual ? item.month ?? "" : ""} onChange={(e) => updateList("incomes", index, { month: e.target.value === "" ? undefined : Number(e.target.value) })}><option value="">{item.annual ? "Monat wählen" : "jeden Monat"}</option>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}
-            <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>
+            {draft.incomes.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row income-edit" key={item.id}><input aria-label="Einkommensquelle" value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /><DecimalInput aria-label="Betrag" value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="Betrag" /><select aria-label="Rhythmus" value={item.annual ? "annual" : "monthly"} onChange={(e) => updateList("incomes", index, { annual: e.target.value === "annual", month: e.target.value === "annual" ? item.month : undefined })}><option value="monthly">monatlich</option><option value="annual">jährlich</option></select><select aria-label="Eingangsmonat" disabled={!item.annual} value={item.annual ? item.month ?? "" : ""} onChange={(e) => updateList("incomes", index, { month: e.target.value === "" ? undefined : Number(e.target.value) })}><option value="">{item.annual ? "Monat wählen" : "jeden Monat"}</option>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}
+            {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>}
           </EditorSection>}
 
           {editorScope === "specials" && <EditorSection id="editor-special-income" title="Jährliche Einnahmen" subtitle="Bonus, Weihnachtsgeld und andere planbare Sonderzuflüsse">
