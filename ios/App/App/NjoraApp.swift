@@ -1,10 +1,12 @@
 import SwiftUI
 import UserNotifications
+import WidgetKit
 
 @main
 struct NjoraApp: App {
     @Environment(\.scenePhase) private var phase
     @StateObject private var store = NjoraStore()
+    @State private var tab = DashboardTab.today
     @State private var emailAction: EmailAction?
 
     var body: some Scene {
@@ -14,7 +16,7 @@ struct NjoraApp: App {
                 case .loading: ProgressView("Njora wird geöffnet …")
                 case .signedOut: LoginView(store: store, emailAction: $emailAction)
                 case .setup: SetupView(store: store)
-                case .ready: Dashboard(store: store)
+                case .ready: Dashboard(store: store, tab: $tab)
                 case .offline:
                     VStack(spacing: 20) {
                         BrandMark()
@@ -25,7 +27,7 @@ struct NjoraApp: App {
                         Button("Abmelden", role: .destructive) { Task { await store.signOutLocally() } }
                     }.padding(30)
                 #if DEBUG
-                case .preview: Dashboard(store: store)
+                case .preview: Dashboard(store: store, tab: $tab)
                 #endif
                 }
             }
@@ -41,6 +43,14 @@ struct NjoraApp: App {
             }
             .task { await store.restore() }
             .onOpenURL { url in
+                if url.scheme == "njora", url.host == "widget" {
+                    switch url.path {
+                    case "/budget": tab = .month
+                    case "/balance": tab = .today
+                    default: break
+                    }
+                    return
+                }
                 if let action = EmailAction(link: url.absoluteString) { emailAction = action }
             }
             .sheet(item: $emailAction) { action in
@@ -59,7 +69,19 @@ final class NjoraStore: ObservableObject {
         #endif
     }
     @Published private(set) var state: State = .loading
-    @Published private(set) var plan: Plan?
+    @Published private(set) var plan: Plan? {
+        didSet {
+            let snapshot = plan.map { plan in
+                let metrics = PlanMetrics(plan: plan)
+                let forecast = metrics.forecast
+                return WidgetSnapshot(updated: metrics.today, balance: metrics.net, income: metrics.income,
+                                      fixedCosts: metrics.fixedCosts, available: metrics.available,
+                                      forecastLow: forecast.low, forecastHigh: forecast.high)
+            }
+            WidgetSnapshot.replace(with: snapshot)
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+    }
     @Published private(set) var user: AccountPayload.User?
     @Published private(set) var busy = false
     enum NoticeScope: Hashable {
@@ -87,7 +109,7 @@ final class NjoraStore: ObservableObject {
         }
         #endif
         guard !busy else { return }
-        guard await api.hasSession() else { state = .signedOut; return }
+        guard await api.hasSession() else { plan = nil; state = .signedOut; return }
         await run {
             do { try await self.reload() }
             catch {
@@ -208,6 +230,7 @@ final class NjoraStore: ObservableObject {
     }
 
     private func loadAfterAuthentication() async throws {
+        plan = nil
         do { try await reload() }
         catch { state = .offline; throw error }
     }

@@ -1,12 +1,15 @@
 import Charts
 import SwiftUI
 
+enum DashboardTab: Hashable { case today, month, loans, goals, more }
+
 struct Dashboard: View {
     @ObservedObject var store: NjoraStore
+    @Binding var tab: DashboardTab
 
     var body: some View {
         if let plan = store.plan {
-            TabView {
+            TabView(selection: $tab) {
                 NavigationStack {
                     Overview(plan: plan, store: store)
                         .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
@@ -17,18 +20,18 @@ struct Dashboard: View {
                             }.buttonStyle(.plain).padding(.horizontal, 18).padding(.vertical, 8).background(NjoraTheme.paper)
                         }
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
-                }.tabItem { Label("Heute", systemImage: "sun.max") }
+                }.tabItem { Label("Heute", systemImage: "sun.max") }.tag(DashboardTab.today)
                 NavigationStack {
                     MonthlyPlan(plan: plan, store: store)
                         .financialTitle("Monatsplan", amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
-                }.tabItem { Label("Monatsplan", systemImage: "calendar") }
+                }.tabItem { Label("Monatsplan", systemImage: "calendar") }.tag(DashboardTab.month)
                 NavigationStack {
                     PlanSectionView(section: .loans, store: store)
-                }.tabItem { Label("Kredite", systemImage: "banknote") }
+                }.tabItem { Label("Kredite", systemImage: "banknote") }.tag(DashboardTab.loans)
                 NavigationStack {
                     PlanSectionView(section: .goals, store: store)
-                }.tabItem { Label("Ziele", systemImage: "target") }
+                }.tabItem { Label("Ziele", systemImage: "target") }.tag(DashboardTab.goals)
                 NavigationStack {
                     List {
                         NavigationLink("Konten & Karten") { PlanSectionView(section: .accounts, store: store) }
@@ -38,7 +41,7 @@ struct Dashboard: View {
                     .navigationTitle("Mehr")
                     .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                     .scrollContentBackground(.hidden).background(NjoraTheme.paper)
-                }.tabItem { Label("Mehr", systemImage: "ellipsis") }
+                }.tabItem { Label("Mehr", systemImage: "ellipsis") }.tag(DashboardTab.more)
             }
         }
     }
