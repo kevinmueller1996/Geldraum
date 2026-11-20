@@ -55,6 +55,12 @@
   transform: translateZ(calc(-1 * var(--radius))) rotateY(var(--turn)) translateZ(var(--radius)) rotateY(var(--untilt)) rotateY(var(--tilt));
   transition: transform 520ms cubic-bezier(.22,.75,.25,1);
 }
+@container (max-width: 520px) {
+  .nj-phone {
+    --radius: 24cqw;
+    width: min(45cqw, 224px);
+  }
+}
 .nj-phone img {
   display: block; width: 100%; height: auto; border: 2px solid #121212;
   box-sizing: border-box; border-radius: calc(var(--corner) - 4px); background: #121212;
