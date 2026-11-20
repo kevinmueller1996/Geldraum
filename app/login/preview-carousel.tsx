@@ -94,9 +94,8 @@ export default function PreviewCarousel() {
       {screens.map((screen, index) => {
         const angle = (index - step - offset) * 360 / count;
         const radians = angle * Math.PI / 180;
-        const depth = (1 + Math.cos(radians)) / 2;
         const style = { "--turn": angle + "deg", "--untilt": -angle + "deg",
-          "--tilt": -25 * Math.sin(radians) + "deg", opacity: 0.24 + 0.76 * depth } as CSSProperties;
+          "--tilt": -25 * Math.sin(radians) + "deg" } as CSSProperties;
         return <div className="nj-phone" data-screen={index} key={screen.title} style={style} aria-hidden={index !== active}>
           <img src={screen.image} width="354" height="770" draggable={false}
             alt={screen.description} fetchPriority={index === 0 ? "high" : "auto"} />
