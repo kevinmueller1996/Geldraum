@@ -33,7 +33,10 @@ export async function proxyPlugin(request: Request, action: string) {
   const upstream = new URL("/api/chatgpt/"+action,backendOrigin());
   upstream.search = new URL(request.url).search;
   const res = await fetch(upstream,{headers,method:request.method,body,cache:"no-store",redirect:"manual",signal:AbortSignal.timeout(15000)});
-  const out = new Headers({"cache-control":"no-store","referrer-policy":"no-referrer"});
+  // Browser form submissions need an Origin for the same-origin POST check.
+  // OAuth redirects and API responses should never forward a referrer.
+  const formPage = browser && res.headers.get("content-type")?.startsWith("text/html");
+  const out = new Headers({"cache-control":"no-store","referrer-policy":formPage ? "same-origin" : "no-referrer"});
   for (const name of ["content-type","www-authenticate","location","allow","content-security-policy","mcp-protocol-version","mcp-session-id","x-frame-options"]) {
     const value = res.headers.get(name);
     if (value) out.set(name,value);

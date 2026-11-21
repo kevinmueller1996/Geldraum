@@ -64,7 +64,7 @@ const nextConfig: NextConfig = {
       source: "/api/chatgpt/authorize",
       headers: [
         { key: "Content-Security-Policy", value: "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self' https://chatgpt.com/connector_platform_oauth_redirect; frame-ancestors 'none'; base-uri 'none'" },
-        { key: "Referrer-Policy", value: "no-referrer" },
+        { key: "Referrer-Policy", value: "same-origin" },
       ],
     }];
   },
