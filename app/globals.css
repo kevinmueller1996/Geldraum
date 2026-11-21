@@ -363,7 +363,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .editor-card input,.editor-card select,.checkin-card input,.checkin-card select,.danger-zone input { height:44px; border-color:var(--line); font-size:13px; }
 .remove-row { width:44px; height:44px; }
 .add-row { min-height:36px; font-size:12px; }
-.editor-actions { position:sticky; bottom:-34px; margin:4px -34px -34px; padding:16px 34px; border-top:1px solid var(--line); background:rgba(255,253,249,.96); }
+.editor-actions { position:sticky; z-index:3; bottom:-34px; margin:4px -34px -34px; padding:16px 34px; border-top:1px solid var(--line); background:var(--paper); }
 .editor-actions>span { font-size:10px; }
 .checkin-preview { font-size:12px; }
 .checkin-preview strong { font-family:var(--font-sans); font-weight:750; }
@@ -1358,7 +1358,7 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 }
 .onboarding-card .onboarding-row > .remove-row { inset-inline-end: 6px; top: 10px; }
 .checkin-card .checkin-account-edit > .remove-row { top: 9px; }
-.editor-card :is(label input, label select), .onboarding-card :is(label input, label select) {
+:is(.editor-card, .onboarding-card, .checkin-card) label :is(input, select) {
   font-weight: 400;
   letter-spacing: normal;
   text-transform: none;
