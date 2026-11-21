@@ -1316,3 +1316,91 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
   .income-fields > label, .income-fields > label:nth-child(-n+2) { grid-column: 1 / -1; }
   .income-fields > label:last-of-type { grid-column: 1; }
 }
+
+/* Size forms to the dialog that contains them, including the narrower focused editors. */
+.editor-card form, .checkin-card form, .editor-section:not(.basis-grid), .checkin-accounts {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+.editor-header > div, .goal-card-header > div, .flow-detail .section-title > div {
+  min-width: 0;
+}
+.editor-header h2, .goal-card-header span, .legal-page :is(h1, h2) {
+  hyphens: auto;
+  overflow-wrap: anywhere;
+}
+.goal-card-header > div { flex-wrap: wrap; }
+.goal-card-header .edit-chip { flex-shrink: 0; }
+.flow-detail .section-title { flex-wrap: wrap; }
+.flow-detail .plan-position { margin-inline-start: auto; }
+
+.editor-section, .onboarding-list, .onboarding-optional-groups, .checkin-accounts, .annual-card {
+  min-width: 0;
+  container-type: inline-size;
+}
+:is(.editor-card .editor-row, .onboarding-card .onboarding-row, .checkin-card .checkin-account-edit):has(> .remove-row) {
+  position: relative;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  align-items: end;
+  gap: 10px;
+  padding-inline-end: 56px;
+}
+:is(.editor-row, .onboarding-row, .checkin-account-edit) > * { min-width: 0; }
+:is(.editor-card .editor-row, .onboarding-card .onboarding-row, .checkin-card .checkin-account-edit) > .remove-row {
+  position: absolute;
+  inset-inline-end: 0;
+  bottom: auto;
+  top: 0;
+  width: 44px;
+  height: 44px;
+  grid-column: auto;
+  grid-row: auto;
+}
+.onboarding-card .onboarding-row > .remove-row { inset-inline-end: 6px; top: 10px; }
+.checkin-card .checkin-account-edit > .remove-row { top: 9px; }
+.editor-card :is(label input, label select), .onboarding-card :is(label input, label select) {
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+@container (max-width: 29rem) {
+  :is(.editor-card .editor-row, .onboarding-card .onboarding-row, .checkin-card .checkin-account-edit):has(> .remove-row) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px;
+  }
+  :is(.editor-card .editor-row, .onboarding-card .onboarding-row, .checkin-card .checkin-account-edit):has(> .remove-row) > :first-child {
+    grid-column: 1 / -1;
+    margin-inline-end: 52px;
+    width: calc(100% - 52px);
+  }
+  :is(.editor-card .editor-row, .onboarding-card .onboarding-row, .checkin-card .checkin-account-edit) > .remove-row {
+    top: 12px;
+    inset-inline-end: 8px;
+  }
+}
+@container (max-width: 20rem) {
+  :is(.editor-card .editor-row, .onboarding-card .onboarding-row, .checkin-card .checkin-account-edit):has(> .remove-row) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.annual-card .month-strip {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  margin-inline: 0;
+  padding-bottom: 0;
+}
+.annual-card .month-cell { padding-inline: 3px; overflow-wrap: anywhere; }
+@container (max-width: 49rem) {
+  .annual-card .month-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .month-cell:nth-child(n+7) { border-top: 1px solid var(--line); }
+}
+@container (max-width: 29rem) {
+  .annual-card .month-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .month-cell:nth-child(n+4) { border-top: 1px solid var(--line); }
+}
+
+.goal-grid, .loan-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16.25rem), 1fr));
+}
+.saving-add-actions {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+}
