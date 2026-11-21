@@ -1132,12 +1132,14 @@ export default function Home() {
           </EditorSection>}
 
           {(!editorScope || editorScope === "income") && <EditorSection id="editor-income" title="Einkommen" subtitle="Monatlich und jährlich getrennt">
-            {draft.incomes.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row income-edit" key={item.id}><input aria-label="Einkommensquelle" value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /><DecimalInput aria-label="Betrag" value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="Betrag" /><select aria-label="Rhythmus" value={item.annual ? "annual" : "monthly"} onChange={(e) => updateList("incomes", index, { annual: e.target.value === "annual", month: e.target.value === "annual" ? item.month : undefined })}><option value="monthly">monatlich</option><option value="annual">jährlich</option></select><select aria-label="Eingangsmonat" disabled={!item.annual} value={item.annual ? item.month ?? "" : ""} onChange={(e) => updateList("incomes", index, { month: e.target.value === "" ? undefined : Number(e.target.value) })}><option value="">{item.annual ? "Monat wählen" : "jeden Monat"}</option>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}
+            {draft.incomes.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <IncomeEditorRow key={item.id} item={item}
+              update={patch => updateList("incomes", index, patch)} remove={() => removeListItem("incomes", index)} />)}
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>}
           </EditorSection>}
 
           {editorScope === "specials" && <EditorSection id="editor-special-income" title="Jährliche Einnahmen" subtitle="Bonus, Weihnachtsgeld und andere planbare Sonderzuflüsse">
-            {draft.incomes.map((item, index) => ({ item, index })).filter(({ item }) => item.annual).map(({ item, index }) => <div className="editor-row four" key={item.id}><input aria-label="Jährliche Einnahme" value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Weihnachtsgeld" /><DecimalInput aria-label="Betrag der jährlichen Einnahme" value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="Betrag" /><select aria-label="Eingangsmonat" value={item.month ?? ""} onChange={(e) => updateList("incomes", index, { month: e.target.value === "" ? undefined : Number(e.target.value) })}><option value="">Monat wählen</option>{months.map((month, monthIndex) => <option value={monthIndex} key={month}>{month}</option>)}</select><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}
+            {draft.incomes.map((item, index) => ({ item, index })).filter(({ item }) => item.annual).map(({ item, index }) => <IncomeEditorRow key={item.id} item={item} annualOnly
+              update={patch => updateList("incomes", index, patch)} remove={() => removeListItem("incomes", index)} />)}
             <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: true, month: currentMonth }] })}>Jährliche Einnahme</AddButton>
           </EditorSection>}
 
@@ -1259,6 +1261,30 @@ function SummaryCard({ label, value, tone = "", onClick }: { label: string; valu
 
 function EditorSection({ id, title, subtitle, children }: { id?: string; title: string; subtitle: string; children: React.ReactNode }) {
   return <section id={id} className="editor-section"><div className="editor-section-head"><div><h3>{title}</h3><p>{subtitle}</p></div></div>{children}</section>;
+}
+
+function IncomeEditorRow({ item, annualOnly = false, update, remove }: {
+  item: IncomeSource;
+  annualOnly?: boolean;
+  update: (patch: Partial<IncomeSource>) => void;
+  remove: () => void;
+}) {
+  return <div className={annualOnly ? "income-fields annual-income" : "income-fields"}>
+    <label>Einkommensquelle<input value={item.name} onChange={e => update({ name: e.target.value })}
+      placeholder={annualOnly ? "z. B. Weihnachtsgeld" : "z. B. Gehalt"} /></label>
+    <label>Betrag (€)<DecimalInput value={item.amount} onValueChange={amount => update({ amount })} /></label>
+    {!annualOnly && <label>Rhythmus<select value={item.annual ? "annual" : "monthly"} onChange={e => {
+      const annual = e.target.value === "annual";
+      update({ annual, month: annual ? item.month : undefined });
+    }}><option value="monthly">monatlich</option><option value="annual">jährlich</option></select></label>}
+    <label>Eingangsmonat<select disabled={!item.annual} value={item.annual ? item.month ?? "" : ""}
+      onChange={e => update({ month: e.target.value === "" ? undefined : Number(e.target.value) })}>
+      <option value="">{item.annual ? "Monat wählen" : "jeden Monat"}</option>
+      {months.map((month, index) => <option key={month} value={index}>{month}</option>)}
+    </select></label>
+    <BookingDayField day={item.bookingDay} update={bookingDay => update({ bookingDay })} />
+    <RemoveButton onClick={remove} />
+  </div>;
 }
 
 function BookingDayField({ day, update, label = "Buchungstag" }: { day?: number; label?: string; update: (day: number) => void }) {
