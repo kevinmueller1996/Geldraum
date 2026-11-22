@@ -128,7 +128,6 @@ private struct BusinessDashboard: View {
                 }
                 Section("Finanzierung") {
                     NavigationLink("Geschäftskredite") { PlanSectionView(section: .loans, store: store) }
-                    NavigationLink("Rücklagenziele") { PlanSectionView(section: .goals, store: store) }
                 }
                 if store.conflict || store.needsSync { Notice(text: store.syncStatus) }
             }

@@ -58,7 +58,8 @@ const STORAGE_KEY = "klarbudget-plan-v3";
 const PREVIOUS_STORAGE_KEY = "klarbudget-plan-v2";
 const OLD_STORAGE_KEY = "klarbudget-profile";
 const months = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
-const onboardingSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Kredite", "Ziele"] as const;
+const businessSteps = ["Basis", "Konten", "Einkommen", "Ausgaben", "Kredite"] as const;
+const privateSteps = [...businessSteps, "Ziele"] as const;
 const savingKindLabels: Record<SavingKind, string> = {
   security: "Aktie oder ETF",
   dayMoney: "Tagesgeldkonto",
@@ -253,6 +254,7 @@ export default function Home() {
 }
 
 function FinanceDashboard({ business }: { business: boolean }) {
+  const onboardingSteps = business ? businessSteps : privateSteps;
   const accountEndpoint = business ? "/api/account/business" : "/api/account";
   const workspacePicker = <select className="workspace-picker" aria-label="Finanzbereich" value={business ? "business" : "private"}
     onChange={event => location.assign(event.target.value === "business" ? "/?bereich=business" : "/")}>
@@ -989,6 +991,13 @@ function FinanceDashboard({ business }: { business: boolean }) {
       <LegalLinks />
     </article></main>
   );
+  const savingsOverview = (
+    <button className="savings-overview-card" type="button" onClick={openSavings} aria-label="Depot und Ersparnisse öffnen">
+      <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
+      {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
+      <small>{savingsMetrics.latestQuote ? `Letzter Datenstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Aktien und ETFs per ISIN mit Schlusskurs bewerten"}</small>
+    </button>
+  );
   return (
     <main id="top" className="page-shell" data-appearance={appearance.appearance}>
       <header className="topbar">
@@ -998,7 +1007,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           {business && <NavButton active={activeView === "revenue"} onClick={() => navigate("revenue")}>Umsatz</NavButton>}
           <NavButton active={activeView === "month"} onClick={() => navigate("month")}>Monatsplan</NavButton>
           <NavButton active={activeView === "loans"} onClick={() => navigate("loans")}>Kredite</NavButton>
-          <NavButton active={activeView === "goals"} onClick={() => navigate("goals")}>Ziele</NavButton>
+          {!business && <NavButton active={activeView === "goals"} onClick={() => navigate("goals")}>Ziele</NavButton>}
           <NavButton active={activeView === "more"} onClick={() => navigate("more")}>Mehr</NavButton>
         </nav>
         <button className="profile-button" type="button" onClick={() => navigate("more")} aria-label={active.name + " – Konto und Einstellungen"}><span aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" focusable="false"><circle cx="12" cy="8" r="3.3" /><path d="M4.7 20a7.3 7.3 0 0 1 14.6 0" /></svg></span><b>{active.name}</b></button>
@@ -1115,7 +1124,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           <article className="principle-card"><span>✦</span><div><p>Njora-Prinzip</p><strong>Restschuld und Monatsbelastung gehören zusammen.</strong><small>So siehst du nicht nur, wie viel offen ist, sondern auch, wie stark die Kredite deinen Alltag binden.</small></div></article>
         </section>}
 
-        {activeView === "goals" && <section className="view" aria-labelledby="goals-title">
+        {!business && activeView === "goals" && <section className="view" aria-labelledby="goals-title">
           <ViewHeader id="goals-title" eyebrow="Ziele & Projekte" title="Wofür du deinen Überschuss nutzt" total={{ value: active.goals.reduce((sum, goal) => sum + goal.saved, 0), label: "Bereits gespart" }} copy="Ziele sind keine Fixkosten. Erst mit einem Zieldatum berechnet Njora, welcher Betrag aus deinem Überschuss monatlich nötig wäre." />
           <div className="summary-grid"><SummaryCard label="Überschuss vor Zielen" value={metrics.available} tone={metrics.available < 0 ? "negative" : "coral"} /><SummaryCard label="Bedarf für Terminziele" value={metrics.goalNeed} tone={metrics.goalNeed > metrics.available ? "negative" : "sage"} /></div>
           <div className="goal-grid">{active.goals.map((goal) => {
@@ -1124,11 +1133,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             const monthlyNeed = goalMonthlyNeed(goal);
             return <article className="goal-card" key={goal.id}><div className="goal-card-header"><div><span>{goal.name}</span><b>{Math.round(progress)}%</b></div><button className="edit-chip" type="button" onClick={() => openFocusedEditor("goals", undefined, goal.id)}>Ändern</button></div><strong>{euro(goal.saved)} <small>von {euro(goal.target)}</small></strong><div className="goal-progress"><i style={{ width: `${progress}%` }} /></div><div className="goal-meta"><span>{remaining ? `${euro(remaining)} offen` : "Ziel erreicht"}</span><span>{goal.targetDate ? `${euro(monthlyNeed)} nötig / Monat` : "flexibel aus Überschuss"}</span></div></article>;
           })}<button className="add-card" type="button" onClick={() => openFocusedEditor("goals", "goal")}><span>+</span><strong>Neues Ziel hinzufügen</strong><small>Zielbetrag und optionales Zieldatum festlegen</small></button></div>
-          <button className="savings-overview-card" type="button" onClick={openSavings} aria-label="Depot und Ersparnisse öffnen">
-            <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
-            {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
-            <small>{savingsMetrics.latestQuote ? `Letzter Datenstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Aktien und ETFs per ISIN mit Schlusskurs bewerten"}</small>
-          </button>
+          {savingsOverview}
           <article className="detail-card goal-allocation"><div className="section-title compact"><div><p className="eyebrow">Machbarkeitscheck</p><h2>Was deine Termine erfordern</h2></div></div>{active.goals.map((goal) => <div className="allocation-line" key={goal.id}><span>{goal.name}<small>{validCalendarDay(goal.targetDate) ? `bis ${new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T12:00:00`))}` : goal.targetDate ? "Datum bitte prüfen" : "ohne festen Termin"}</small></span><strong>{goal.targetDate ? `${euro(goalMonthlyNeed(goal))} / Monat` : "flexibel"}</strong></div>)}<div className="allocation-total"><span>Rechnerischer Bedarf aus Terminzielen</span><strong>{euro(metrics.goalNeed)}</strong></div><p className={`goal-feasibility ${metrics.goalNeed > metrics.available ? "warning" : ""}`}>{metrics.goalNeed === 0 ? "Ohne Zieldatum bleibt dein gesamter Überschuss frei verteilbar." : metrics.goalNeed <= metrics.available ? `Nach allen Terminzielen blieben rechnerisch ${euro(metrics.available - metrics.goalNeed)} pro Monat frei.` : `Die Terminziele übersteigen deinen Überschuss um ${euro(metrics.goalNeed - metrics.available)} pro Monat.`}</p></article>
         </section>}
 
@@ -1138,7 +1143,8 @@ function FinanceDashboard({ business }: { business: boolean }) {
             const sum = active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, index)).reduce((total, item) => total + item.amount, 0);
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
           })}</div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button></article>
-          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
+          {business && savingsOverview}
+          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, {business ? "" : "Ziele, "}Ersparnisse und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
           </>}
           <AppearancePicker {...appearance} />
           <InstallAppCard />
@@ -1153,12 +1159,12 @@ function FinanceDashboard({ business }: { business: boolean }) {
         </section>}
       </div>
 
-      <nav className={business ? "bottom-nav business-nav" : "bottom-nav"} aria-label="Mobile Hauptnavigation">
+      <nav className="bottom-nav" aria-label="Mobile Hauptnavigation">
         <MobileNavButton icon="today" label="Heute" active={activeView === "home"} onClick={() => navigate("home")} />
         {business && <MobileNavButton icon="revenue" label="Umsatz" active={activeView === "revenue"} onClick={() => navigate("revenue")} />}
         <MobileNavButton icon="calendar" label="Monatsplan" active={activeView === "month"} onClick={() => navigate("month")} />
         <MobileNavButton icon="loans" label="Kredite" active={activeView === "loans"} onClick={() => navigate("loans")} />
-        <MobileNavButton icon="goals" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />
+        {!business && <MobileNavButton icon="goals" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />}
         <MobileNavButton icon="more" label="Mehr" active={activeView === "more"} onClick={() => navigate("more")} />
       </nav>
 
@@ -1255,7 +1261,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balanceDate: today, balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit oder Verpflichtung</AddButton>}
           </EditorSection>}
 
-          {(!editorScope || editorScope === "goals") && <EditorSection id="editor-goals" title="Ziele" subtitle="Zieldatum optional – Ziele werden nur aus deinem Überschuss bedient">
+          {!business && (!editorScope || editorScope === "goals") && <EditorSection id="editor-goals" title="Ziele" subtitle="Zieldatum optional – Ziele werden nur aus deinem Überschuss bedient">
             {draft.goals.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row five" key={item.id}><label>Ziel<input maxLength={120} aria-label="Ziel" value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label>Zielbetrag (€)<DecimalInput aria-label="Zielbetrag" value={item.target} onValueChange={(value) => updateList("goals", index, { target: value })} placeholder="Zielbetrag" /></label><label>Schon gespart (€)<DecimalInput aria-label="Schon gespart" value={item.saved} onValueChange={(value) => updateList("goals", index, { saved: value })} placeholder="Schon gespart" /></label><label>Optionales Zieldatum<input aria-label="Optionales Zieldatum" type="date" value={item.targetDate || ""} onChange={(e) => updateList("goals", index, { targetDate: e.target.value })} /></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>}
           </EditorSection>}
