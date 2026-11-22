@@ -44,3 +44,15 @@ export function checkInRecord(plan: Plan, date: string, today: string, accounts:
   }
   return { id: previous?.id ?? id, date, balances, netBalance, note: note.trim() };
 }
+
+export function revenueStats(revenue: Record<string, number>, today: string) {
+  const months: string[] = [];
+  let month = previousRevenueMonth(today);
+  for (let i = 0; i < 12; i++) {
+    months.push(month);
+    month = previousRevenueMonth(month + "-01");
+  }
+  const values = months.flatMap(key => revenue[key] === undefined ? [] : [revenue[key]]);
+  return { months, count: values.length, total: values.reduce((sum, value) => sum + value, 0),
+    min: Math.min(0, ...values), max: Math.max(0, ...values) };
+}

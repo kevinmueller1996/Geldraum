@@ -12,6 +12,7 @@ import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { acceptsAmountEdit, parseAmount } from "./amount";
 import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "./check-in";
 import { backupPlan, isPlan, validCalendarDay } from "./plan-validation";
+import RevenueHistory from "./revenue-history";
 import BalanceHistory from "./balance-history";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
@@ -30,7 +31,7 @@ type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" |
 type SavingAsset = { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
 type Account = { bookingDay?: number; id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
-type View = "home" | "expenses" | "month" | "loans" | "goals" | "more";
+type View = "revenue" | "home" | "expenses" | "month" | "loans" | "goals" | "more";
 type EditorScope = "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
 export type Plan = {
   monthlyRevenue?: Record<string, number>;
@@ -993,6 +994,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
         <div className="workspace-brand">{workspacePicker}<button className="brand" type="button" onClick={() => navigate("home")} aria-label="Njora Startseite"><Brand /></button></div>
         <nav className="desktop-nav" aria-label="Hauptnavigation">
           <NavButton active={activeView === "home"} onClick={() => navigate("home")}>Heute</NavButton>
+          {business && <NavButton active={activeView === "revenue"} onClick={() => navigate("revenue")}>Umsatz</NavButton>}
           <NavButton active={activeView === "month"} onClick={() => navigate("month")}>Monatsplan</NavButton>
           <NavButton active={activeView === "loans"} onClick={() => navigate("loans")}>Kredite</NavButton>
           <NavButton active={activeView === "goals"} onClick={() => navigate("goals")}>Ziele</NavButton>
@@ -1013,7 +1015,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             <span>Mit datierten Zahlungen{metrics.forecast.uncertain.length > 0 ? ` · ${metrics.forecast.uncertain.length} ${metrics.forecast.uncertain.length === 1 ? "Buchung" : "Buchungen"} offen` : ""}</span>
           </button>
           <div className="dashboard-metrics">
-            {business && <button type="button" onClick={openCheckIn}><span>Umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : exactEuros.format(active.monthlyRevenue[dashboardRevenueMonth])}</strong></button>}
+            {business && <button type="button" onClick={() => navigate("revenue")}><span>Umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : exactEuros.format(active.monthlyRevenue[dashboardRevenueMonth])}</strong></button>}
             <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen" : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
             <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten" : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
             <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(metrics.available)}</strong></button>
@@ -1052,6 +1054,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           </div></div>
         </section>}
 
+        {business && activeView === "revenue" && plan && <RevenueHistory plan={plan} today={today} save={persistPlan} problem={problem} />}
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
           <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label="Fixkosten" value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
@@ -1149,8 +1152,9 @@ function FinanceDashboard({ business }: { business: boolean }) {
         </section>}
       </div>
 
-      <nav className="bottom-nav" aria-label="Mobile Hauptnavigation">
+      <nav className={business ? "bottom-nav business-nav" : "bottom-nav"} aria-label="Mobile Hauptnavigation">
         <MobileNavButton icon="◉" label="Heute" active={activeView === "home"} onClick={() => navigate("home")} />
+        {business && <MobileNavButton icon="▥" label="Umsatz" active={activeView === "revenue"} onClick={() => navigate("revenue")} />}
         <MobileNavButton icon="%" label="Monatsplan" active={activeView === "month"} onClick={() => navigate("month")} />
         <MobileNavButton icon="↘" label="Kredite" active={activeView === "loans"} onClick={() => navigate("loans")} />
         <MobileNavButton icon="◇" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />

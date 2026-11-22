@@ -710,6 +710,19 @@ enum PlanDate {
         return (String(string(month).prefix(7)), month.formatted(.dateTime.month(.wide).year().locale(Locale(identifier: "de_DE"))))
     }
 
+    static func completedRevenueMonths(asOf date: Date) -> [String] {
+        let calendar = Calendar(identifier: .gregorian)
+        let start = calendar.dateInterval(of: .month, for: date)!.start
+        return (1...12).map { offset in
+            let month = calendar.date(byAdding: .month, value: -offset, to: start)!
+            return String(string(month).prefix(7))
+        }
+    }
+
+    static func revenueTitle(_ key: String) -> String {
+        parse(key + "-01")?.formatted(.dateTime.month(.wide).year().locale(Locale(identifier: "de_DE"))) ?? key
+    }
+
     static func parseTradeTime(_ value: String) -> Date? {
         (try? Date(value, strategy: .iso8601))
             ?? (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))

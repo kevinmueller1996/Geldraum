@@ -105,6 +105,13 @@ private struct BusinessDashboard: View {
                         LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
                     }
                 }
+                Section("Umsatz") {
+                    NavigationLink {
+                        BusinessRevenueView(store: store)
+                    } label: {
+                        LabeledContent("Umsatzübersicht", value: "12 Monate")
+                    }
+                }
                 Section("Check-in") {
                     Button { checkIn = true } label: {
                         LabeledContent("Nettoumsatz " + month.title, value: plan.monthlyRevenue[month.key]?.number.map { euros($0) } ?? "Erfassen")
@@ -824,3 +831,133 @@ extension Array {
 
 let monthNames = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 let savingNames = ["security": "Aktie oder ETF", "dayMoney": "Tagesgeldkonto", "fixedDeposit": "Festgeld", "buildingSavings": "Bausparvertrag", "cash": "Bargeldreserve", "other": "Andere Ersparnis"]
+
+private struct RevenueMonthSelection: Identifiable {
+    let id: String
+    let base: Plan
+}
+
+private struct BusinessRevenueView: View {
+    @ObservedObject var store: NjoraStore
+    @Environment(\.njoraAppearance) private var theme
+    @State private var selection: RevenueMonthSelection?
+
+    var body: some View {
+        if let plan = store.plan {
+            let months = PlanDate.completedRevenueMonths(asOf: .now)
+            let amounts = months.compactMap { plan.monthlyRevenue[$0]?.number }
+            let total = amounts.reduce(0, +)
+            let older = plan.monthlyRevenue.keys.filter { $0 < months[11] }.sorted(by: >)
+            List {
+                Section("Letzte 12 abgeschlossene Monate") {
+                    LabeledContent("Nettoumsatz gesamt", value: amounts.isEmpty ? "–" : euros(total))
+                    LabeledContent("Ø je erfasstem Monat", value: amounts.isEmpty ? "–" : euros(total / Double(amounts.count)))
+                    Text("\(amounts.count) von 12 Monaten erfasst").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Monatsumsätze") {
+                    ForEach(months, id: \.self) { month in
+                        let value = plan.monthlyRevenue[month]?.number
+                        Button { selection = .init(id: month, base: plan) } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                LabeledContent(PlanDate.revenueTitle(month), value: value.map(euros) ?? "Nachtragen")
+                                GeometryReader { proxy in
+                                    let low = min(amounts.min() ?? 0, 0)
+                                    let high = max(amounts.max() ?? 0, 0)
+                                    let range = high > low ? high - low : 1
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(Color.secondary.opacity(0.15))
+                                        if let value, value != 0 {
+                                            Capsule().fill(theme.accent)
+                                                .frame(width: proxy.size.width * (abs(value) / range))
+                                                .offset(x: proxy.size.width * ((min(value, 0) - low) / range))
+                                        }
+                                    }
+                                }.frame(height: 4).accessibilityHidden(true)
+                            }.padding(.vertical, 3).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
+                }
+                if !older.isEmpty {
+                    DisclosureGroup("Frühere Monate (\(older.count))") {
+                        ForEach(older, id: \.self) { month in
+                            Button { selection = .init(id: month, base: plan) } label: {
+                                LabeledContent(PlanDate.revenueTitle(month), value: plan.monthlyRevenue[month]?.number.map(euros) ?? "–")
+                            }
+                        }
+                    }
+                }
+            }
+            .planFormStyle()
+            .navigationTitle("Umsatz")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { selection = .init(id: months.first { plan.monthlyRevenue[$0] == nil } ?? months[0], base: plan) } label: {
+                        Label("Monat nachtragen", systemImage: "plus")
+                    }
+                }
+            }
+            .sheet(item: $selection) { selection in
+                RevenueMonthEditor(store: store, selection: selection, latest: months[0])
+            }
+        }
+    }
+}
+
+private struct RevenueMonthEditor: View {
+    @ObservedObject var store: NjoraStore
+    let selection: RevenueMonthSelection
+    let latest: String
+    @State private var year: Int
+    @State private var month: Int
+    @State private var draft: String
+    @Environment(\.dismiss) private var dismiss
+
+    init(store: NjoraStore, selection: RevenueMonthSelection, latest: String) {
+        self.store = store
+        self.selection = selection
+        self.latest = latest
+        _year = State(initialValue: Int(selection.id.prefix(4))!)
+        _month = State(initialValue: Int(selection.id.suffix(2))!)
+        _draft = State(initialValue: selection.base.monthlyRevenue[selection.id]?.number.map(editableAmount) ?? "")
+    }
+
+    private var key: String { String(format: "%04d-%02d", year, month) }
+    private var lastYear: Int { Int(latest.prefix(4))! }
+    private var monthLimit: Int { year == lastYear ? Int(latest.suffix(2))! : 12 }
+    private var amount: Double? { draft.isEmpty ? nil : germanAmount(draft) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("Jahr", selection: $year) {
+                    ForEach((min(1900, Int(selection.id.prefix(4))!)...lastYear).reversed(), id: \.self) { Text(String($0)).tag($0) }
+                }
+                Picker("Monat", selection: $month) {
+                    ForEach(1...monthLimit, id: \.self) { index in
+                        Text(Locale(identifier: "de_DE").calendar.monthSymbols[index - 1]).tag(index)
+                    }
+                }
+                PlanField(title: "Nettoumsatz", text: $draft, prompt: "0,00", unit: "€", keyboard: .numbersAndPunctuation)
+                Notice(text: store.notice(in: .editor))
+            }
+            .planFormStyle()
+            .onChange(of: year) { _ in month = min(month, monthLimit) }
+            .onChange(of: key) { new in draft = selection.base.monthlyRevenue[new]?.number.map(editableAmount) ?? "" }
+            .onDisappear { store.clearNotice(in: .editor) }
+            .navigationTitle("Monatsumsatz").navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(store.busy)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() }.disabled(store.busy) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Speichern") {
+                        guard let amount, key <= latest else { return }
+                        var updated = selection.base
+                        updated.setRevenue(amount, forMonth: key)
+                        let result = updated
+                        Task { if await store.save(result, basedOn: selection.base) { dismiss() } }
+                    }.disabled(store.busy || amount == nil || key > latest)
+                }
+            }
+        }
+    }
+}

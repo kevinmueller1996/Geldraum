@@ -1408,3 +1408,21 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .workspace-brand { display: flex; align-items: center; gap: .65rem; min-width: 0; }
 .workspace-picker { width: auto; min-height: 44px; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 10px; background: var(--cream); color: var(--ink); font: inherit; }
 @media (max-width: 600px) { .workspace-brand .brand { display: none; } }
+
+.bottom-nav.business-nav { grid-template-columns:repeat(6,minmax(0,1fr)); }
+.revenue-rows { margin-top:1.25rem; }
+.revenue-row { display:grid; grid-template-columns:minmax(7rem,1fr) minmax(1rem,2fr) auto; gap:clamp(.5rem,3vw,2rem); align-items:center; width:100%; padding:.85rem 0; border:0; border-bottom:1px solid var(--line); background:transparent; font:inherit; color:inherit; text-align:left; cursor:pointer; }
+.revenue-row:hover, .revenue-row:focus-visible { color:var(--coral); }
+.revenue-row strong { font-variant-numeric:tabular-nums; text-align:right; }
+.revenue-track { position:relative; height:5px; border-radius:4px; background:var(--surface-muted); }
+.revenue-track i { position:absolute; height:100%; background:var(--coral); border-radius:inherit; }
+.revenue-dialog { margin:auto; width:min(26rem,94vw); padding:1.5rem; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:var(--radius-card); }
+.revenue-dialog::backdrop { background:rgba(25,20,18,.5); }
+.revenue-dialog form, .revenue-dialog label { display:grid; gap:.65rem; }
+.revenue-dialog form { gap:1.2rem; }
+.revenue-dialog form > div { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.revenue-dialog button, .revenue-dialog input { min-height:44px; }
+@media(max-width:420px) { .revenue-row { grid-template-columns:minmax(0,1fr) minmax(.75rem,.3fr) auto; font-size:.85rem; } }
+.revenue-rows { display:grid; grid-template-columns:minmax(0,1fr) minmax(1rem,2fr) auto; column-gap:clamp(.5rem,3vw,2rem); }
+.revenue-rows .revenue-row { grid-column:1/-1; grid-template-columns:subgrid; column-gap:inherit; }
+@media(max-width:420px) { .revenue-rows { grid-template-columns:minmax(0,1fr) minmax(.75rem,.3fr) auto; } }

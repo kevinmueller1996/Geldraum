@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "../app/check-in.ts";
+import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel, revenueStats } from "../app/check-in.ts";
 
 const today = "2026-11-21";
 const plan = {
@@ -44,4 +44,12 @@ test("business check-ins address a single previous calendar month, including Jan
   assert.equal(previousRevenueMonth("2024-03-31"), "2024-02");
   assert.equal(previousRevenueMonth(""), "");
   assert.equal(revenueMonthLabel("2025-12"), "Dezember 2025");
+});
+
+test("business history covers twelve closed months and distinguishes missing, zero and refunded net revenue", () => {
+  const stats = revenueStats({"2025-12": 500, "2026-01": 200, "2026-02": 0, "2026-12": -25, "2027-01": 999}, "2027-01-31");
+  assert.equal(stats.months.length, 12);
+  assert.deepEqual([stats.months[0], stats.months.at(-1)], ["2026-12", "2026-01"]);
+  assert.deepEqual([stats.count, stats.total, stats.min, stats.max], [3, 175, -25, 200]);
+  assert.equal(revenueStats({}, "2026-03-01").count, 0);
 });
