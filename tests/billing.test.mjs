@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { generateKeyPairSync, verify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import ts from "typescript";
 
@@ -50,25 +51,104 @@ test("production rejects a sandbox purchase outside the review account",async()=
   await assert.rejects(api.confirmApple(row,"12345","Sandbox"),/Kaufumgebung/);
 });
 
-test("Apple verification uses Worker-compatible redirects and rejects a redirect", async t => {
+test("before launch only the authenticated Apple sandbox account enters billing", t => {
   const env = globalThis.njoraBillingTestEnv;
-  const keys = await crypto.subtle.generateKey({name:"ECDSA", namedCurve:"P-256"}, true, ["sign", "verify"]);
-  const keyBytes = await crypto.subtle.exportKey("pkcs8", keys.privateKey);
-  Object.assign(env, {
-    NJORA_APPLE_ISSUER: "test-issuer", NJORA_APPLE_KEY_ID: "test-key",
-    NJORA_APPLE_PRIVATE_KEY: Buffer.from(keyBytes).toString("base64"),
-    NJORA_APPLE_SANDBOX_REVIEW_USER_ID: row.user_id
-  });
-  t.after(() => {
-    for (const key of Object.keys(env).filter(key => key.startsWith("NJORA_APPLE_"))) delete env[key];
-  });
-  let calls = 0;
+  assert.equal(api.billingEnabled(), false);
+  assert.equal(api.billingEnabled(""), false);
+  t.after(() => { delete env.NJORA_APPLE_SANDBOX_REVIEW_USER_ID; delete env.NJORA_BILLING_ENABLED; });
+  env.NJORA_APPLE_SANDBOX_REVIEW_USER_ID = "review-user";
+  assert.equal(api.billingEnabled("review-user"), true);
+  assert.equal(api.billingEnabled("existing-user"), false);
+  assert.equal(api.billingEnabled(), false);
+  env.NJORA_BILLING_ENABLED = "true";
+  assert.equal(api.billingEnabled("existing-user"), true);
+  assert.equal(api.billingEnabled(), true);
+});
+
+test("Apple review purchase, restore and provider failures", async t => {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const review = { ...row, stripe_customer: null };
+  const original = "1000001";
+  const bundle = "de.njora.finanzueberblick";
+  const writes = [];
+  let currentAccount = true;
+  const env = globalThis.njoraBillingTestEnv;
+  const bindings = {
+    NJORA_APPLE_SANDBOX_REVIEW_USER_ID: review.user_id,
+    NJORA_APPLE_ISSUER: "test-issuer",
+    NJORA_APPLE_KEY_ID: "test-key",
+    NJORA_APPLE_PRIVATE_KEY: privateKey.export({type: "pkcs8", format: "pem"}),
+    DB: { prepare: () => ({ bind: (...args) => ({ run: async () => { if (currentAccount) writes.push(args); return {meta:{changes:currentAccount ? 1 : 0}}; } }) }) }
+  };
+  Object.assign(env, bindings);
+  t.after(() => { for (const key of Object.keys(bindings)) delete env[key]; });
+
+  let appleHTTP = 200;
+  let status = 1;
+  const transaction = {
+    originalTransactionId: original, environment: "Sandbox", bundleId: bundle,
+    productId: api.appleProduct, appAccountToken: review.account_token
+  };
   t.mock.method(globalThis, "fetch", async (url, options) => {
-    calls++;
-    assert.equal(new URL(url).hostname, "api.storekit-sandbox.apple.com");
+    if (new URL(url).hostname === "api.stripe.com") return new Response(null, {status:503});
+    assert.equal(url, "https://api.storekit-sandbox.apple.com/inApps/v1/subscriptions/" + original);
     assert.equal(options.redirect, "manual");
-    return new Response(null, {status:302, headers:{Location:"https://example.invalid/"}});
+    const auth = new Headers(options.headers).get("authorization");
+    assert.ok(auth.startsWith("Bearer "));
+    const [header, claims, signature] = auth.slice(7).split(".");
+    const decode = part => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+    assert.deepEqual(decode(header), {alg: "ES256", kid: "test-key", typ: "JWT"});
+    const { iss, aud, bid, iat, exp } = decode(claims);
+    assert.equal(iss, "test-issuer");
+    assert.equal(aud, "appstoreconnect-v1");
+    assert.equal(bid, bundle);
+    assert.equal(exp - iat, 300);
+    assert.ok(verify("sha256", Buffer.from(header + "." + claims),
+      {key: publicKey, dsaEncoding: "ieee-p1363"}, Buffer.from(signature, "base64url")));
+    if (appleHTTP !== 200) return new Response(null, {status: appleHTTP});
+    const payload = Buffer.from(JSON.stringify(transaction)).toString("base64url");
+    return Response.json({ bundleId: bundle, environment: "Sandbox",
+      data: [{ lastTransactions: [{ status, signedTransactionInfo: "fixture." + payload + ".fixture" }] }] });
   });
-  await assert.rejects(api.confirmApple(row, "12345", "Sandbox"), /Apple konnte den Kauf nicht bestätigen/);
-  assert.equal(calls, 1);
+
+  const confirm = () => api.confirmApple(review, original, "Sandbox");
+  await t.test("purchase and restore link the same original transaction", async () => {
+    assert.deepEqual(await confirm(), {active: true});
+    assert.deepEqual(await confirm(), {active: true});
+    const expectedLink = [original, "Sandbox", review.user_id, review.account_token];
+    assert.deepEqual(writes, [expectedLink, expectedLink]);
+    const linked = { ...review, apple_original: original, apple_environment: "Sandbox" };
+    assert.equal((await api.membership(linked)).provider, "apple");
+  });
+  await t.test("a late purchase response cannot reattach to a recreated account", async () => {
+    currentAccount = false;
+    await assert.rejects(confirm(), /inzwischen geändert/);
+    currentAccount = true;
+  });
+  await t.test("an Apple subscriber retains access during a Stripe outage", async () => {
+    const linked = { ...review, stripe_customer:"old-customer", apple_original:original, apple_environment:"Sandbox" };
+    assert.equal((await api.membership(linked)).provider,"apple");
+    status = 2;
+    await assert.rejects(api.membership(linked));
+    status = 1;
+  });
+  await t.test("expired, revoked and mismatched purchases cannot grant access", async () => {
+    const before = writes.length;
+    status = 2;
+    assert.deepEqual(await confirm(), {active: false});
+    status = 1;
+    transaction.revocationDate = Date.now();
+    assert.deepEqual(await confirm(), {active: false});
+    delete transaction.revocationDate;
+    transaction.appAccountToken = "other-test-account";
+    await assert.rejects(confirm(), /gehört nicht zu diesem Njora-Konto/);
+    transaction.appAccountToken = review.account_token;
+    assert.equal(writes.length, before);
+  });
+  await t.test("an Apple authorization failure cannot grant access", async () => {
+    const before = writes.length;
+    appleHTTP = 401;
+    await assert.rejects(confirm(), /Apple konnte den Kauf nicht bestätigen/);
+    assert.equal(writes.length, before);
+  });
 });

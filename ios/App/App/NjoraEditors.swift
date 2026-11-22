@@ -92,19 +92,23 @@ private struct EuroInput: UIViewRepresentable {
             return acceptsAmountEdit(candidate, signed: input.signed && !input.cardBalance)
         }
 
-        @objc func changed(_ field: UITextField) { input.text = field.text ?? "" }
+        @objc func changed(_ field: UITextField) {
+            let magnitude = field.text ?? ""
+            // A carried-over card credit keeps its positive net sign while editing.
+            input.text = input.cardBalance && input.text.hasPrefix("-") && !magnitude.isEmpty
+                ? "-" + magnitude : magnitude
+        }
     }
 }
 
 private struct PlanFormStyle: ViewModifier {
-    @Environment(\.njoraAppearance) private var theme
     @State private var editingField = false
 
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
             .frame(maxWidth: 720).frame(maxWidth: .infinity)
-            .background(theme.paper)
+            .njoraNavigationBackground()
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if editingField {
@@ -129,7 +133,7 @@ extension View {
 
 struct PlanEditor: View {
     let section: PlanSection
-    let plan: Plan
+    @State private var plan: Plan
     @ObservedObject var store: NjoraStore
     @Environment(\.dismiss) private var dismiss
     @State private var item: PlanItem
@@ -138,7 +142,7 @@ struct PlanEditor: View {
 
     init(section: PlanSection, item: PlanItem, plan: Plan, store: NjoraStore) {
         self.section = section
-        self.plan = plan
+        _plan = State(initialValue: plan)
         self.store = store
         _item = State(initialValue: item)
     }
@@ -151,11 +155,6 @@ struct PlanEditor: View {
                 }
                 Section { fields }
                 Notice(text: validation.isEmpty ? store.notice(in: .editor) : validation)
-                if store.conflict {
-                    Button("Neueren Plan laden und diesen Entwurf verwerfen", role: .destructive) {
-                        Task { if await store.refresh() { dismiss() } }
-                    }
-                }
             }
             .planFormStyle()
             .navigationTitle(plan[section].contains(where: { $0.id == item.id }) ? "\(section.itemTitle) bearbeiten" : section.addTitle)
@@ -168,7 +167,7 @@ struct PlanEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(action: save) { Label("Speichern", systemImage: "checkmark") }
                         .labelStyle(.iconOnly)
-                        .disabled(store.busy || store.conflict || item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(store.busy || item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onDisappear { store.clearNotice(in: .editor) }
@@ -198,16 +197,43 @@ struct PlanEditor: View {
         case .expenses:
             Picker("Zahlungsrhythmus", selection: Binding(get: { item.frequency }, set: { frequency in
                 item.fields["frequency"] = .string(frequency.rawValue)
-                if frequency != .monthly && item.fields.integer("month") == nil {
+                if frequency != .monthly {
+                    item.fields["amount"] = .number(item.expenseAmount())
+                    item.fields.removeValue(forKey: "rateChanges")
+                }
+                if frequency == .once {
+                    item.fields["dueDate"] = item.fields["dueDate"] ?? .string(PlanDate.string(.now))
+                    item.fields.removeValue(forKey: "bookingDay")
+                } else {
+                    item.fields.removeValue(forKey: "dueDate")
+                    item.fields.removeValue(forKey: "paid")
+                }
+                if frequency == .monthly || frequency == .once {
+                    item.fields.removeValue(forKey: "month")
+                } else if item.fields.integer("month") == nil {
                     item.fields["month"] = .number(Double(PlanMetrics(plan: plan).month))
                 }
             })) {
                 ForEach(ExpenseFrequency.allCases, id: \.self) { Text($0.label).tag($0) }
             }.pickerStyle(.menu)
             amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true)
-            if item.frequency != .monthly { monthPicker() }
+            if item.frequency == .quarterly || item.frequency == .annual { monthPicker() }
             categoryPicker(default: "Wohnen")
-            bookingDayPicker()
+            if item.frequency == .once {
+                DatePicker("Fälligkeit", selection: Binding(
+                    get: { PlanDate.parse(item.fields.text("dueDate")) ?? .now },
+                    set: { item.fields["dueDate"] = .string(PlanDate.string($0)) }
+                ), displayedComponents: .date)
+                Toggle("Bezahlt", isOn: Binding(get: { item.fields.flag("paid") }, set: { item.fields["paid"] = .boolean($0) }))
+            } else { bookingDayPicker() }
+            ForEach(item.rates.filter { $0.text("date") > PlanDate.string(.now) }.map { $0.text("date") }, id: \.self) { date in
+                if let rate = item.rates.first(where: { $0.text("date") == date }) {
+                    LabeledContent("Ab " + date, value: euros(rate.amount("amount")))
+                    Button("Änderung am " + date + " entfernen", role: .destructive) {
+                        item.fields["rateChanges"] = .array(item.rates.filter { $0.text("date") != date }.map(JSONValue.object))
+                    }
+                }
+            }
         case .annual:
             amount("Jahresbetrag", key: "amount", signed: true)
             monthPicker()
@@ -237,10 +263,12 @@ struct PlanEditor: View {
                 ForEach(savingNames.keys.sorted(), id: \.self) { key in Text(savingNames[key] ?? key).tag(key) }
             }
             if item.fields.text("kind") == "security" {
-                PlanField(title: "Börsensymbol", text: Binding(get: { item.fields.text("symbol") }, set: {
+                PlanField(title: "ISIN oder Börsensymbol", text: Binding(get: { item.fields.text("symbol") }, set: {
                     if item.fields.text("symbol") != $0.uppercased() { resetPrice() }
                     item.fields["symbol"] = .string($0.uppercased())
                 })).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                Text("Mit ISIN wird der verfügbare Euro-Schlusskurs von Cboe Europe übernommen. Ohne ISIN gilt dein manueller Kurs. Der Datenstand bezeichnet die Kursdatei.")
+                    .font(.footnote).foregroundStyle(.secondary)
                 amount("Stückzahl", key: "quantity", unit: "Stück")
                 amount("Kurs je Stück in Euro", key: "priceEur")
             } else {
@@ -258,7 +286,7 @@ struct PlanEditor: View {
         PlanField(title: title, text: Binding(
             get: {
                 if let edited = amounts[key] { return edited }
-                let value = item.fields.amount(key)
+                let value = section == .expenses && key == "amount" ? item.expenseAmount() : item.fields.amount(key)
                 return value == 0 ? "" : editableAmount(value)
             },
             set: { amounts[key] = $0 }
@@ -317,10 +345,13 @@ struct PlanEditor: View {
         for (key, value) in amounts {
             guard let number = germanAmount(value),
                   key != "termMonths" || (number >= 0 && number.rounded() == number),
-                  key != "interestRate" || number >= 0 else {
+                  !([PlanSection.loans, .goals, .savings].contains(section)) || number >= 0 else {
                 validation = "Bitte prüfe deine Beträge und Vertragsdaten."; return
             }
             changed.fields[key] = .number(number)
+            if section == .expenses && key == "amount" && !changed.rates.isEmpty {
+                changed.fields["rateChanges"] = .array(changed.rates.filter { $0.text("date") > PlanDate.string(.now) }.map(JSONValue.object))
+            }
         }
         if (section == .expenses || section == .loans) && changed.fields.text("category").utf16.count > 80 {
             validation = "Die Kategorie darf höchstens 80 Zeichen lang sein."; return
@@ -350,7 +381,7 @@ struct PlanEditor: View {
             return
         }
         let result = revised
-        Task { if await store.save(result) { dismiss() } }
+        Task { if await store.save(result, basedOn: plan) { dismiss() } }
     }
 }
 
@@ -359,19 +390,51 @@ func editableAmount(_ value: Double) -> String {
 }
 
 struct CheckInView: View {
-    let plan: Plan
+    @State private var plan: Plan
+    init(plan: Plan, store: NjoraStore) {
+        _plan = State(initialValue: plan)
+        _note = State(initialValue: plan[.history].first { $0.fields.text("date") == PlanDate.string(.now) }?.fields.text("note") ?? "")
+        self.store = store
+    }
     @ObservedObject var store: NjoraStore
     @Environment(\.dismiss) private var dismiss
     @State private var balances: [String: String] = [:]
     @State private var day = Date()
-    @State private var note = ""
+    @State private var note: String
+    @State private var drafts: [String: (balances: [String: String], note: String)] = [:]
+
+    private var checkInDate: Binding<Date> {
+        Binding(get: { day }, set: { selected in
+            let oldDate = PlanDate.string(day), selectedDate = PlanDate.string(selected)
+            guard oldDate != selectedDate else { return }
+            drafts[oldDate] = (balances, note)
+            day = selected
+            if let draft = drafts[selectedDate] {
+                balances = draft.balances
+                note = draft.note
+                return
+            }
+            let snapshot = plan[.history].first { $0.fields.text("date") == selectedDate }
+            note = snapshot?.fields.text("note") ?? ""
+            if selectedDate != PlanDate.string(.now), let historical = snapshot?.fields["balances"]?.object {
+                balances = Dictionary(uniqueKeysWithValues: plan[.accounts].map { ($0.id, editableAmount(historical.amount($0.id))) })
+            } else {
+                balances = [:]
+            }
+        })
+    }
     @State private var validation = ""
 
     var body: some View {
         NavigationStack {
             Form {
-                DatePicker("Datum", selection: $day, in: ...Date(), displayedComponents: .date)
-                if PlanDate.string(day) != PlanDate.string(.now) { Text("Dieser Nachtrag wird nur im Verlauf gespeichert.").font(.footnote) }
+                DatePicker("Datum", selection: checkInDate, in: ...Date(), displayedComponents: .date)
+                if PlanDate.string(day) != PlanDate.string(.now) {
+                    let existing = plan[.history].contains { $0.fields.text("date") == PlanDate.string(day) }
+                    Text(existing ? "Du bearbeitest den Check-in für diesen Tag. Deine aktuellen Kontostände bleiben erhalten."
+                         : "Für diesen Tag fehlt ein Check-in. Trage die damaligen Beträge ein. Als Ausgangswerte siehst du deine heutigen Kontostände.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("Kontostände") {
                     ForEach(plan[.accounts]) { item in
                         PlanField(title: item.name, text: Binding(
@@ -382,11 +445,6 @@ struct CheckInView: View {
                 }
                 PlanField(title: "Notiz", text: $note, prompt: "Optional")
                 Notice(text: validation.isEmpty ? store.notice(in: .editor) : validation)
-                if store.conflict {
-                    Button("Neueren Plan laden und Entwurf verwerfen", role: .destructive) {
-                        Task { if await store.refresh() { dismiss() } }
-                    }
-                }
             }
             .planFormStyle()
             .onDisappear { store.clearNotice(in: .editor) }
@@ -396,7 +454,7 @@ struct CheckInView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() }.disabled(store.busy) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern", action: save).disabled(store.busy || store.conflict || plan[.accounts].isEmpty)
+                    Button("Speichern", action: save).disabled(store.busy || plan[.accounts].isEmpty)
                 }
             }
         }
@@ -418,26 +476,7 @@ struct CheckInView: View {
         var changed = plan
         changed.recordCheckIn(accounts: accounts, date: date, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
         let result = changed
-        Task { if await store.save(result) { dismiss() } }
-    }
-}
-
-enum NjoraReminder {
-    static let identifier = "njora.check-in"
-    static func enable(cadence: String) async throws -> Bool {
-        let center = UNUserNotificationCenter.current()
-        guard try await center.requestAuthorization(options: [.alert, .sound]) else { return false }
-        var components = DateComponents()
-        components.hour = 19
-        components.minute = 0
-        if cadence != "daily" { components.weekday = 1 }
-        let content = UNMutableNotificationContent()
-        content.title = "Zeit für deinen Njora-Check-in"
-        content.body = "Aktualisiere deine Kontostände und behalte deinen Überblick."
-        content.sound = .default
-        try await center.add(UNNotificationRequest(identifier: identifier, content: content,
-            trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: true)))
-        return true
+        Task { if await store.save(result, basedOn: plan) { dismiss() } }
     }
 }
 
@@ -462,13 +501,16 @@ struct SettingsView: View {
     @State private var importing = false
     @State private var exporting = false
     @State private var importPreview: Plan?
+    @State private var importBaseline: Plan?
     @State private var exportDocument: PlanFile?
     @State private var notice = ""
     @State private var reminderActive = false
+    @State private var resolveConflict = false
+    @State private var profileBaseline: Plan?
 
     var body: some View {
         Form {
-            if let billing = store.billing {
+            if let billing = store.billing, billing.provider == "apple" || billing.provider == "stripe" {
                 Section("Abonnement") {
                     if billing.provider == "apple" {
                         Link("Apple-Abo verwalten oder kündigen", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
@@ -505,12 +547,14 @@ struct SettingsView: View {
             }
             Section("Profil") {
                 if let email = store.user?.email { Text(email).foregroundStyle(.secondary) }
-                PlanField(title: "Name des Finanzplans", text: $name)
-                Picker("Check-in-Rhythmus", selection: $cadence) {
-                    Text("Wöchentlich").tag("weekly"); Text("Täglich").tag("daily")
+                if store.plan != nil, store.billing?.active != false {
+                    PlanField(title: "Name des Finanzplans", text: $name)
+                    Picker("Check-in-Rhythmus", selection: $cadence) {
+                        Text("Wöchentlich").tag("weekly"); Text("Täglich").tag("daily")
+                    }
+                    Button("Einstellungen speichern", action: saveProfile)
+                        .disabled(store.busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.utf16.count > 80)
                 }
-                Button("Einstellungen speichern", action: saveProfile)
-                    .disabled(store.busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.utf16.count > 80)
             }
             Section("Erinnerung") {
                 Text(reminderActive ? "Check-in-Erinnerung aktiv." : "Erinnerung täglich oder sonntags um 19 Uhr, passend zu deinem gespeicherten Rhythmus.")
@@ -518,15 +562,22 @@ struct SettingsView: View {
                 Button(reminderActive ? "Erinnerung aktualisieren" : "Erinnerung aktivieren") { Task { await enableReminder() } }
                 if reminderActive {
                     Button("Erinnerung ausschalten") {
-                        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [NjoraReminder.identifier])
+                        NjoraReminder.disable()
                         reminderActive = false
                     }
                 }
             }
             Section("Finanzplan") {
-                Button("Sicherung als JSON exportieren", action: export)
-                Button("JSON-Sicherung importieren") { importing = true }
-                Button("Plan neu laden") { Task { await store.refresh(in: .settings) } }
+                Button("Sicherung als JSON exportieren", action: export).disabled(store.plan == nil)
+                Button("JSON-Sicherung importieren") { importing = true }.disabled(store.billing?.active == false)
+                if !store.syncStatus.isEmpty { Text(store.syncStatus).font(.footnote).foregroundStyle(.secondary) }
+                if store.conflict {
+                    Button("Versionskonflikt lösen") { resolveConflict = true }
+                } else {
+                    Button(store.syncing ? "Wird abgeglichen …" : "Jetzt mit der Cloud abgleichen") {
+                        Task { await store.refresh(in: .settings) }
+                    }.disabled(store.syncing)
+                }
             }
             Section("Konto") {
                 Button("Abmelden") {
@@ -542,10 +593,17 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
         .task {
+            profileBaseline = store.plan
             name = store.plan?.name ?? ""
             cadence = store.plan?.cadence ?? "weekly"
             reminderActive = await UNUserNotificationCenter.current().pendingNotificationRequests().contains { $0.identifier == NjoraReminder.identifier }
         }
+        .confirmationDialog("Welche Werte möchtest du bei Überschneidungen behalten?", isPresented: $resolveConflict,
+                            titleVisibility: .visible) {
+            Button("Werte dieses Geräts behalten") { store.resolve(.device) }
+            Button("Werte aus der Cloud behalten") { store.resolve(.cloud) }
+            Button("Abbrechen", role: .cancel) { }
+        } message: { Text("Unabhängige Änderungen aus beiden Versionen werden übernommen.") }
         .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .json,
                       defaultFilename: "njora-sicherung-\(PlanDate.string(.now))") { result in
             exportDocument = nil
@@ -556,10 +614,17 @@ struct SettingsView: View {
                 let url = try result.get()
                 let accessed = url.startAccessingSecurityScopedResource()
                 defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 500_000 else {
+                guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= Plan.maximumBackupBytes else {
                     throw CocoaError(.fileReadTooLarge)
                 }
+                importBaseline = store.plan
                 importPreview = try Plan.decodeBackup(Data(contentsOf: url))
+            } catch CocoaError.userCancelled {
+                return
+            } catch let limit as PlanStorageError {
+                notice = limit.localizedDescription
+            } catch CocoaError.fileReadTooLarge {
+                notice = "Die Sicherungsdatei ist zu groß."
             } catch { notice = "Die ausgewählte Datei ist keine gültige Njora-Sicherung." }
         }
         .confirmationDialog("Aktuellen Plan durch die Sicherung ersetzen?", isPresented: Binding(
@@ -568,7 +633,7 @@ struct SettingsView: View {
             if let incoming = importPreview {
                 Button("Sicherung übernehmen", role: .destructive) {
                     notice = ""
-                    Task { if await store.save(incoming, in: .settings) { name = incoming.name; cadence = incoming.cadence } }
+                    Task { if await store.save(incoming, basedOn: importBaseline, in: .settings) { profileBaseline = incoming; name = incoming.name; cadence = incoming.cadence } }
                 }
             }
             Button("Abbrechen", role: .cancel) { importPreview = nil }
@@ -577,23 +642,25 @@ struct SettingsView: View {
                 Text("\(incoming.name) · \(incoming[.accounts].count) Konten · \(incoming[.loans].count) Kredite · \(incoming[.history].count) Check-ins")
             }
         }
-        .confirmationDialog("Konto und Finanzplan dauerhaft löschen?", isPresented: $delete, titleVisibility: .visible) {
-            Button("Konto endgültig löschen", role: .destructive) {
-                Task { await store.endSession(deleteAccount: true, in: .settings); if store.state == .signedOut { dismiss() } }
-            }
-        } message: {
-            Text("Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.")
+        .accountDeletionDialog(isPresented: $delete) {
+            Task { await store.endSession(deleteAccount: true, in: .settings); if store.state == .signedOut { dismiss() } }
         }
     }
 
     private func saveProfile() {
-        guard var changed = store.plan else { return }
+        guard let baseline = profileBaseline else { return }
+        var changed = baseline
         changed.fields["name"] = .string(name.trimmingCharacters(in: .whitespacesAndNewlines))
         changed.fields["checkInCadence"] = .string(cadence)
         let plan = changed
         notice = ""
         Task {
-            if await store.save(plan, in: .settings), reminderActive { await enableReminder() }
+            if await store.save(plan, basedOn: baseline, in: .settings), let saved = store.plan {
+                profileBaseline = saved
+                name = saved.name
+                cadence = saved.cadence
+                if reminderActive { await enableReminder() }
+            }
         }
     }
 
@@ -608,7 +675,7 @@ struct SettingsView: View {
         guard let plan = store.plan else { return }
         do {
             let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             exportDocument = PlanFile(data: try encoder.encode(plan))
             exporting = true
         } catch { notice = "Die Sicherung konnte nicht erstellt werden." }

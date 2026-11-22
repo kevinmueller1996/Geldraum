@@ -1,10 +1,11 @@
+import { validCalendarDay } from "./plan-validation";
 import type { Plan } from "./page";
 
 const amount = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 const day = (date: string) => new Date(date + "T12:00:00").toLocaleDateString("de-DE", {day:"numeric", month:"short", year:"numeric"});
 
 export default function BalanceHistory({plan}: {plan:Plan}) {
-  const entries = [...plan.snapshots].sort((a,b) => a.date.localeCompare(b.date)).map(entry => ({
+  const entries = plan.snapshots.filter(entry => validCalendarDay(entry.date)).sort((a,b) => a.date.localeCompare(b.date)).map(entry => ({
     ...entry, value: entry.netBalance ?? plan.accounts.reduce((n,a) => n + (a.type === "credit" ? -1 : 1) * (entry.balances[a.id] ?? 0), 0),
   }));
   if (!entries.length) return null;

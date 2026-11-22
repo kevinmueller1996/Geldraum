@@ -1,3 +1,4 @@
+import { readFormObject } from "../../../request-body";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { gettexSymbol, hasGettexSettings, loadTrades, marketConfig, marketProvider, marketUnavailable } from "../../../market/gettex";
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return json({ error: "JSON erwartet." }, 415);
   if (!await isRequestAuthenticated(request)) return json({ authenticated: false }, 401);
 
-  const body = await request.json().catch(() => null) as { symbols?: unknown } | null;
+  const body = await readFormObject(request);
   if (!Array.isArray(body?.symbols) || body.symbols.length < 1 || body.symbols.length > 20) {
     return json({ error: "Zwischen 1 und 20 Börsensymbole erwartet." }, 400);
   }

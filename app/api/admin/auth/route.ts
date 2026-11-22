@@ -1,3 +1,4 @@
+import { readFormObject } from "../../../request-body";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeEmail, validPassword, verifyPasswordAccount } from "../../../password-auth";
@@ -37,7 +38,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json() as { email?: unknown; password?: unknown };
+    const body = await readFormObject(request);
+    if (!body) return json({ error: "Ungültige Anfrage." }, 400);
     const email = normalizeEmail(body.email);
     if (!email || !validPassword(body.password)) return json({ authenticated: false }, 401);
     const result = await verifyPasswordAccount(email, body.password);

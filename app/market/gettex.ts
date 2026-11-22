@@ -113,7 +113,7 @@ async function request(config: MarketConfig, url: URL, accept: string, timeout: 
   const response = await fetch(url, {
     headers: { Authorization: config.authorization, Accept: accept },
     cache: "no-store",
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(timeout),
   });
   if (!response.ok) throw new Error("dxFeed request failed");

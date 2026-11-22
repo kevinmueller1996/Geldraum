@@ -57,7 +57,7 @@ test("only verified provider symbols are transmitted, with authorization in the 
   assert.throws(() => marketConfig({ ...env, NJORA_DXFEED_AUTHORIZATION: "" }));
   const fetchMock = t.mock.method(globalThis, "fetch", async (url, options) => {
     assert.equal(options.headers.Authorization, "Basic Zml4dHVyZTp0ZXN0");
-    assert.equal(options.redirect, "error");
+    assert.equal(options.redirect, "manual");
     assert.equal(options.cache, "no-store");
     if (url.pathname === "/ipf") return new Response(profiles);
     assert.equal(url.pathname, "/rest/events.json");

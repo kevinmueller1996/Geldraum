@@ -1,6 +1,6 @@
 import type { Plan } from "../page";
 import { isPlan, validCalendarDay } from "../plan-validation";
-import { expenseAmount, localISO, monthlyExpense, monthEndForecast, unifiedExpenses } from "../recurring-costs";
+import { averageMonthlyCosts, expenseAmount, localISO, monthEndForecast, unifiedExpenses } from "../recurring-costs";
 
 type Invoice = { type: "invoice"; name: string; amount: number; dueDate: string; category?: string };
 type Rate = { type: "rate"; name: string; amount: number; effectiveDate: string };
@@ -21,10 +21,11 @@ function planData(value: unknown) {
   return value as unknown as Plan;
 }
 
-function rounded(value: number) { return Number(value.toFixed(2)); }
+const cents = new Intl.NumberFormat("en-US", {useGrouping: false, maximumFractionDigits: 2});
+function rounded(value: number) { return Number(cents.format(value)); }
 
 function netBalance(plan: Plan) {
-  return rounded(plan.accounts.reduce((total, a) => total + (a.type === "credit" ? -a.balance : a.balance), 0));
+  return plan.accounts.reduce((total, a) => total + (a.type === "credit" ? -a.balance : a.balance), 0);
 }
 
 function money(value: unknown) {
@@ -40,18 +41,17 @@ export function readFinance(value: unknown, query: "month" | "due" | "scenario",
   const date = localISO(today);
   const expenses = unifiedExpenses(plan.expenses, plan.annualCosts);
   const currentIncome = plan.incomes.filter(i => !i.annual).reduce((total, i) => total + i.amount, 0);
-  const loans = plan.commitments.reduce((sum, loan) => sum + Math.max(0, loan.payment + (loan.extraPayment ?? 0)), 0);
-  const costs = rounded(expenses.reduce((total, item) => total + monthlyExpense(item, date), loans));
-  const available = rounded(currentIncome - costs);
+  const costs = averageMonthlyCosts(expenses, plan.commitments, date);
+  const available = currentIncome - costs;
   if (query === "scenario") {
     const extra = money(args.monthlyDelta);
-    return {date, currency: "EUR", monthlyAvailable: available, additionalMonthlyExpense: extra,
+    return {date, currency: "EUR", monthlyAvailable: rounded(available), additionalMonthlyExpense: extra,
       simulatedMonthlyAvailable: rounded(available - extra)};
   }
   const balance = netBalance(plan);
   const forecast = monthEndForecast(balance, today, {...plan, expenses});
-  const summary = {date, currency: "EUR", balance, lastCheckIn: plan.snapshots.map(s => s.date).sort().at(-1) ?? null,
-    regularMonthlyIncome: rounded(currentIncome), averageMonthlyFixedCosts: costs, monthlyAvailable: available,
+  const summary = {date, currency: "EUR", balance: rounded(balance), lastCheckIn: plan.snapshots.map(s => s.date).sort().at(-1) ?? null,
+    regularMonthlyIncome: rounded(currentIncome), averageMonthlyFixedCosts: rounded(costs), monthlyAvailable: rounded(available),
     datedMonthEndBalance: rounded(forecast.datedBalance), monthEndLow: rounded(forecast.low), monthEndHigh: rounded(forecast.high)};
   if (query === "month") return summary;
   if (query !== "due") throw new Error("Unbekannte Auswertung.");

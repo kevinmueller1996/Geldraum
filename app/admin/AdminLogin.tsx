@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { AdminBrand } from "./Brand";
 import styles from "./admin.module.css";
@@ -43,7 +44,7 @@ export function AdminLogin() {
         {error ? <p className={styles.error} role="alert">{error}</p> : null}
         <button type="submit" disabled={loading}>{loading ? "Anmeldung wird geprüft …" : "Sicher anmelden"}<span>→</span></button>
       </form>
-      <a className={styles.back} href="/">Zur Njora-App ↗</a>
+      <Link prefetch={false} className={styles.back} href="/">Zur Njora-App ↗</Link>
     </section>
     <aside className={styles.loginVisual} aria-hidden="true"><span>Privacy by Design</span><strong>Nur sehen,<br />was nötig ist.</strong><div><i /><i /><i /></div><p>Keine Klarnamen.<br />Keine Finanzinhalte.</p></aside>
   </main>;

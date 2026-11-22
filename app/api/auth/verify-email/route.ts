@@ -1,3 +1,4 @@
+import { readFormObject } from "../../../request-body";
 import { NextRequest, NextResponse } from "next/server";
 import { authPublicOrigin } from "../../../auth-email";
 import { confirmEmailVerification, setSessionCookie, validPassword } from "../../../password-auth";
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
   if (origin !== new URL(request.url).origin || !request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return NextResponse.json({ error: "Unzulässige Anfrage." }, { status: 403 });
   }
-  const body = await request.json().catch(() => null) as { token?: unknown; password?: unknown } | null;
+  const body = await readFormObject(request);
   if (!validPassword(body?.password)) {
     return NextResponse.json({ error: "Das Passwort muss zwischen 10 und 72 Zeichen lang sein." }, { status: 400 });
   }

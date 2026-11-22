@@ -1,3 +1,5 @@
+import { ensurePlanSchema } from "../../../plan-schema";
+import { isAdminAuthenticated } from "../../../admin/admin-auth";
 import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
@@ -13,16 +15,6 @@ type TesterRow = {
   plan_revision: number | null;
   plan_updated_at: string | null;
 };
-
-const USER_ACTIVITY_TABLE_SQL = `CREATE TABLE IF NOT EXISTS user_activity (
-  user_id TEXT PRIMARY KEY NOT NULL,
-  email_mask TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  access_count INTEGER NOT NULL DEFAULT 1,
-  source TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-)`;
 
 function json(data: unknown, status = 200) {
   return NextResponse.json(data, {
@@ -58,14 +50,13 @@ export async function GET(request: NextRequest) {
   const runtimeEnv = env as typeof env & { GELDRAUM_ADMIN_TOKEN?: string };
   const expected = runtimeEnv.GELDRAUM_ADMIN_TOKEN;
   const provided = request.headers.get("x-njora-admin-token") ?? "";
-  if (!expected || !provided || !(await validToken(provided, expected))) {
+  const tokenAuthorized = expected && provided && await validToken(provided, expected);
+  if (!tokenAuthorized && !await isAdminAuthenticated()) {
     return json({ error: "Nicht autorisiert." }, 401);
   }
 
   try {
-    const db = env.DB;
-    if (!db) throw new Error("D1 binding DB is unavailable");
-    await db.prepare(USER_ACTIVITY_TABLE_SQL).run();
+    const db = await ensurePlanSchema();
     const localPreviewId = await userId("local-preview@geldraum.app");
     const result = await db.prepare(`SELECT
         users.id AS user_id,

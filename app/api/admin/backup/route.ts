@@ -1,3 +1,5 @@
+import { ensureAuthSchema } from "../../../password-auth";
+import { ensurePlanSchema } from "../../../plan-schema";
 import { env } from "cloudflare:workers";
 import { NextRequest } from "next/server";
 import { equalSecret, isAdminAuthenticated } from "../../../admin/admin-auth";
@@ -25,8 +27,8 @@ export async function GET(request: NextRequest) {
   if (!tokenAuthenticated && !await isAdminAuthenticated()) return jsonError("Nicht autorisiert.", 401);
 
   try {
-    const db = env.DB;
-    if (!db) throw new Error("D1 binding DB is unavailable");
+    await ensureAuthSchema();
+    const db = await ensurePlanSchema();
 
     const hasSubscriptions = await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='njora_subscribers'").first();
     const results = await db.batch([
@@ -43,7 +45,7 @@ export async function GET(request: NextRequest) {
       format: "njora-database-backup",
       version: subscribers ? 2 : 1,
       exportedAt,
-      excludes: ["auth_sessions", "auth_action_tokens", "auth_attempts"],
+      excludes: ["auth_sessions", "auth_action_tokens", "auth_attempts", "njora_plugin_grants", "njora_plugin_proposals", "njora_cancellation_limits"],
       tables: {
         users,
         finance_plans: financePlans,

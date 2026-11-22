@@ -24,8 +24,10 @@ function fields(line: string) {
 export function parseCloses(csv: string, requested: string): Snapshot {
   const [descriptor, heading, ...rows] = csv.trimEnd().split(/\r?\n/);
   const meta = Object.fromEntries(descriptor.split(",").map(pair => pair.split("=")));
+  const created = Date.parse(meta.created);
+  if (!Number.isFinite(created) || new Date(created).toISOString().slice(0,10) !== meta.created) throw Error("Invalid Cboe snapshot date");
   if (meta.environment !== "PROD" || meta.warning !== "" || !/^\d{4}-\d{2}-\d{2}$/.test(meta.created) ||
-      meta.created > requested || Date.parse(requested) - Date.parse(meta.created) > 7 * 86400000) throw Error("Invalid Cboe snapshot");
+      meta.created > requested || Date.parse(requested) - created > 7 * 86400000) throw Error("Invalid Cboe snapshot");
   const columns = fields(heading ?? "");
   const [isin, currency, live, kind, primary, close] = ["isin","currency","live","asset_class","mic","bats_prev_close"].map(k => columns.indexOf(k));
   if ([isin,currency,live,kind,primary,close].includes(-1)) throw Error("Unknown Cboe columns");

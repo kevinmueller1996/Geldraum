@@ -14,8 +14,11 @@ export function applyClosingPrices(plan: Plan | null, data?: ClosingPrices | nul
   const savings = plan.savings.map(item => {
     const price = data.prices[securityISIN(item.symbol)];
     if (item.kind !== "security" || !Number.isFinite(price) || price <= 0) return item;
-    if (item.quoteVenue === closeVenue && ((item.quoteUpdatedAt ?? "") > data.asOf ||
-        (item.quoteUpdatedAt === data.asOf && item.priceEur === price))) return item;
+    // A manual valuation entered after this daily file must survive a sync.
+    // Imported and native timestamps are ISO dates or UTC ISO timestamps.
+    const previousDay = item.quoteUpdatedAt?.slice(0, 10);
+    if (previousDay && (previousDay > data.asOf || (item.quoteVenue === "Manuell" && previousDay === data.asOf))) return item;
+    if (item.quoteVenue === closeVenue && item.quoteUpdatedAt === data.asOf && item.priceEur === price) return item;
     changed = true;
     return { ...item, price, priceEur: price, currency: "EUR", quoteVenue: closeVenue, quoteUpdatedAt: data.asOf };
   });

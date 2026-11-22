@@ -1,11 +1,12 @@
+import { readBodyBytes } from "../../request-body";
 import { closingPrices } from "../../market/cboe";
 import { securityISIN } from "../../market/closing-prices";
 import { browserSession, wrongSession } from "../../browser-session-server";
-import { billingEnabled, membership, removeBillingAccount, subscriber } from "../../billing/subscription";
+import { BillingCancellationUnconfirmed, billingEnabled, membership, removeBillingAccount, subscriber } from "../../billing/subscription";
 import { normalizePlanCategories } from "../../recurring-costs";
 import { isPlan } from "../../plan-validation";
 import { markerName } from "../../browser-session";
-import { env } from "cloudflare:workers";
+import { ensurePlanSchema } from "../../plan-schema";
 import { NextRequest, NextResponse } from "next/server";
 import { isLocalHostname } from "../../local-host";
 import { clearSessionCookie, ensureAuthSchema, getSessionIdentity, maskEmail, userId } from "../../password-auth";
@@ -13,38 +14,7 @@ import { needsCloudflareBackendProxy, proxyApiRequest } from "../../vercel/proxy
 
 export const dynamic = "force-dynamic";
 
-type Identity = { id: string; displayName: string; email: string; emailMask: string; local: boolean };
-
-const USER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY NOT NULL,
-  display_name TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-)`;
-
-const PLAN_TABLE_SQL = `CREATE TABLE IF NOT EXISTS finance_plans (
-  user_id TEXT PRIMARY KEY NOT NULL,
-  plan_json TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1,
-  revision INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-)`;
-
-const PLAN_UPDATED_INDEX_SQL = "CREATE INDEX IF NOT EXISTS finance_plans_updated_at_idx ON finance_plans(updated_at)";
-
-const USER_ACTIVITY_TABLE_SQL = `CREATE TABLE IF NOT EXISTS user_activity (
-  user_id TEXT PRIMARY KEY NOT NULL,
-  email_mask TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  access_count INTEGER NOT NULL DEFAULT 1,
-  source TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-)`;
-
-const USER_ACTIVITY_LAST_SEEN_INDEX_SQL = "CREATE INDEX IF NOT EXISTS user_activity_last_seen_at_idx ON user_activity(last_seen_at)";
+type Identity = { id: string; displayName: string; email: string; emailMask: string; local: boolean; accountCreatedAt?: string };
 
 function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -68,36 +38,23 @@ async function requestIdentity(request: NextRequest): Promise<Identity | null> {
   return null;
 }
 
-async function ensureSchema() {
-  const db = env.DB;
-  if (!db) throw new Error("D1 binding DB is unavailable");
-  await db.batch([
-    db.prepare(USER_TABLE_SQL),
-    db.prepare(PLAN_TABLE_SQL),
-    db.prepare(PLAN_UPDATED_INDEX_SQL),
-    db.prepare(USER_ACTIVITY_TABLE_SQL),
-    db.prepare(USER_ACTIVITY_LAST_SEEN_INDEX_SQL),
-  ]);
-  return db;
-}
-
 async function upsertUser(identity: Identity, recordAccess = false) {
-  const db = await ensureSchema();
+  const db = await ensurePlanSchema();
   const id = identity.id;
   const now = new Date().toISOString();
-  await db.prepare(`INSERT INTO users (id, display_name, created_at, updated_at)
+  if (identity.local) await db.prepare(`INSERT INTO users (id, display_name, created_at, updated_at)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at`)
+    ON CONFLICT(id) DO NOTHING`)
     .bind(id, identity.displayName, now, now).run();
   if (recordAccess) {
     await db.prepare(`INSERT INTO user_activity (user_id, email_mask, first_seen_at, last_seen_at, access_count, source)
-      VALUES (?, ?, ?, ?, 1, ?)
+      SELECT id, ?, ?, ?, 1, ? FROM users WHERE id=? AND (? IS NULL OR created_at=?)
       ON CONFLICT(user_id) DO UPDATE SET
         email_mask = excluded.email_mask,
         last_seen_at = excluded.last_seen_at,
         access_count = user_activity.access_count + 1,
         source = excluded.source`)
-      .bind(id, identity.emailMask, now, now, identity.local ? "local" : "password").run();
+      .bind(identity.emailMask, now, now, identity.local ? "local" : "password", id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null).run();
   }
   return { db, id, now };
 }
@@ -148,14 +105,19 @@ async function getAccount(request: NextRequest) {
 
   try {
     const { db, id } = await upsertUser(identity, true);
-    const billing = billingEnabled() && !identity.local ? await membership(await subscriber(id)) : null;
-    const result = await db.prepare("SELECT plan_json, revision, updated_at FROM finance_plans WHERE user_id = ?").bind(id).first<{ plan_json: string; revision: number; updated_at: string }>();
+    const billing = billingEnabled(id) && !identity.local ? await membership(await subscriber(id, identity.accountCreatedAt)) : null;
+    const result = await db.prepare(`SELECT users.created_at, p.plan_json, p.revision, p.updated_at
+      FROM users LEFT JOIN finance_plans p ON p.user_id=users.id
+      WHERE users.id=? AND (? IS NULL OR users.created_at=?)`)
+      .bind(id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null)
+      .first<{ created_at: string; plan_json: string | null; revision: number | null; updated_at: string | null }>();
+    if (!result) return json({ authenticated: false }, 401);
     return json({
       authenticated: true, billing,
-      user: { displayName: identity.displayName, email: identity.email, local: identity.local },
-      plan: result ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
-      revision: result?.revision ?? null,
-      updatedAt: result?.updated_at ?? null,
+      user: { displayName: identity.displayName, email: identity.email, local: identity.local, accountCreatedAt: result.created_at },
+      plan: result.plan_json ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
+      revision: result.revision,
+      updatedAt: result.updated_at,
     });
   } catch {
     return json({ error: "Dein Konto konnte gerade nicht geladen werden." }, 503);
@@ -171,26 +133,34 @@ export async function PUT(request: NextRequest) {
   if (!identity) return json({ authenticated: false }, 401);
 
   try {
-    if (billingEnabled() && !identity.local && !(await membership(await subscriber(identity.id))).active) return json({error:"Für Änderungen brauchst du ein aktives Njora-Abo."},402);
-    const body = await request.json() as { plan?: unknown; revision?: number | null };
-    if (!isPlan(body.plan)) return json({ error: "Ungültiger Finanzplan." }, 400);
+    if (billingEnabled(identity.id) && !identity.local && !(await membership(await subscriber(identity.id, identity.accountCreatedAt))).active) return json({error:"Für Änderungen brauchst du ein aktives Njora-Abo."},402);
+    let body: { plan?: unknown; revision?: number | null } | null;
+    try {
+      const bytes = await readBodyBytes(request, 600_000);
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch (error) {
+      if (error instanceof RangeError) return json({ error: "Der Finanzplan ist zu groß." }, 413);
+      return json({ error: "Ungültiger Finanzplan." }, 400);
+    }
+    if (!body || !isPlan(body.plan)) return json({ error: "Ungültiger Finanzplan." }, 400);
     const planJson = JSON.stringify(normalizePlanCategories(body.plan));
     if (new TextEncoder().encode(planJson).byteLength > 500_000) return json({ error: "Der Finanzplan ist zu groß." }, 413);
 
     const { db, id, now } = await upsertUser(identity);
     const existing = await db.prepare("SELECT revision FROM finance_plans WHERE user_id = ?").bind(id).first<{ revision: number }>();
     if (!existing) {
+      if (body.revision != null) return json({ error: "Der bisherige Finanzplan existiert nicht mehr.", revision: null }, 409);
       const inserted = await db.prepare(`INSERT INTO finance_plans (user_id, plan_json, schema_version, revision, created_at, updated_at)
-        VALUES (?, ?, 1, 1, ?, ?) ON CONFLICT(user_id) DO NOTHING`)
-        .bind(id, planJson, now, now).run();
+        SELECT id, ?, 1, 1, ?, ? FROM users WHERE id=? AND (? IS NULL OR created_at=?) ON CONFLICT(user_id) DO NOTHING`)
+        .bind(planJson, now, now, id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null).run();
       if (!inserted.meta.changes) return json({ error: "Der Finanzplan wurde zwischenzeitlich geändert." }, 409);
       return json({ saved: true, revision: 1, updatedAt: now });
     }
 
     if (body.revision !== existing.revision) return json({ error: "Der Finanzplan wurde zwischenzeitlich auf einem anderen Gerät geändert.", revision: existing.revision }, 409);
     const nextRevision = existing.revision + 1;
-    const result = await db.prepare("UPDATE finance_plans SET plan_json = ?, schema_version = 1, revision = ?, updated_at = ? WHERE user_id = ? AND revision = ?")
-      .bind(planJson, nextRevision, now, id, existing.revision).run();
+    const result = await db.prepare("UPDATE finance_plans SET plan_json = ?, schema_version = 1, revision = ?, updated_at = ? WHERE user_id = ? AND revision = ? AND EXISTS (SELECT 1 FROM users WHERE id=finance_plans.user_id AND (? IS NULL OR created_at=?))")
+      .bind(planJson, nextRevision, now, id, existing.revision, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null).run();
     if (!result.meta.changes) return json({ error: "Der Finanzplan wurde zwischenzeitlich geändert." }, 409);
     return json({ saved: true, revision: nextRevision, updatedAt: now });
   } catch {
@@ -207,22 +177,32 @@ export async function DELETE(request: NextRequest) {
 
   try {
     await ensureAuthSchema();
-    const db = await ensureSchema();
+    const db = await ensurePlanSchema();
     const id = identity.id;
-    await db.batch([
-      ...await removeBillingAccount(id),
-      db.prepare("DELETE FROM finance_plans WHERE user_id = ?").bind(id),
-      db.prepare("DELETE FROM user_activity WHERE user_id = ?").bind(id),
-      db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").bind(id),
-      db.prepare("DELETE FROM auth_action_tokens WHERE user_id = ?").bind(id),
-      db.prepare("DELETE FROM auth_credentials WHERE user_id = ?").bind(id),
-      db.prepare("DELETE FROM auth_attempts WHERE email_hash = ?").bind(id),
-      db.prepare("DELETE FROM users WHERE id = ?").bind(id),
+    // Provider cancellation can take time. Tie every write to the account which
+    // authorized the request, even if the email is registered again in between.
+    const created = identity.accountCreatedAt ?? null;
+    // If a checkout linked a customer after cancellation began, leave the data
+    // intact so a retry can cancel that customer before removing the account.
+    const noSubscriber = " AND NOT EXISTS (SELECT 1 FROM njora_subscribers WHERE user_id=users.id)";
+    const guard = " AND EXISTS (SELECT 1 FROM users WHERE id=? AND (? IS NULL OR created_at=?)" + noSubscriber + ")";
+    const owned = (sql: string) => db.prepare(sql + guard).bind(id, id, created, created);
+    const deleted = await db.batch([
+      ...await removeBillingAccount(id, created),
+      owned("DELETE FROM finance_plans WHERE user_id=?"),
+      owned("DELETE FROM user_activity WHERE user_id=?"),
+      owned("DELETE FROM auth_sessions WHERE user_id=?"),
+      owned("DELETE FROM auth_action_tokens WHERE user_id=?"),
+      owned("DELETE FROM auth_credentials WHERE user_id=?"),
+      owned("DELETE FROM auth_attempts WHERE email_hash=?"),
+      db.prepare("DELETE FROM users WHERE id=? AND (? IS NULL OR created_at=?)" + noSubscriber).bind(id, created, created),
     ]);
+    if (!deleted[deleted.length - 1].meta.changes) return json({ error: "Das Konto wurde inzwischen geändert. Bitte prüfe den aktuellen Stand." }, 409);
     const response = json({ deleted: true });
     clearSessionCookie(response, request);
     return response;
-  } catch {
+  } catch (error) {
+    if (error instanceof BillingCancellationUnconfirmed) return json({ error: error.message, code: "billing_cancellation_unconfirmed" }, 503);
     return json({ error: "Dein Konto konnte gerade nicht gelöscht werden." }, 503);
   }
 }

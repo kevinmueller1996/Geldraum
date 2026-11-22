@@ -46,6 +46,7 @@ struct Dashboard: View {
                         NavigationLink("Verlauf der Kontostände") { PlanSectionView(section: .history, store: store) }
                     }
                     .navigationTitle("Mehr")
+                    .njoraNavigationBackground()
                     .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                     .scrollContentBackground(.hidden).background(theme.paper)
                 }.tabItem { Label("Mehr", systemImage: "ellipsis") }.tag(DashboardTab.more)
@@ -96,6 +97,7 @@ struct Overview: View {
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+                    if store.conflict || (store.needsSync && !store.syncing) { Notice(text: store.syncStatus) }
                     Notice(text: store.notice(in: .overview))
                 }
                 .padding(22).frame(maxWidth: DashboardLayout.maxWidth).frame(maxWidth: .infinity)
@@ -103,7 +105,7 @@ struct Overview: View {
             .refreshable { await store.refresh(in: .overview) }
         }
         .background(theme.paper)
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .fixedPageHeader {
             HStack(spacing: 8) {
                 NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
                     FinancialTitle(title: "Heute", amount: metrics.net, caption: "Kontostand")
@@ -137,7 +139,9 @@ struct Overview: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Prognose zum Monatsende").font(.headline)
                     Spacer()
-                    Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
+                    if !typeSize.isAccessibilitySize {
+                        Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
+                    }
                 }
                 Text("≈ " + euros(forecast.datedBalance))
                     .font(.system(.largeTitle, design: .rounded, weight: .semibold))
@@ -194,7 +198,7 @@ struct Overview: View {
 
     private func balanceActionIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.body.weight(.semibold))
+            .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(theme.accent)
             .frame(width: 34, height: 34)
             .background(theme.accent.opacity(0.10), in: Circle())
@@ -261,6 +265,7 @@ private struct ForecastDetail: View {
             }
             .sheet(isPresented: $checkingBalance) { CheckInView(plan: plan, store: store) }
             .navigationTitle("Monatsendprognose")
+            .njoraNavigationBackground()
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
         }
     }
@@ -280,8 +285,8 @@ private struct ForecastDetail: View {
                     } else {
                         LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
                     }
-                    if !dated {
-                        Text(row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
+                    if !dated && row.section != .accounts {
+                        Text(row.item.frequency == .once ? "Offen · fällig am " + row.item.fields.text("dueDate") : row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
@@ -382,7 +387,7 @@ struct BalanceChart: View {
     var height: CGFloat = 170
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
-        Chart(plan[.history].suffix(30)) { snapshot in
+        Chart(plan.entriesByDueDate(in: .history).suffix(30)) { snapshot in
             if let day = PlanDate.parse(snapshot.fields.text("date")) {
                 LineMark(x: .value("Datum", day), y: .value("Stand", metrics.net(for: snapshot)))
                     .foregroundStyle(theme.accent)
@@ -414,20 +419,31 @@ struct LabeledAmount: View {
 }
 
 extension View {
+    func njoraNavigationBackground() -> some View {
+        modifier(NjoraNavigationBackground())
+    }
+
+    fileprivate func fixedPageHeader<Header: View>(@ViewBuilder _ header: () -> Header) -> some View {
+        VStack(spacing: 0) {
+            header().fixedSize(horizontal: false, vertical: true)
+            self.clipped()
+        }
+        .njoraNavigationBackground()
+    }
+
     fileprivate func financialTitle(_ title: String, width: CGFloat = DashboardLayout.readingWidth, amount: Double?, caption: String) -> some View {
-        self.navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
-                }
+        self.fixedPageHeader {
+            FinancialTitle(title: title, amount: amount, caption: caption)
+                .padding(.horizontal, 22).padding(.vertical, 8)
+                .frame(maxWidth: width).frame(maxWidth: .infinity)
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                FinancialTitle(title: title, amount: amount, caption: caption)
-                    .padding(.horizontal, 22).padding(.vertical, 8)
-                    .frame(maxWidth: width).frame(maxWidth: .infinity)
-                    .background { DashboardPaper() }
-            }
+        }
     }
 
     func njoraCard(_ background: Color) -> some View {
@@ -436,9 +452,14 @@ extension View {
     }
 }
 
-private struct DashboardPaper: View {
+private struct NjoraNavigationBackground: ViewModifier {
     @Environment(\.njoraAppearance) private var theme
-    var body: some View { theme.paper }
+    func body(content: Content) -> some View {
+        content
+            .background(theme.paper)
+            .toolbarBackground(theme.paper, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+    }
 }
 
 private struct FinancialTitle: View {
@@ -579,7 +600,7 @@ struct PlanSectionView: View {
                             if section == .history {
                                 let label = PlanDate.parse(item.fields.text("date"))?.formatted(date: .abbreviated, time: .omitted) ?? item.fields.text("date")
                                 VStack(alignment: .leading, spacing: 5) {
-                                    LabeledAmount(label: label, amount: PlanMetrics(plan: plan).net(for: item))
+                                    LabeledAmount(label: label, amount: metrics.net(for: item))
                                     if !item.fields.text("note").isEmpty {
                                         Text(item.fields.text("note")).font(.footnote).foregroundStyle(.secondary)
                                     }
@@ -623,7 +644,7 @@ struct PlanSectionView: View {
                         var changed = plan
                         changed[section] = plan[section].filter { $0.id != item.id }
                         let result = changed
-                        Task { _ = await store.save(result, in: .section(section)) }
+                        Task { _ = await store.save(result, basedOn: plan, in: .section(section)) }
                     }
                 }
             }
@@ -660,6 +681,7 @@ private struct PlanItemRow: View {
         case .loans: fields.amount("balance")
         case .goals: fields.amount("saved")
         case .savings: item.savingValue
+        case .expenses: item.expenseAmount()
         default: fields.amount("amount")
         }
     }
@@ -669,6 +691,7 @@ private struct PlanItemRow: View {
             ? (monthNames[safe: fields.integer("month") ?? -1].map { "Jährlich im \($0)" } ?? "Jährlich · Monat offen")
             : "Monatlich"
         case .expenses: [item.expenseCategory, item.frequency.label,
+            item.frequency == .once ? fields.text("dueDate") + (fields.flag("paid") ? " · Beglichen" : " · Offen") : nil,
             fields.integer("bookingDay").flatMap { $0 > 0 ? "am " + String($0) + "." : nil },
             item.frequency == .monthly ? nil : monthNames[safe: fields.integer("month") ?? -1].map { "Fällig im " + $0 + (item.frequency == .quarterly ? " und alle drei Monate" : "") }
         ].compactMap { $0 }.joined(separator: " · ")
@@ -685,9 +708,12 @@ private struct PlanItemRow: View {
 
     private var securityDetail: String {
         let timestamp = fields.text("quoteUpdatedAt")
+        if fields.text("quoteVenue") == ClosingPrices.venue, let day = PlanDate.parse(timestamp) {
+            return fields.text("symbol") + " · Cboe-Schlusskurs · Datenstand " + day.formatted(.dateTime.day().month().year().locale(Locale(identifier: "de_DE")))
+        }
         let quoteDate = PlanDate.parseTradeTime(timestamp)
         let time = quoteDate?.formatted(.dateTime.day().month().year().hour().minute().second().locale(Locale(identifier: "de_DE")))
-        let missingTime = fields.amount("priceEur") > 0 ? "Kurs ohne Zeitangabe" : "Noch kein Kurs"
+        let missingTime = fields.amount("priceEur") > 0 ? "Kurs ohne Zeitangabe" : "Noch kein Kurs gespeichert"
         let quoteTime = time.map { "Kurs vom \($0)" } ?? missingTime
         return [fields.text("symbol"), fields.text("quoteVenue"), quoteTime]
             .filter { !$0.isEmpty }

@@ -1,44 +1,19 @@
-# Njora iOS – Übergabe und Release-Checkliste
+# Njora für iPhone und iPad freigeben
 
-## Bereits umgesetzt
+## Projekt und Build
 
-- Capacitor-8-Projekt mit Bundle-ID `de.njora.finanzueberblick`
-- finales Njora-App-Icon und gebrandeter Startbildschirm
-- sichere HTTPS-Verbindung zur bestehenden Njora-App
-- native Teilen-Funktion für vom Nutzer ausgelöste Datensicherungen
-- tägliche oder wöchentliche lokale Check-in-Erinnerungen
-- iPhone-Safe-Areas, Vollbilddarstellung und Offline-Fehlerseite
-- installierbare PWA mit App-Icon und eigenem Offline-Zustand
-- keine persönlichen Finanzdaten im Service-Worker-Cache
+1. In Xcode `ios/App/App.xcodeproj` öffnen und das Schema `App` wählen. SwiftUI, WidgetKit und StoreKit gehören zum nativen Projekt. Die Webanwendung wird separat gebaut.
+2. Vor dem Archivieren Bundle-IDs, App Group, Signing, Version und übereinstimmende Buildnummern von App und Widget-Erweiterung prüfen. Ein neuer Upload benötigt eine höhere Buildnummer.
+3. Einen Release-Build für iOS archivieren und validieren. Die Widget-Erweiterung muss unter `PlugIns` im App-Paket liegen.
 
-## Erster interner TestFlight-Build
+## Auf Geräten prüfen
 
-1. `npm run ios:sync` ausführen.
-2. `npm run ios:open` ausführen.
-3. In Xcode unter `Signing & Capabilities` das Apple-Developer-Team auswählen.
-4. Auf einem echten iPhone Anmeldung, Datensynchronisierung, Erinnerungen und
-   Teilen testen.
-5. `Product > Archive` wählen und den Build nach App Store Connect hochladen.
-6. In TestFlight zunächst interne Tester hinzufügen.
+- Anmeldung, Bestätigungslink, Passwort-Reset, Export und Import mit einem Testkonto vollständig durchgehen.
+- Einen Finanzplan offline ändern, die App neu starten und mit der Cloud abgleichen. Einen historischen Check-in ändern und danach den aktuellen Kontostand vergleichen.
+- iPhone im Hochformat sowie iPad im Hoch- und Querformat prüfen. Mit größerer Schrift Dashboard, Listen, Formulare und Dialoge öffnen.
+- Beide Widgets in kleiner und mittlerer Größe prüfen. Einen Check-in speichern, das Datum des Widgets kontrollieren und nach Abmeldung prüfen, dass die Beträge verschwinden.
+- Einen TestFlight-Kauf bestätigen und wiederherstellen. Danach Abo-Zuordnung und Kündigungshinweis prüfen. Für eine frühere eingereichte Version bleiben die dazugehörigen Aufnahmen und Testergebnisse der Bezugspunkt.
 
-## Vor der öffentlichen App-Store-Einreichung
+## App Store Connect
 
-- eigene Njora-Produktionsdomain statt der bisherigen Projekt-URL verwenden
-- mobilen Client in das App-Paket bündeln und Mobile-API mit Keychain-Token
-  bereitstellen; die aktuelle Remote-Konfiguration ist nur für interne Tests
-- Face ID als lokales Entsperren auf Basis des iOS-Schlüsselbunds ergänzen
-- vollständige Datenschutzerklärung mit verantwortlicher Person/Firma und
-  Kontaktadresse veröffentlichen und innerhalb der App verlinken
-- App-Store-Datenschutzangaben für Accountkennung und Finanzinformationen
-  ausfüllen
-- Support-URL, Marketing-URL, Beschreibung, Keywords und Screenshots bereitstellen
-- Review-Demokonto mit repräsentativen Beispieldaten anlegen
-- In-App-Accountlöschung auf einem echten Gerät prüfen
-- mindestens einen Offline-, Update- und Sitzungsablauf vollständig testen
-
-## Geplante App-Store-Funktionen
-
-Die native Erinnerung und das iOS-Teilen schaffen bereits sichtbaren Mehrwert.
-Für eine robuste öffentliche Version sollten zusätzlich Face ID, ein
-verschlüsselter Lesemodus für die zuletzt synchronisierte Übersicht und Deep
-Links direkt zum Check-in umgesetzt werden.
+Build und Abo der gewünschten Version zuordnen. Preis, Probezeit, lokalisierte Metadaten, Screenshots für beide Geräteklassen, erreichbare Support- und Datenschutz-URLs sowie die Angaben zum Review-Konto kontrollieren. Den privaten Prüfanhang mit der Bedienung auf einem echten Gerät abspielen. Den tatsächlichen Einreichungsstatus nach dem Senden im Bereich App Review nachlesen.

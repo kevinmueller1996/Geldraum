@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { ensurePlanSchema } from "../plan-schema";
 import { userId } from "../password-auth";
 
 export type Tester = {
@@ -26,20 +26,8 @@ type TesterRow = {
   plan_revision: number | null;
 };
 
-const USER_ACTIVITY_TABLE_SQL = `CREATE TABLE IF NOT EXISTS user_activity (
-  user_id TEXT PRIMARY KEY NOT NULL,
-  email_mask TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  access_count INTEGER NOT NULL DEFAULT 1,
-  source TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-)`;
-
 export async function loadAdminData(): Promise<AdminData> {
-  const db = env.DB;
-  if (!db) throw new Error("D1 binding DB is unavailable");
-  await db.prepare(USER_ACTIVITY_TABLE_SQL).run();
+  const db = await ensurePlanSchema();
   const localPreviewId = await userId("local-preview@geldraum.app");
   const result = await db.prepare(`SELECT
       users.id AS user_id,

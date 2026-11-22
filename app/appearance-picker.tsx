@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const names = { original: "Njora Original", sage: "Salbei", fjord: "Fjordblau" };
 type Appearance = keyof typeof names;
@@ -10,23 +10,39 @@ function readPreference(value: string | null): Appearance {
   return value === "sage" || value === "fjord" ? value : "original";
 }
 
-export function useAppearance() {
-  const [appearance, setAppearance] = useState<Appearance>("original");
+let temporaryPreference: Appearance | undefined;
+function getAppearance(): Appearance {
+  if (temporaryPreference) return temporaryPreference;
+  try { return readPreference(window.localStorage.getItem(storageKey)); }
+  catch { return "original"; }
+}
 
-  useEffect(() => {
-    try { setAppearance(readPreference(window.localStorage.getItem(storageKey))); } catch { /* Storage may be disabled. */ }
-    function sync(event: StorageEvent) {
-      if (event.key === storageKey || event.key === null) setAppearance(readPreference(event.newValue));
+function subscribeAppearance(listener: () => void) {
+  function sync(event: StorageEvent) {
+    if (event.key === storageKey || event.key === null) {
+      temporaryPreference = undefined;
+      listener();
     }
-    window.addEventListener("storage", sync);
-    return () => window.removeEventListener("storage", sync);
-  }, []);
-
-  function select(next: Appearance) {
-    setAppearance(next);
-    try { window.localStorage.setItem(storageKey, next); } catch { /* The selection still applies in this tab. */ }
   }
+  window.addEventListener("storage", sync);
+  window.addEventListener("njora-appearance", listener);
+  return () => {
+    window.removeEventListener("storage", sync);
+    window.removeEventListener("njora-appearance", listener);
+  };
+}
 
+export function useAppearance() {
+  const appearance = useSyncExternalStore(subscribeAppearance, getAppearance, () => "original" as const);
+  function select(next: Appearance) {
+    try {
+      window.localStorage.setItem(storageKey, next);
+      temporaryPreference = undefined;
+    } catch {
+      temporaryPreference = next;
+    }
+    window.dispatchEvent(new Event("njora-appearance"));
+  }
   return { appearance, select };
 }
 

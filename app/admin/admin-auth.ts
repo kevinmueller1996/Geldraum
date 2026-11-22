@@ -1,24 +1,12 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { isLocalHostname } from "../local-host";
+import { ensureAuthSchema } from "../password-auth";
 
 const SESSION_COOKIE = "__Host-njora_admin_session";
 const LOCAL_SESSION_COOKIE = "njora_admin_session";
 const SESSION_SECONDS = 60 * 60 * 12;
-
-function isLocalHostname(hostname: string) {
-  const value = hostname.trim().toLowerCase();
-  return value === "localhost" || value.endsWith(".localhost") || value === "127.0.0.1" || value === "::1" || value === "[::1]";
-}
-
-function cookieValue(cookieHeader: string | null, name: string) {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(";")) {
-    const [key, ...value] = part.trim().split("=");
-    if (key === name) return value.join("=");
-  }
-  return null;
-}
 
 async function digest(value: string) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
@@ -31,49 +19,56 @@ export async function equalSecret(left: string, right: string) {
   return difference === 0;
 }
 
-function sessionToken() {
-  return (env as typeof env & { GELDRAUM_ADMIN_SESSION_TOKEN?: string }).GELDRAUM_ADMIN_SESSION_TOKEN;
+// A distinct namespace keeps user sessions and operator sessions independent.
+// Rotating the operator secret also invalidates all previously issued admin cookies.
+async function sessionHash(token: string) {
+  if (!env.GELDRAUM_ADMIN_SESSION_TOKEN) throw new Error("Admin session token is unavailable");
+  const hash = await digest("njora-admin:" + env.GELDRAUM_ADMIN_SESSION_TOKEN + ":" + token);
+  return Array.from(hash, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function sessionSignature(secret: string, payload: string) {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(payload)));
-  return Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("");
+export function adminCookie(requestHeaders: Headers) {
+  const host = requestHeaders.get("host") ?? "";
+  const local = isLocalHostname(host.replace(/:\d+$/, ""));
+  const name = local ? LOCAL_SESSION_COOKIE : SESSION_COOKIE;
+  return requestHeaders.get("cookie")?.split(";").map(part => part.trim()).find(part => part.startsWith(name + "="));
 }
 
 export async function isAdminAuthenticated() {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "";
-  const hostname = host.replace(/^\[/, "").replace(/\](:\d+)?$/, "").replace(/:\d+$/, "");
-  const expected = sessionToken();
-  const provided = cookieValue(requestHeaders.get("cookie"), isLocalHostname(hostname) ? LOCAL_SESSION_COOKIE : SESSION_COOKIE);
-  if (!expected || !provided || !/^\d{10}\.[\da-f-]{36}\.[\da-f]{64}$/.test(provided)) return false;
-
-  const [expires, nonce, signature] = provided.split(".");
-  if (Number(expires) <= Math.floor(Date.now() / 1000)) return false;
-  return equalSecret(signature, await sessionSignature(expected, expires + "." + nonce));
+  const token = adminCookie(await headers())?.split("=")[1];
+  const user = env.GELDRAUM_ADMIN_USER_ID;
+  if (!token || !/^[\da-f-]{36}$/.test(token) || typeof user !== "string") return false;
+  const db = await ensureAuthSchema();
+  return Boolean(await db.prepare("SELECT 1 FROM auth_sessions WHERE token_hash=? AND user_id=? AND expires_at>?")
+    .bind(await sessionHash(token), user, new Date().toISOString()).first());
 }
 
-export async function setAdminSessionCookie(response: NextResponse, request: NextRequest) {
-  const secret = sessionToken();
-  if (!secret) throw new Error("Admin session token is unavailable");
-  const local = isLocalHostname(new URL(request.url).hostname);
-  const expires = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
-  const payload = expires + "." + crypto.randomUUID();
-  const signature = await sessionSignature(secret, payload);
+export async function setAdminSessionCookie(response: NextResponse, request: NextRequest, user: string, verifiedHash: string) {
+  const db = await ensureAuthSchema();
+  const token = crypto.randomUUID();
+  const now = new Date();
+  const expires = new Date(now.getTime() + SESSION_SECONDS * 1000);
+  const [, issued] = await db.batch([
+    db.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").bind(now.toISOString()),
+    db.prepare(`INSERT INTO auth_sessions(token_hash,user_id,created_at,expires_at)
+      SELECT ?,user_id,?,? FROM auth_credentials WHERE user_id=? AND password_hash=?`)
+      .bind(await sessionHash(token), now.toISOString(), expires.toISOString(), user, verifiedHash)
+  ]);
+  if (!issued.meta.changes) throw new Error("Credentials changed during login");
+  const local = isLocalHostname(request.nextUrl.hostname);
   response.cookies.set({
-    name: local ? LOCAL_SESSION_COOKIE : SESSION_COOKIE,
-    value: payload + "." + signature,
-    httpOnly: true,
-    secure: !local,
-    sameSite: "strict",
-    path: "/",
-    maxAge: SESSION_SECONDS,
+    name: local ? LOCAL_SESSION_COOKIE : SESSION_COOKIE, value: token, httpOnly: true,
+    secure: !local, sameSite: "strict", path: "/", maxAge: SESSION_SECONDS
   });
 }
 
-export function clearAdminSessionCookie(response: NextResponse, request: NextRequest) {
-  const local = isLocalHostname(new URL(request.url).hostname);
-  response.cookies.set({ name: local ? LOCAL_SESSION_COOKIE : SESSION_COOKIE, value: "", httpOnly: true, secure: !local, sameSite: "lax", path: "/", maxAge: 0 });
+export async function clearAdminSessionCookie(response: NextResponse, request: NextRequest) {
+  const local = isLocalHostname(request.nextUrl.hostname);
+  const name = local ? LOCAL_SESSION_COOKIE : SESSION_COOKIE;
+  const token = request.cookies.get(name)?.value;
+  if (token && /^[\da-f-]{36}$/.test(token)) {
+    const db = await ensureAuthSchema();
+    await db.prepare("DELETE FROM auth_sessions WHERE token_hash=?").bind(await sessionHash(token)).run();
+  }
+  response.cookies.set({ name, value: "", httpOnly: true, secure: !local, sameSite: "strict", path: "/", maxAge: 0 });
 }

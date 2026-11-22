@@ -18,15 +18,55 @@ struct APIError: LocalizedError {
     }
 }
 
-struct BillingStatus: Decodable {
+struct BillingStatus: Codable, Equatable {
     let active: Bool
     let accountToken: UUID
     let provider: String?
 }
 
+struct ClosingPrices: Decodable {
+    static let venue = "Cboe Europe (DXE) · Schlusskurs"
+    let asOf: String
+    let prices: [String: Double]
+
+    static func isin(_ item: PlanItem) -> String? {
+        let symbol = item.fields.text("symbol").uppercased()
+        guard item.fields.text("kind") == "security",
+              symbol.range(of: #"^[A-Z]{2}[A-Z0-9]{9}[0-9]$"#, options: .regularExpression) != nil else { return nil }
+        return symbol
+    }
+
+    func apply(to plan: inout Plan?) {
+        guard var revised = plan, PlanDate.parse(asOf) != nil else { return }
+        var changed = false
+        let savings = revised[.savings].map { position in
+            guard let isin = Self.isin(position), let price = prices[isin], price.isFinite, price > 0 else { return position }
+            let fields = position.fields
+            let previousDay = String(fields.text("quoteUpdatedAt").prefix(10))
+            let venue = fields.text("quoteVenue")
+            if previousDay > asOf || (venue == "Manuell" && previousDay == asOf) { return position }
+            if venue == Self.venue && previousDay == asOf && fields.amount("priceEur") == price { return position }
+            var result = position
+            result.fields["quoteVenue"] = .string(Self.venue)
+            result.fields["quoteUpdatedAt"] = .string(asOf)
+            result.fields["currency"] = .string("EUR")
+            result.fields["price"] = .number(price)
+            result.fields["priceEur"] = .number(price)
+            changed = true
+            return result
+        }
+        if changed { revised[.savings] = savings; plan = revised }
+    }
+}
+
 struct AccountPayload: Decodable {
+    var closingPrices: ClosingPrices? = nil
     let billing: BillingStatus?
-    struct User: Decodable { let displayName: String; let email: String }
+    struct User: Codable, Equatable {
+        let displayName: String
+        let email: String
+        var accountCreatedAt: String? = nil
+    }
     let authenticated: Bool
     let user: User
     let plan: Plan?
@@ -64,13 +104,21 @@ private enum SessionKeychain {
         kSecAttrAccount as String: "njora.de"
     ]
 
-    static func read() -> String? {
+    static func read() throws -> String? {
         var search = query
         search[kSecReturnData as String] = true
         search[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(search as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(search as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data,
+              let stored = String(data: data, encoding: .utf8) else {
+            let message = status == errSecInteractionNotAllowed
+                ? "Entsperre dein Gerät, um den geschützten Finanzplan zu öffnen."
+                : "Deine gespeicherte Anmeldung konnte nicht gelesen werden. Versuche es erneut."
+            throw APIError(0, message)
+        }
+        return stored
     }
 
     static func write(_ token: String) throws {
@@ -98,12 +146,13 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 actor NjoraAPI {
     static let origin = "https://njora.de"
     private static let cookieName = "__Host-njora_session"
-    private var token = SessionKeychain.read()
+    private var token: String?
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    init(configuration config: URLSessionConfiguration = .ephemeral) {
+    init(configuration config: URLSessionConfiguration = .ephemeral, token: String? = nil) {
+        self.token = token
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.urlCache = nil
@@ -111,7 +160,12 @@ actor NjoraAPI {
         session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
     }
 
-    func hasSession() -> Bool { token != nil }
+    func restoreSessionID() throws -> String? {
+        if token == nil { token = try SessionKeychain.read() }
+        return sessionID()
+    }
+
+    func sessionID() -> String? { token.map(LocalPlanDisk.key) }
     func clearSession() { token = nil; SessionKeychain.clear() }
 
     func login(email: String, password: String) async throws {
@@ -128,40 +182,26 @@ actor NjoraAPI {
         try await authenticate(action.endpoint, fields: ["token": .string(action.token), "password": .string(password)])
     }
 
-    func account() async throws -> AccountPayload { try await request("/api/account") }
+    func account(session: String, positions: [PlanItem] = []) async throws -> AccountPayload {
+        let symbols = Set(positions.compactMap(ClosingPrices.isin)).sorted().joined(separator: ",")
+        let (data, _) = try await send("/api/account", method: "GET", body: nil, expectedSession: session, closingSymbols: symbols)
+        return try decoder.decode(AccountPayload.self, from: data)
+    }
 
-    func confirmPurchase(_ transaction: String, environment: String) async throws -> Bool {
+    func confirmPurchase(_ transaction: String, environment: String, session: String) async throws -> Bool {
         struct Reply: Decodable { let active: Bool }
         let reply: Reply = try await request("/api/billing", method: "POST", body: [
             "action": .string("apple"), "transaction": .string(transaction), "environment": .string(environment)
-        ])
+        ], expectedSession: session)
         return reply.active
     }
 
-    func save(_ plan: Plan, revision: Int?) async throws -> Int {
+    func save(_ plan: Plan, revision: Int?, session: String) async throws -> Int {
         struct Saved: Decodable { let revision: Int }
-        do {
-            let reply: Saved = try await request("/api/account", method: "PUT", body: [
-                "plan": .object(plan.storagePlan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
-            ])
-            return reply.revision
-        } catch {
-            guard error is URLError || error is DecodingError || isRequestCancellation(error)
-                    || (error as? APIError).map({ $0.status >= 500 }) == true else { throw error }
-            // A lost acknowledgement may follow a committed write. Only read back, never replay the PUT.
-            if !Task.isCancelled {
-                let current: AccountPayload
-                do { current = try await account() }
-                catch let auth as APIError where auth.status == 401 { throw auth }
-                catch { throw APIError(0, "Njora konnte das Speichern nicht bestätigen. Prüfe die Verbindung und lade den aktuellen Stand.") }
-                if current.plan == plan.storagePlan, let saved = current.revision, saved > (revision ?? 0) { return saved }
-                if current.revision != revision {
-                    throw APIError(409, "Der Finanzplan wurde zwischenzeitlich geändert. Lade den aktuellen Stand.")
-                }
-                throw APIError(0, "Beim Nachladen war die Änderung noch nicht sichtbar. Bitte versuche es erneut.")
-            }
-            throw APIError(0, "Njora konnte das Speichern nicht bestätigen. Prüfe die Verbindung und lade den aktuellen Stand.")
-        }
+        let reply: Saved = try await request("/api/account", method: "PUT", body: [
+            "plan": .object(plan.storagePlan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
+        ], expectedSession: session)
+        return reply.revision
     }
 
     func endSession(deleteAccount: Bool) async throws {
@@ -186,17 +226,19 @@ actor NjoraAPI {
         token = cookie.value
     }
 
-    private func request<T: Decodable>(_ path: String, method: String = "GET", body: Record? = nil, query: [URLQueryItem] = [], includeSession: Bool = true) async throws -> T {
-        let (data, _) = try await send(path, method: method, body: body, query: query, includeSession: includeSession)
+    private func request<T: Decodable>(_ path: String, method: String = "GET", body: Record? = nil, query: [URLQueryItem] = [], includeSession: Bool = true, expectedSession: String? = nil) async throws -> T {
+        let (data, _) = try await send(path, method: method, body: body, query: query, includeSession: includeSession, expectedSession: expectedSession)
         return try decoder.decode(T.self, from: data)
     }
 
-    private func send(_ path: String, method: String, body: Record?, query: [URLQueryItem] = [], includeSession: Bool = true) async throws -> (Data, HTTPURLResponse) {
+    private func send(_ path: String, method: String, body: Record?, query: [URLQueryItem] = [], includeSession: Bool = true, expectedSession: String? = nil, closingSymbols: String? = nil) async throws -> (Data, HTTPURLResponse) {
+        if let expectedSession, expectedSession != sessionID() { throw CancellationError() }
         var components = URLComponents(string: Self.origin)!
         components.path = path
         if !query.isEmpty { components.queryItems = query }
         var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = method
+        if let closingSymbols { request.setValue(closingSymbols.isEmpty ? "1" : closingSymbols, forHTTPHeaderField: "X-Njora-Closing-Prices") }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Self.origin, forHTTPHeaderField: "Origin")
         if let body {

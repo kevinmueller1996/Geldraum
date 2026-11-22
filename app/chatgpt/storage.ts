@@ -19,14 +19,16 @@ export function ensureTables() {
     "CREATE INDEX IF NOT EXISTS njora_plugin_proposal_expiry ON njora_plugin_proposals(expires)"
   ];
   // Rebuild after a failed initialization so a temporary database outage is recoverable.
-  return initialized ??= db().batch(sql.map(statement => db().prepare(statement))).catch(error => {
+  return initialized ??= (async () => {
+    for (const statement of sql) await db().prepare(statement).run();
+  })().catch(error => {
     initialized = undefined;
     throw error;
   });
 }
 
 export async function activeAccount(userId: string) {
-  return !billingEnabled() || (await membership(await subscriber(userId))).active;
+  return !billingEnabled(userId) || (await membership(await subscriber(userId))).active;
 }
 export async function currentPlan(userId: string) {
   if (!await activeAccount(userId)) throw new McpUserError("Für den Finanzplan ist ein aktiver Njora-Zugang erforderlich.");

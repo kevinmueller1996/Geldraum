@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Verify a Njora JSON export by restoring it into an empty SQLite database."""
 import argparse
+import contextlib
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 COLUMNS = {
@@ -18,15 +20,16 @@ COLUMNS = {
 
 
 def restore(source, destination):
-    with source.open(encoding="utf-8") as file:
+    stream = contextlib.nullcontext(sys.stdin.buffer) if source == Path("-") else source.open(encoding="utf-8")
+    with stream as file:
         backup = json.load(file)
-    if backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2):
+    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2):
         raise ValueError("Unbekanntes Sicherungsformat")
     tables = backup["tables"]
     columns_by_table = dict(COLUMNS)
     if backup["version"] == 2:
         columns_by_table["njora_subscribers"] = ("user_id", "account_token", "stripe_customer", "apple_original", "apple_environment")
-    if set(tables) != set(columns_by_table):
+    if not isinstance(tables, dict) or set(tables) != set(columns_by_table):
         raise ValueError("Die Sicherung enthält nicht die erwarteten Tabellen")
 
     fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -39,15 +42,24 @@ def restore(source, destination):
                 db.executescript(migration.read_text(encoding="utf-8"))
             for table, columns in columns_by_table.items():
                 rows = tables[table]
-                if not isinstance(rows, list) or any(set(row) != set(columns) for row in rows):
+                if not isinstance(rows, list) or any(not isinstance(row, dict) or set(row) != set(columns) for row in rows):
                     raise ValueError(f"Unerwartete Spalten in {table}")
                 if table == "finance_plans":
                     for row in rows:
-                        if not isinstance(json.loads(row["plan_json"]), dict):
-                            raise ValueError("Ungültiger Finanzplan")
+                        plan = json.loads(row["plan_json"])
+                        required_lists = ("incomes", "expenses", "annualCosts", "commitments", "accounts", "goals", "snapshots")
+                        if (not isinstance(plan, dict) or not isinstance(plan.get("name"), str)
+                                or not all(isinstance(plan.get(key), list) for key in required_lists)
+                                or not isinstance(plan.get("savings", []), list)
+                                or type(row["revision"]) is not int or row["revision"] < 1):
+                            raise ValueError("Ungültiger Finanzplan oder Revisionsstand")
                 placeholders = ", ".join("?" for _ in columns)
                 sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
                 db.executemany(sql, (tuple(row[column] for column in columns) for row in rows))
+            if backup["version"] == 2 and db.execute(
+                "SELECT 1 FROM njora_subscribers s LEFT JOIN users u ON u.id=s.user_id WHERE u.id IS NULL LIMIT 1"
+            ).fetchone():
+                raise ValueError("Abonnement ohne zugehöriges Nutzerkonto")
             if db.execute("PRAGMA foreign_key_check").fetchone():
                 raise ValueError("Die Sicherung enthält ungültige Verknüpfungen")
             if db.execute("PRAGMA integrity_check").fetchone() != ("ok",):

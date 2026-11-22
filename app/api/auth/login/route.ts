@@ -1,3 +1,4 @@
+import { readFormObject } from "../../../request-body";
 import { NextRequest, NextResponse } from "next/server";
 import { loginPasswordAccount, normalizeEmail, setSessionCookie, validPassword } from "../../../password-auth";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../../vercel/proxy-api";
@@ -15,7 +16,8 @@ export async function POST(request: NextRequest) {
     return json({ error: "Unzulässige Anfrage." }, 403);
   }
   try {
-    const body = await request.json() as { email?: unknown; password?: unknown };
+    const body = await readFormObject(request);
+    if (!body) return json({ error: "Ungültige Anfrage." }, 400);
     const email = normalizeEmail(body.email);
     if (!email || !validPassword(body.password)) return json({ error: "E-Mail-Adresse oder Passwort ist nicht korrekt." }, 401);
     const result = await loginPasswordAccount(email, body.password);

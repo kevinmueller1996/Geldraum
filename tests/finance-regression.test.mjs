@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { acceptsAmountEdit, parseAmount } from "../app/amount.ts";
-import { loanProjection } from "../app/loan-projection.ts";
+import { tsImport } from "tsx/esm/api";
+const { loanProjection } = await tsImport("../app/loan-projection.ts", import.meta.url);
 import { backupPlan } from "../app/plan-validation.ts";
 
 test("German currency grouping agrees with the native input", () => {
@@ -203,4 +204,26 @@ test("the forecast timeline interleaves card transfers, including today, with da
   assert.equal(result.rowsFromToday[4].date.getTime(), new Date(2027, 0, 1).getTime());
   assert.equal(result.rowsFromToday[5].date, null);
   assert.deepEqual([result.low, result.datedBalance, result.high], [1227, 1227, 1227]);
+});
+
+
+test("the budget and forecast stop at the outstanding balance plus the final month's interest", async () => {
+  const { monthlyLoanPayment, monthEndForecast } = await import("../app/recurring-costs.ts");
+  const loan = {id: "l", name: "Schlussrate", balance: 50, payment: 180, extraPayment: 20, interestRate: 12, bookingDay: 14};
+  for (const [balance, expected] of [[0, 0], [50, 50.50], [500, 200]]) {
+    const entry = {...loan, balance};
+    assert.equal(monthlyLoanPayment(entry), expected);
+    assert.equal(loanProjection(entry).payment, expected);
+    const forecast = monthEndForecast(350, new Date(2026, 10, 1), {incomes: [], expenses: [], commitments: [entry]});
+    assert.equal(forecast.datedBalance, 350 - expected);
+  }
+});
+
+test("a zero euro one-off invoice adds no forecast rows before, on or after its due date", async () => {
+  const { monthEndForecast } = await import("../app/recurring-costs.ts");
+  const expenses = [{id:"empty",name:"Offene Rechnung",frequency:"once",amount:0,dueDate:"2028-02-29",category:"Sonstige"}];
+  for (const today of [new Date(2028,1,28),new Date(2028,1,29),new Date(2028,2,1)]) {
+    const forecast = monthEndForecast(35,today,{incomes:[],expenses,commitments:[]});
+    assert.deepEqual([forecast.datedBalance,forecast.uncertain.length,forecast.rowsFromToday.length],[35,0,0]);
+  }
 });

@@ -46,6 +46,21 @@ function merge(base: unknown, local: unknown, cloud: unknown, choice?: Choice, k
 export function mergeDraft(base: Plan | null, draft: Plan | null, latest: Plan | null, choice?: Choice) {
   return merge(base, draft, latest, choice) as Plan | null;
 }
+export function differentAccount(a: CloudUser, b: CloudUser) {
+  return Boolean(a.accountCreatedAt && b.accountCreatedAt && a.accountCreatedAt !== b.accountCreatedAt);
+}
+
+export function bindBrowserCopy(saved: Copy | undefined, reply: Remote, session: string): Copy {
+  const oldCreation = saved?.user.accountCreatedAt;
+  const newCreation = reply.user.accountCreatedAt;
+  // Older clients did not store account creation. A fresh session with a lower revision
+  // cannot safely reuse an offline plan belonging to the previous account at this address.
+  const legacyReset = saved && (!oldCreation || !newCreation) && saved.session !== session
+    && (reply.revision ?? 0) < (saved.revision ?? 0);
+  if (!saved || differentAccount(saved.user, reply.user) || legacyReset) return { ...reply, session, draft: reply.plan, sending: null };
+  return { ...saved, session, billing: reply.billing, user: reply.user };
+}
+
 export function reconcile(copy: Copy, reply: Remote, choice?: Choice): Copy {
   if ((copy.revision ?? 0) > (reply.revision ?? 0)) return copy;
   const draft = copy.sending && !equal(copy.draft, reply.plan)

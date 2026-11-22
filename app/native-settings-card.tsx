@@ -1,16 +1,16 @@
 "use client";
 
 import { Capacitor } from "@capacitor/core";
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
+const subscribePlatform = () => () => {};
 const REMINDER_ID = 260809;
 
 export default function NativeSettingsCard({ cadence }: { cadence: "daily" | "weekly" }) {
-  const [native, setNative] = useState(false);
+  const native = useSyncExternalStore(subscribePlatform, () => Capacitor.isNativePlatform(), () => false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => setNative(Capacitor.isNativePlatform()), []);
   if (!native) return null;
 
   async function activateReminder() {

@@ -68,7 +68,11 @@ struct Plan: Codable, Equatable {
         return plan
     }
 
+    static let maximumBackupBytes = 4_000_000
+
     static func decodeBackup(_ data: Data) throws -> Plan {
+        // Older backups were pretty-printed and can be larger than the stored JSON.
+        guard data.count <= maximumBackupBytes else { throw CocoaError(.fileReadTooLarge) }
         let decoded = try JSONDecoder().decode(Plan.self, from: data)
         guard let name = decoded.fields["name"]?.string, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.utf16.count <= 80,
               PlanSection.allCases.allSatisfy({ decoded.fields[$0.rawValue]?.array != nil || ($0 == .savings && decoded.fields[$0.rawValue] == nil) }) else {
@@ -92,7 +96,9 @@ struct Plan: Codable, Equatable {
             var saving = item
             if saving.fields["balance"] == nil { saving.fields["balance"] = .number(0) }
             if saving.fields.text("kind") == "security" {
-                saving.fields["symbol"] = .string(saving.fields.text("symbol").uppercased())
+                if saving.fields["symbol"] == nil || saving.fields["symbol"]?.string != nil {
+                    saving.fields["symbol"] = .string(saving.fields.text("symbol").uppercased())
+                }
                 if saving.fields["quantity"] == nil { saving.fields["quantity"] = .number(0) }
                 if saving.fields["price"] == nil { saving.fields["price"] = .number(0) }
                 if saving.fields["priceEur"] == nil { saving.fields["priceEur"] = .number(saving.fields.amount("price")) }
@@ -100,7 +106,34 @@ struct Plan: Codable, Equatable {
             }
             return saving
         }
-        return plan.unifiedCosts
+        guard plan.isRestorable else { throw CocoaError(.fileReadCorruptFile) }
+        let unified = plan.unifiedCosts
+        try unified.checkStorageLimits()
+        return unified
+    }
+
+    func checkStorageLimits() throws {
+        let stored = storagePlan
+        for section in PlanSection.allCases where stored[section].count > section.limit {
+            throw PlanStorageError.limit(section)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        guard try encoder.encode(stored).count <= 500_000 else { throw PlanStorageError.tooLarge }
+    }
+
+    // Imports replace the entire local plan. Validate known fields before an offline
+    // restore, while preserving unknown keys for newer clients.
+    private var isRestorable: Bool {
+        guard fields.optionalMoney("liquidity"),
+              fields["checkInCadence"].map({ ["weekly", "daily"].contains($0.string ?? "") }) ?? true,
+              fields["categoryColors"].map({ $0.object?.values.allSatisfy { $0.string.map { $0.utf16.count <= 80 } == true } == true }) ?? true else { return false }
+        if let scenario = fields["scenario"] {
+            guard let data = scenario.object, data.hasText("name", 160), data.hasMoney("cost"), data.hasMoney("equity") else { return false }
+        }
+        return PlanSection.allCases.allSatisfy { section in
+            self[section].allSatisfy { $0.isRestorable(in: section) }
+        }
     }
 
     subscript(section: PlanSection) -> [PlanItem] {
@@ -160,12 +193,19 @@ struct Plan: Codable, Equatable {
                 let day = item.fields.integer("bookingDay") ?? 0
                 return (month, day > 0 ? day : 32)
             }
-            return items.sorted { dueKey($0) < dueKey($1) }
+            return items.sorted {
+                if $0.frequency == .once && $1.frequency == .once {
+                    return $0.fields.text("dueDate") < $1.fields.text("dueDate")
+                }
+                return dueKey($0) < dueKey($1)
+            }
         case .loans:
             return items.sorted {
                 let left = $0.fields.amount("balance"), right = $1.fields.amount("balance")
                 return left == right ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : left > right
             }
+        case .history:
+            return items.sorted { $0.fields.text("date") < $1.fields.text("date") }
         case .goals:
             return items.sorted {
                 let first = $0.fields.text("targetDate"), second = $1.fields.text("targetDate")
@@ -183,36 +223,57 @@ struct Plan: Codable, Equatable {
     }
 
     mutating func recordCheckIn(accounts: [PlanItem], date: String, note: String) {
-        if date == PlanDate.string(.now) { self[.accounts] = accounts }
-        var balances: Record = [:]
+        let isToday = date == PlanDate.string(.now)
+        let previous = self[.history].first { $0.fields.text("date") == date }
+        let oldBalances = previous?.fields["balances"]?.object ?? [:]
+        var balances = isToday ? [:] : oldBalances
+        var net = accounts.reduce(0) { $0 + $1.netBalance }
+        if !isToday, let previous {
+            // Retain the contribution from accounts which have since been removed.
+            net += PlanMetrics(plan: self).net(for: previous) - accounts.reduce(0) { total, account in
+                total + oldBalances.amount(account.id) * (account.fields.text("type") == "credit" ? -1 : 1)
+            }
+        }
+        if isToday { self[.accounts] = accounts }
         for account in accounts { balances[account.id] = .number(account.fields.amount("balance")) }
-        let snapshot = PlanItem([
-            "id": .string(UUID().uuidString), "date": .string(date), "balances": .object(balances),
-            "netBalance": .number(accounts.reduce(0) { $0 + $1.netBalance }), "note": .string(note)
-        ])
+        var snapshot = previous ?? PlanItem(["id": .string(UUID().uuidString), "date": .string(date)])
+        snapshot.fields["balances"] = .object(balances)
+        snapshot.fields["netBalance"] = .number(net)
+        snapshot.fields["note"] = .string(note)
         self[.history] = (self[.history].filter { $0.fields.text("date") != date } + [snapshot])
             .sorted { $0.fields.text("date") < $1.fields.text("date") }
     }
 }
 
+enum PlanStorageError: LocalizedError {
+    case limit(PlanSection), tooLarge
+    var errorDescription: String? {
+        switch self {
+        case .limit(let section): "Für „\(section.title)“ sind höchstens \(section.limit) Einträge möglich."
+        case .tooLarge: "Der Finanzplan ist für den Cloud-Abgleich zu groß. Kürze Einträge oder exportiere und entferne ältere Check-ins."
+        }
+    }
+}
+
 enum ExpenseFrequency: String, CaseIterable {
-    case monthly, quarterly, annual
+    case monthly, quarterly, annual, once
 
     var sectionTitle: String {
         switch self {
         case .monthly: "Monatliche Kosten"
         case .quarterly: "Quartalsweise Kosten"
         case .annual: "Jährliche Kosten"
+        case .once: "Einmalige Rechnungen"
         }
     }
     var months: Int {
-        switch self { case .monthly: 1; case .quarterly: 3; case .annual: 12 }
+        switch self { case .monthly: 1; case .quarterly: 3; case .annual: 12; case .once: 1 }
     }
     var label: String {
-        switch self { case .monthly: "Monatlich"; case .quarterly: "Quartalsweise"; case .annual: "Jährlich" }
+        switch self { case .monthly: "Monatlich"; case .quarterly: "Quartalsweise"; case .annual: "Jährlich"; case .once: "Einmalig" }
     }
     func isDue(in month: Int, anchor: Int) -> Bool {
-        (month - anchor).isMultiple(of: months)
+        self != .once && (month - anchor).isMultiple(of: months)
     }
 }
 
@@ -225,7 +286,9 @@ struct PlanItem: Identifiable, Equatable {
     var name: String { fields.text("name") }
     var frequency: ExpenseFrequency { ExpenseFrequency(rawValue: fields.text("frequency")) ?? .monthly }
     func costCategory(default fallback: String) -> String {
-        let label = fields.text("category").split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        let cleaned = fields.text("category").filter { !"\u{00ad}\u{200b}\u{2060}\u{feff}".contains($0) }
+        let label = cleaned.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        if label.lowercased().replacingOccurrences(of: " ", with: "") == "unterhaltung" { return "Unterhaltung" }
         switch label.lowercased() {
         case "": return fallback
         case "versicherung", "versicherungen": return "Versicherungen"
@@ -238,8 +301,25 @@ struct PlanItem: Identifiable, Equatable {
         guard let day = fields.integer("bookingDay"), day > 0 else { return nil }
         return "am \(day)."
     }
-    var monthlyLoanPayment: Double { max(0, fields.amount("payment") + fields.amount("extraPayment")) }
-    var monthlyExpense: Double { fields.amount("amount") / Double(frequency.months) }
+    var monthlyLoanPayment: Double {
+        let instalment = max(0, fields.amount("payment") + fields.amount("extraPayment"))
+        guard let balance = fields["balance"]?.number else { return instalment }
+        let outstanding = max(0, balance) * (1 + max(0, fields.amount("interestRate")) / 1200)
+        return min(instalment, (outstanding * 100).rounded() / 100)
+    }
+    var rates: [Record] { fields["rateChanges"]?.array?.compactMap(\.object) ?? [] }
+    func expenseAmount(on date: Date = .now) -> Double {
+        let changes = rates
+        guard !changes.isEmpty else { return fields.amount("amount") }
+        let stamp = PlanDate.string(date)
+        return changes.filter { $0.text("date") <= stamp }.max { $0.text("date") < $1.text("date") }?.amount("amount") ?? fields.amount("amount")
+    }
+    func monthlyExpense(on date: Date) -> Double { frequency == .once ? 0 : expenseAmount(on: date) / Double(frequency.months) }
+    var monthlyExpense: Double { monthlyExpense(on: .now) }
+    func annualExpenseCents(on date: Date) -> Double {
+        frequency == .once ? 0 : budgetCents(expenseAmount(on: date)) * Double(12 / frequency.months)
+    }
+
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
     var savingValue: Double {
         if fields.text("kind") == "security" {
@@ -250,7 +330,7 @@ struct PlanItem: Identifiable, Equatable {
 
     func balanceAfter(months: Int) -> Double {
         let rate = max(0, fields.amount("interestRate")) / 1_200
-        let payment = monthlyLoanPayment
+        let payment = max(0, fields.amount("payment") + fields.amount("extraPayment"))
         let balance = fields.amount("balance")
         guard rate > 0 else { return max(0, balance - payment * Double(months)) }
         let growth = expm1(Double(months) * log1p(rate))
@@ -265,6 +345,63 @@ struct PlanItem: Identifiable, Equatable {
         let to = calendar.dateComponents([.year, .month, .day], from: target)
         let months = ((to.year ?? 0) - (from.year ?? 0)) * 12 + (to.month ?? 0) - (from.month ?? 0)
         return open / Double(max(1, months + ((to.day ?? 0) >= (from.day ?? 0) ? 1 : 0)))
+    }
+}
+
+private extension Record {
+    func hasText(_ key: String, _ limit: Int) -> Bool {
+        self[key]?.string.map { $0.utf16.count <= limit } == true
+    }
+    func hasMoney(_ key: String) -> Bool {
+        self[key]?.number.map { $0.isFinite && abs($0) <= 1_000_000_000 } == true
+    }
+    func optionalMoney(_ key: String) -> Bool { self[key] == nil || hasMoney(key) }
+    func optionalText(_ key: String, _ limit: Int) -> Bool { self[key] == nil || hasText(key, limit) }
+}
+
+private extension PlanItem {
+    func isRestorable(in section: PlanSection) -> Bool {
+        let f = fields
+        guard !id.isEmpty, f.hasText("id", 100), section == .history || f.hasText("name", 120) else { return false }
+        let dayOK = f["bookingDay"] == nil || (0...31).contains(f.integer("bookingDay") ?? -1)
+        let hasMonth = (0..<12).contains(f.integer("month") ?? -1)
+        switch section {
+        case .income:
+            return dayOK && f.hasMoney("amount") && f["annual"]?.bool != nil && (f["month"] == nil || hasMonth)
+        case .expenses:
+            guard dayOK, f.hasMoney("amount"), f.hasText("category", 80),
+                  f["frequency"] == nil || ExpenseFrequency(rawValue: f.text("frequency")) != nil else { return false }
+            if let changes = f["rateChanges"] {
+                guard frequency == .monthly, let array = changes.array, array.count <= 60, rates.count == array.count,
+                      Set(rates.map { $0.text("date") }).count == rates.count,
+                      rates.allSatisfy({ PlanDate.parse($0.text("date")) != nil && $0.hasMoney("amount") }) else { return false }
+            }
+            switch frequency {
+            case .once: return PlanDate.parse(f.text("dueDate")) != nil && (f["paid"] == nil || f["paid"]?.bool != nil)
+            case .monthly: return f["month"] == nil
+            case .annual, .quarterly: return hasMonth
+            }
+        case .annual: return dayOK && f.hasMoney("amount") && hasMonth && f.optionalText("category", 80)
+        case .loans:
+            return dayOK && f.hasMoney("balance") && f.hasMoney("payment") && f.optionalText("category", 80)
+                && f.optionalMoney("interestRate") && f.optionalMoney("extraPayment")
+                && (f["termMonths"] == nil || (f.integer("termMonths") ?? -1) >= 0)
+        case .goals:
+            return f.hasMoney("target") && f.hasMoney("saved") && f.optionalMoney("monthly")
+                && (f["targetDate"] == nil || f["targetDate"]?.string == "" || PlanDate.parse(f.text("targetDate")) != nil)
+        case .savings:
+            guard ["security", "cash", "dayMoney", "fixedDeposit", "buildingSavings", "other"].contains(f.text("kind")),
+                  f.hasMoney("balance") else { return false }
+            return f.text("kind") != "security" || (f.hasText("symbol", 30) && f.hasMoney("quantity")
+                && f.hasMoney("priceEur") && f.hasMoney("price") && f.hasText("currency", 10)
+                && f.optionalText("quoteVenue", 80) && f.optionalText("quoteUpdatedAt", 40))
+        case .accounts:
+            return dayOK && ["bank", "credit", "cash"].contains(f.text("type")) && f.hasMoney("balance")
+                && f.optionalText("category", 80) && f.optionalMoney("monthlyPayment") && f.amount("monthlyPayment") >= 0
+        case .history:
+            guard let balances = f["balances"]?.object, balances.keys.allSatisfy({ balances.hasMoney($0) }) else { return false }
+            return PlanDate.parse(f.text("date")) != nil && f.hasText("note", 500) && f.optionalMoney("netBalance")
+        }
     }
 }
 
@@ -369,7 +506,10 @@ struct PlanMetrics {
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
-    var fixedCosts: Double { plan[.expenses].reduce(payments) { $0 + $1.monthlyExpense } }
+    var fixedCosts: Double {
+        let loanCents = plan[.loans].reduce(0.0) { $0 + 12 * budgetCents($1.monthlyLoanPayment) }
+        return plan[.expenses].reduce(loanCents) { $0 + $1.annualExpenseCents(on: today) } / 1200
+    }
     var rankedCategories: [(name: String, amount: Double)] {
         var totals: [String: Double] = [:]
         var labels: [String: String] = [:]
@@ -380,9 +520,9 @@ struct PlanMetrics {
             if labels[key] == nil { labels[key] = name }
             totals[key, default: 0] += amount
         }
-        for item in plan[.expenses] { add(item.expenseCategory, amount: item.monthlyExpense) }
-        for loan in loansWithPayments { add(loan.loanCategory, amount: loan.monthlyLoanPayment) }
-        return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value) }.sorted {
+        for item in plan[.expenses] where item.frequency != .once { add(item.expenseCategory, amount: item.annualExpenseCents(on: today)) }
+        for loan in loansWithPayments { add(loan.loanCategory, amount: 12 * budgetCents(loan.monthlyLoanPayment)) }
+        return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value / 1200) }.sorted {
             if $0.amount != $1.amount { return $0.amount > $1.amount }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
@@ -398,7 +538,10 @@ struct PlanMetrics {
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
     var specialCosts: [PlanItem] {
         plan.entriesByDueDate(in: .expenses).filter {
-            $0.frequency != .monthly && $0.frequency.isDue(in: month, anchor: $0.fields.integer("month") ?? 0)
+            if $0.frequency == .once {
+                return !$0.fields.flag("paid") && $0.fields.text("dueDate").prefix(7) == PlanDate.string(today).prefix(7)
+            }
+            return $0.frequency != .monthly && $0.frequency.isDue(in: month, anchor: $0.fields.integer("month") ?? 0)
         }
     }
     // Card balances are already deducted in net. Settlement changes the two account balances together.
@@ -441,8 +584,19 @@ struct PlanMetrics {
             if annual, let dueMonth, dueMonth != month { continue }
             include(item, section: .income, amount: item.fields.amount("amount"), monthUnknown: annual && dueMonth == nil)
         }
-        for item in plan[.expenses] where item.frequency.isDue(in: month, anchor: item.fields.integer("month") ?? 0) {
-            include(item, section: .expenses, amount: -item.fields.amount("amount"))
+        for item in plan[.expenses] {
+            if item.frequency == .once {
+                guard !item.fields.flag("paid"), item.fields.amount("amount") != 0,
+                      let due = PlanDate.parse(item.fields.text("dueDate")) else { continue }
+                let entry = ForecastEntry(section: .expenses, item: item, amount: -item.fields.amount("amount"),
+                    day: calendar.component(.day, from: due), monthUnknown: false, bookingDate: due)
+                if calendar.startOfDay(for: due) <= start { result.uncertain.append(entry) }
+                else if calendar.isDate(due, equalTo: start, toGranularity: .month) { result.scheduled.append(entry) }
+            } else if item.frequency.isDue(in: month, anchor: item.fields.integer("month") ?? 0) {
+                let bookedDay = min(lastDay, item.fields.integer("bookingDay") ?? 0)
+                let date = bookedDay > 0 ? calendar.date(byAdding: .day, value: bookedDay - day, to: start) ?? start : start
+                include(item, section: .expenses, amount: -item.expenseAmount(on: date))
+            }
         }
         for loan in loansWithPayments { include(loan, section: .loans, amount: -loan.monthlyLoanPayment) }
         let transfers = cardSettlements.map { card in
@@ -470,15 +624,20 @@ extension Array where Element == PlanItem {
 }
 
 enum PlanDate {
-    private static func formatter() -> DateFormatter {
+    private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
+    }()
+    static func string(_ date: Date) -> String { formatter.string(from: date) }
+    static func parse(_ value: String) -> Date? {
+        guard value.utf8.count == 10 else { return nil }
+        guard let date = formatter.date(from: value), formatter.string(from: date) == value else { return nil }
+        return date
     }
-    static func string(_ date: Date) -> String { formatter().string(from: date) }
-    static func parse(_ value: String) -> Date? { formatter().date(from: value) }
     static func parseTradeTime(_ value: String) -> Date? {
         (try? Date(value, strategy: .iso8601))
             ?? (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
@@ -486,7 +645,13 @@ enum PlanDate {
 }
 
 func euros(_ amount: Double) -> String {
-    amount.formatted(.currency(code: "EUR").locale(Locale(identifier: "de_DE")))
+    amount.formatted(.currency(code: "EUR").locale(Locale(identifier: "de_DE")).rounded(rule: .toNearestOrAwayFromZero))
+}
+
+// Preserve imported sub-cent amounts, but remove binary noise from whole cents.
+private func budgetCents(_ amount: Double) -> Double {
+    let value = amount * 100, nearest = value.rounded()
+    return abs(value - nearest) <= abs(value) * Double.ulpOfOne * 4 ? nearest : value
 }
 
 // During editing, a sign or an unfinished thousands group can still become a number.

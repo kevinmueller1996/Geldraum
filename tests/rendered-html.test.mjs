@@ -254,7 +254,9 @@ test("keeps finance plans and market quotes behind password sessions", async () 
   assert.match(verifyRoute, /confirmEmailVerification/);
   assert.match(verifyRoute, /export async function POST/);
   assert.match(resetRoute, /resetPasswordWithToken/);
-  assert.match(resetPage, /window\.history\.replaceState/);
+  assert.match(resetPage, /useAuthLinkToken\(\)/);
+  const authLink = await readFile(new URL("../app/auth-link.ts", import.meta.url), "utf8");
+  assert.match(authLink, /history\.replaceState\(history\.state, "", location\.pathname \+ location\.search\)/);
   assert.match(localHost, /normalized === "localhost"/);
   assert.match(localHost, /normalized\.endsWith\("\.localhost"\)/);
   assert.match(localHost, /normalized === "127\.0\.0\.1"/);
@@ -314,7 +316,7 @@ test("provides a native Next.js build and server-only D1 adapter for Vercel", as
   assert.match(proxy, /origin\.protocol !== "https:"/);
   assert.match(proxy, /incomingOrigin !== incomingUrl\.origin/);
   assert.match(proxy, /Incomplete Cloudflare D1 configuration/);
-  assert.match(proxy, /contentLength > 600_000/);
+  assert.match(proxy, /contentLength > bodyLimit/);
   assert.match(proxy, /__Host-njora_session/);
   assert.match(proxy, /getSetCookie/);
   assert.match(registerRoute, /if \(needsCloudflareBackendProxy\(\)\) return proxyApiRequest\(request\)/);
@@ -323,4 +325,24 @@ test("provides a native Next.js build and server-only D1 adapter for Vercel", as
   assert.match(readme, /Deployment auf Vercel/);
   assert.match(readme, /D1 Read und D1 Write/);
   assert.match(readme, /automatisch serverseitig\s+an das bestehende Cloudflare-Backend/);
+});
+
+test("every account deletion confirmation offers subscription management even without a provider result", async () => {
+  const [web, app, settings] = await Promise.all([
+    "../app/page.tsx", "../ios/App/App/NjoraApp.swift", "../ios/App/App/NjoraEditors.swift",
+  ].map(path => readFile(new URL(path, import.meta.url), "utf8")));
+  const panel = web.match(/<details className="danger-zone">([\s\S]*?)<\/details>/)?.[1];
+  assert.ok(panel);
+  assert.match(panel, /!cloudUser\?\.local && <p>Ein Web-Abo endet sofort/);
+  assert.match(panel, /https:\/\/apps\.apple\.com\/account\/subscriptions/);
+  assert.doesNotMatch(panel, /billing\s*&&|billing\?*\.provider/);
+  assert.match(panel, /Endgültig löschen/);
+  assert.match(app, /\.accountDeletionDialog\(isPresented: \$confirmDelete\)/);
+  assert.match(settings, /\.accountDeletionDialog\(isPresented: \$delete\)/);
+  const dialog = app.match(/private struct AccountDeletionConfirmation[\s\S]*?\n\}/)?.[0];
+  assert.ok(dialog);
+  assert.match(dialog, /https:\/\/apps\.apple\.com\/account\/subscriptions/);
+  assert.match(dialog, /App-Store-Abo läuft nach der Kontolöschung weiter/);
+  assert.match(dialog, /role: \.destructive, action: delete/);
+  assert.match(dialog, /role: \.cancel/);
 });

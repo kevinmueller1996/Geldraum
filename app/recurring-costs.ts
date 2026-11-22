@@ -87,7 +87,7 @@ export function unifiedExpenses(expenses: Expense[], annualCosts: AnnualCost[]):
       do { id = `legacy-annual-${++suffix}`; } while (used.has(id) || reserved.has(id));
     }
     used.add(id);
-    return { ...item, id, category: item.category || "Sonstige", frequency: "annual" as const };
+    return { ...item, id, category: typeof item.category === "string" ? item.category : "Sonstige", frequency: "annual" as const };
   });
   const category = expenseCategoryResolver();
   return [...expenses, ...legacy].map(item => ({ ...item, category: category(item.category) }));
@@ -145,11 +145,36 @@ export function upcomingCardSettlements(accounts: CardAccount[], today: Date) {
     .sort((a, b) => (a.date?.getTime() ?? Infinity) - (b.date?.getTime() ?? Infinity) || a.account.name.localeCompare(b.account.name, "de"));
 }
 
+type LoanPayment = { payment: number; extraPayment?: number; balance?: number; interestRate?: number };
+
+export function monthlyLoanPayment(loan: LoanPayment) {
+  const instalment = Math.max(0, loan.payment + (loan.extraPayment ?? 0));
+  if (loan.balance === undefined) return instalment;
+  const outstanding = Math.max(0, loan.balance) * (1 + Math.max(0, loan.interestRate ?? 0) / 1200);
+  return Math.min(instalment, Math.round(outstanding * 100) / 100);
+}
+
+// Sum the actual payments as annual cents before dividing. Adding rounded or
+// fractional monthly averages makes half-cent results depend on list order.
+export function averageMonthlyCosts(expenses: ExpenseSchedule[], loans: LoanPayment[], day: string) {
+  function cents(amount: number) {
+    const value = amount * 100, nearest = Math.round(value);
+    return Math.abs(value - nearest) <= Math.abs(value) * Number.EPSILON * 4 ? nearest : value;
+  }
+  let yearly = loans.reduce((sum, loan) => sum + 12 * cents(monthlyLoanPayment(loan)), 0);
+  for (const item of expenses) {
+    if (item.frequency !== "once") {
+      yearly += cents(expenseAmount(item, day)) * (12 / intervalMonths[item.frequency ?? "monthly"]);
+    }
+  }
+  return yearly / 1200;
+}
+
 export function monthEndForecast(balance: number, today: Date, plan: {
   accounts?: CardAccount[];
   incomes: (ForecastItem & { amount: number; annual: boolean; month?: number })[];
   expenses: Expense[];
-  commitments: (ForecastItem & { payment: number; extraPayment?: number })[];
+  commitments: (ForecastItem & LoanPayment)[];
 }) {
   const month = today.getMonth(), day = today.getDate();
   const lastDay = new Date(today.getFullYear(), month + 1, 0).getDate();
@@ -167,7 +192,7 @@ export function monthEndForecast(balance: number, today: Date, plan: {
   }
   for (const item of plan.expenses) {
     if (item.frequency === "once") {
-      if (!item.dueDate || item.paid) continue;
+      if (!item.dueDate || item.paid || item.amount === 0) continue;
       if (item.dueDate <= localISO(today)) {
         uncertain.push({ id: "expenses:" + item.id, itemId: item.id, section: "expenses", name: item.name,
           amount: -item.amount, day: Number(item.dueDate.slice(-2)), monthUnknown: false, dueDate: item.dueDate });
@@ -179,7 +204,7 @@ export function monthEndForecast(balance: number, today: Date, plan: {
       include("expenses", item, -expenseAmount(item, localISO(new Date(today.getFullYear(), month, due))));
     }
   }
-  for (const loan of plan.commitments) include("loans", loan, -Math.max(0, loan.payment + (loan.extraPayment ?? 0)));
+  for (const loan of plan.commitments) include("loans", loan, -monthlyLoanPayment(loan));
   scheduled.sort((a, b) => a.day - b.day);
   const datedBalance = scheduled.reduce((sum, row) => sum + row.amount, balance);
   const low = uncertain.reduce((sum, row) => sum + Math.min(0, row.amount), datedBalance);

@@ -1,3 +1,4 @@
+import { readFormObject } from "../../../request-body";
 import { NextRequest, NextResponse } from "next/server";
 import { isLocalHostname } from "../../../local-host";
 import { authEmailConfigured, sendAuthEmail } from "../../../auth-email";
@@ -21,7 +22,8 @@ export async function POST(request: NextRequest) {
   if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (!validRequest(request)) return json({ error: "Unzulässige Anfrage." }, 403);
   try {
-    const body = await request.json() as { email?: unknown; password?: unknown };
+    const body = await readFormObject(request);
+    if (!body) return json({ error: "Ungültige Anfrage." }, 400);
     const email = normalizeEmail(body.email);
     if (!email) return json({ error: "Bitte gib eine gültige E-Mail-Adresse ein." }, 400);
     const requiresVerification = !isLocalHostname(request.nextUrl.hostname) || emailVerificationRequired();

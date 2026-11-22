@@ -1,4 +1,5 @@
 import "server-only";
+import { formBodyLimit, readBodyBytes } from "../request-body";
 import { expireMarker } from "../browser-session";
 
 const DEFAULT_BACKEND_ORIGIN = "https://klarbudget-kevin-2026.alpher5.chatgpt.site";
@@ -41,22 +42,44 @@ export async function proxyApiRequest(request: Request) {
 
   try {
     const origin = backendOrigin();
-    const target = new URL(`${incomingUrl.pathname}${incomingUrl.search}`, origin);
+    const target = new URL(origin.origin);
+    target.pathname = incomingUrl.pathname;
+    target.search = incomingUrl.search;
+    const bodyLimit = request.method === "PUT" && incomingUrl.pathname === "/api/account" ? 600_000 : formBodyLimit;
     const contentLength = Number(request.headers.get("content-length") ?? "0");
-    if (Number.isFinite(contentLength) && contentLength > 600_000) return errorResponse("Die Anfrage ist zu groß.", 413);
+    if (Number.isFinite(contentLength) && contentLength > bodyLimit) return errorResponse("Die Anfrage ist zu groß.", 413);
     const headers = new Headers();
-    for (const name of ["accept", "content-type", "cookie", "user-agent"] as const) {
+    for (const name of ["accept", "content-type", "user-agent"] as const) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
+    }
+    const adminRoute = incomingUrl.pathname.startsWith("/api/admin/");
+    const sessionNames = adminRoute ? ["__Host-njora_admin_session", "njora_admin_session"] : ["__Host-njora_session", "geldraum_session"];
+    const sessionCookies = request.headers.get("cookie")?.split(";").map(cookie => cookie.trim())
+      .filter(cookie => sessionNames.includes(cookie.split("=", 1)[0]));
+    if (sessionCookies?.length) headers.set("cookie", sessionCookies.join("; "));
+    // The export token is separate from the admin API token and is scoped to the backup endpoint.
+    if (incomingUrl.pathname === "/api/admin/backup") {
+      const backupToken = request.headers.get("x-njora-backup-token");
+      if (backupToken) headers.set("x-njora-backup-token", backupToken);
     }
     const adminToken = request.headers.get("x-njora-admin-token");
     if (adminToken && incomingUrl.pathname.startsWith("/api/admin/")) headers.set("x-njora-admin-token", adminToken);
     headers.set("origin", origin.origin);
 
+    let body;
+    if (mutating) {
+      try {
+        body = await readBodyBytes(request, bodyLimit);
+      } catch (error) {
+        if (error instanceof RangeError) return errorResponse("Die Anfrage ist zu groß.", 413);
+        throw error;
+      }
+    }
     const upstream = await fetch(target, {
       method: request.method,
       headers,
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+      body,
       cache: "no-store",
       redirect: "manual",
       signal: AbortSignal.timeout(10_000),
@@ -69,9 +92,9 @@ export async function proxyApiRequest(request: Request) {
     }
     for (const cookie of cookieHeaders) {
       const value = cookie.trimStart();
-      if (value.startsWith("__Host-njora_session=") || value.startsWith("geldraum_session=")) {
+      if (sessionNames.includes(value.split("=", 1)[0])) {
         responseHeaders.append("set-cookie", cookie);
-        responseHeaders.append("set-cookie", expireMarker(request.url));
+        if (!adminRoute) responseHeaders.append("set-cookie", expireMarker(request.url));
       }
     }
     responseHeaders.set("Cache-Control", "no-store");

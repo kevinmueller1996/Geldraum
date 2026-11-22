@@ -1,12 +1,15 @@
 "use client";
 
 import { applyClosingPrices, closeVenue, securityISIN, type ClosingPrices } from "./market/closing-prices";
-import { currentSession, offlineCopy, updateCopy, mergeDraft, reconcile, pending, Conflict, SessionChanged, type Copy, type Remote, type Choice } from "./browser-plan";
+import { currentSession, offlineCopy, updateCopy, mergeDraft, reconcile, bindBrowserCopy, differentAccount, pending, Conflict, SessionChanged, type Copy, type Remote, type Choice } from "./browser-plan";
 import { expireMarker } from "./browser-session";
+import Image from "next/image";
+import { useBrowserReady } from "./browser-runtime";
 import { Capacitor } from "@capacitor/core";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
-import { backupPlan } from "./plan-validation";
+import { checkInFields, checkInRecord } from "./check-in";
+import { backupPlan, isPlan, validCalendarDay } from "./plan-validation";
 import BalanceHistory from "./balance-history";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
@@ -17,7 +20,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { bookingDay?: number; id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, expenseAmount, monthlyExpense, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
+import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, expenseAmount, averageMonthlyCosts, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
 
 type Commitment = { bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -42,7 +45,7 @@ export type Plan = {
   checkInCadence: "daily" | "weekly";
   scenario: { name: string; cost: number; equity: number };
 };
-export type CloudUser = { displayName: string; email: string; local?: boolean };
+export type CloudUser = { displayName: string; email: string; local?: boolean; accountCreatedAt?: string };
 type AuthStatus = "loading" | "authenticated" | "anonymous" | "unavailable";
 type SyncStatus = "idle" | "saving" | "saved" | "pending" | "offline" | "error" | "conflict";
 
@@ -155,7 +158,7 @@ function localDay(date = new Date()) {
 }
 
 function goalMonthlyNeed(goal: Goal) {
-  if (!goal.targetDate) return 0;
+  if (!validCalendarDay(goal.targetDate)) return 0;
   const target = new Date(`${goal.targetDate}T12:00:00`);
   const now = new Date();
   if (Number.isNaN(target.getTime()) || target <= now) return Math.max(goal.target - goal.saved, 0);
@@ -259,7 +262,8 @@ export default function Home() {
   const [importText, setImportText] = useState("");
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [cloudUser, setCloudUser] = useState<CloudUser | null>(null);
-  const [isLocalMode, setIsLocalMode] = useState(false);
+  const browserReady = useBrowserReady();
+  const isLocalMode = browserReady && isLocalHostname(window.location.hostname);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const current = useRef<Copy | undefined>(undefined);
@@ -282,11 +286,21 @@ export default function Home() {
     let again = false;
     let delay = 2000;
     let timer: ReturnType<typeof setTimeout>;
-    const localRuntime = isLocalHostname(window.location.hostname);
-    setIsLocalMode(localRuntime);
+    function leaveSession(path: "/login" | "/") {
+      current.current = undefined;
+      baseline.current = null;
+      clash.current = null;
+      setAuthStatus("anonymous");
+      setPlan(null);
+      location.replace(path);
+    }
 
     function show(copy: Copy) {
       if (cancelled || copy.session !== currentSession()) return;
+      if (current.current && differentAccount(current.current.user, copy.user)) {
+        leaveSession("/");
+        return;
+      }
       const first = !current.current;
       current.current = copy;
       setBilling(copy.billing ?? null);
@@ -310,7 +324,7 @@ export default function Home() {
     async function exchange() {
       if (cancelled) return;
       const previous = current.current;
-      if (previous && previous.session !== currentSession()) { location.reload(); return; }
+      if (previous && previous.session !== currentSession()) { leaveSession("/"); return; }
       const headers: Record<string,string> = {"x-njora-browser": "1"};
       headers["x-njora-closing-prices"] = [...new Set(previous?.draft?.savings.filter(s => s.kind === "security").map(s => securityISIN(s.symbol)).filter(Boolean))].join(",") || "1";
       if (previous) headers["x-njora-browser-session"] = previous.session;
@@ -318,7 +332,8 @@ export default function Home() {
       if (cancelled) return;
       if (response.status === 401 || response.status === 412) {
         if (!previous || currentSession() === previous.session) document.cookie = expireMarker(location.href);
-        if (!localRuntime) { location.replace(response.status === 401 ? "/login" : "/"); return; }
+        leaveSession(response.status === 401 ? "/login" : "/");
+        return;
       }
       if (!response.ok) throw new Error("Der Cloud-Abgleich ist gerade nicht möglich.");
       const { closingPrices:daily, ...reply } = await response.json() as Remote & {closingPrices?:ClosingPrices | null};
@@ -328,8 +343,7 @@ export default function Home() {
       const email = reply.user.email;
       let overlap = false;
       const copy = await updateCopy(email, session, saved => {
-        const bound = saved ? {...saved, session, billing: reply.billing, user: reply.user}
-          : {...reply, session, draft: reply.plan, sending: null};
+        const bound = bindBrowserCopy(saved, reply, session);
         try {
           const merged = reconcile(bound, reply);
           return {...merged, draft:applyClosingPrices(merged.draft, daily)};
@@ -375,7 +389,7 @@ export default function Home() {
         delay = 2000;
       } catch (err) {
         if (cancelled) return;
-        if (err instanceof SessionChanged && current.current) { location.reload(); return; }
+        if (err instanceof SessionChanged && current.current) { leaveSession("/"); return; }
         if (!current.current) { setAuthStatus("unavailable"); setReady(true); }
         else {
           setSyncStatus(pending(current.current) ? "pending" : "offline");
@@ -391,7 +405,7 @@ export default function Home() {
     syncNow.current = () => { void sync(); };
     const resume = () => { if (!document.hidden) void sync(); };
     const changed = () => {
-      if (current.current && current.current.session !== currentSession()) { location.reload(); return; }
+      if (current.current && current.current.session !== currentSession()) { leaveSession("/"); return; }
       resume();
     };
     const messages = typeof BroadcastChannel === "function" ? new BroadcastChannel("njora-finance") : null;
@@ -434,11 +448,12 @@ export default function Home() {
   useEffect(() => {
     const modalOpen = billing?.active !== false && (checkingIn || editing || savingsOpen || showLegacyPrompt || (authStatus === "authenticated" && !hasPlan));
     if (!modalOpen) return;
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const dialog = document.querySelector<HTMLElement>("[role='dialog']");
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary") ?? []);
-    const focusTimer = window.setTimeout(() => focusable()[0]?.focus(), 20);
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary") ?? []).filter(el => el.getClientRects().length > 0);
+    const focusTimer = window.setTimeout(() => focusable()[0]?.focus({ preventScroll: true }), 20);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (checkingIn) setCheckingIn(false);
@@ -458,6 +473,7 @@ export default function Home() {
     return () => {
       window.clearTimeout(focusTimer);
       document.body.style.overflow = previousOverflow;
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [authStatus, billing?.active, checkingIn, editing, onboardingStep, hasPlan, savingsOpen, showLegacyPrompt]);
@@ -470,7 +486,7 @@ export default function Home() {
     const annualIncome = active.incomes.filter((item) => item.annual).reduce((sum, item) => sum + item.amount, 0);
     const currentAnnualIncome = active.incomes.filter((item) => item.annual && item.month === now.getMonth()).reduce((sum, item) => sum + item.amount, 0);
     const payments = active.commitments.reduce((sum, item) => sum + monthlyLoanPayment(item), 0);
-    const fixedCosts = active.expenses.reduce((sum, item) => sum + monthlyExpense(item, today), payments);
+    const fixedCosts = averageMonthlyCosts(active.expenses, active.commitments, today);
     const goalNeed = active.goals.reduce((sum, item) => sum + goalMonthlyNeed(item), 0);
     const available = income - fixedCosts;
     const unallocated = available;
@@ -503,15 +519,14 @@ export default function Home() {
       if (item.frequency === "once") continue;
       const group = groupFor(item.category);
       group.expenses.push(item);
-      group.value += monthlyExpense(item, today);
     }
     for (const loan of active.commitments) {
       const payment = monthlyLoanPayment(loan);
       if (!payment) continue;
       const group = groupFor(loan.category?.trim() || "Kreditraten");
       group.loans.push(loan);
-      group.value += payment;
     }
+    for (const group of groups.values()) group.value = averageMonthlyCosts(group.expenses, group.loans, today);
     return [...groups.values()].sort((a, b) => b.value - a.value || a.category.localeCompare(b.category, "de"));
   }, [active.expenses, active.commitments, active.categoryColors, today]);
 
@@ -559,7 +574,6 @@ export default function Home() {
     setEditorScope(section);
     setEditorTarget(nextTarget);
     setEditing(true);
-    window.setTimeout(() => document.getElementById(`editor-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
   }
 
   function forecastButton(row: ForecastRow, dated: boolean) {
@@ -585,9 +599,16 @@ export default function Home() {
     setSyncStatus("saving");
     try {
       const result = await updateCopy(copy.user.email, copy.session, saved => {
-        if (!saved || saved.session !== copy.session) throw new SessionChanged();
+        if (!saved || saved.session !== copy.session || differentAccount(copy.user, saved.user)) throw new SessionChanged();
         if (saved.billing?.active === false) throw new Error("Für Änderungen brauchst du ein aktives Abo.");
-        return {...saved, draft:mergeDraft(base, next, saved.draft)};
+        const merged = mergeDraft(base, next, saved.draft);
+        if (!merged) throw new Error("Der Finanzplan fehlt.");
+        const payload = storagePlan(merged);
+        if (!isPlan(payload)) throw new RangeError("Ein Eintrag überschreitet die zulässige Länge, Anzahl oder einen Wertebereich. Bitte prüfe deine Eingaben.");
+        if (new TextEncoder().encode(JSON.stringify(payload)).length > 500_000) {
+          throw new RangeError("Der Finanzplan ist zu groß für den Cloud-Abgleich.");
+        }
+        return {...saved, draft:merged};
       });
       if (!result) throw new Error();
       current.current = result;
@@ -599,7 +620,7 @@ export default function Home() {
       return true;
     } catch (error) {
       if (error instanceof SessionChanged) { location.reload(); return false; }
-      setProblem(error instanceof Conflict ? "Dieser Eintrag wurde während der Bearbeitung geändert. Öffne ihn erneut."
+      setProblem(error instanceof RangeError ? error.message : error instanceof Conflict ? "Dieser Eintrag wurde während der Bearbeitung geändert. Öffne ihn erneut."
         : "Der Browser konnte die Änderung nicht speichern. Prüfe den verfügbaren Speicher.");
       setSyncStatus("error"); return false;
     }
@@ -610,7 +631,7 @@ export default function Home() {
     if (!copy || !remote) return;
     try {
       const result = await updateCopy(copy.user.email, copy.session, saved => {
-        if (!saved || saved.session !== copy.session) throw new SessionChanged();
+        if (!saved || saved.session !== copy.session || differentAccount(copy.user, saved.user)) throw new SessionChanged();
         return reconcile(saved, remote, choice);
       });
       if (result) {
@@ -622,7 +643,7 @@ export default function Home() {
 
   async function savePlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft.name.trim()) { setSyncStatus("error"); return; }
+    if (!draft.name.trim()) { setProblem("Bitte gib deinem Finanzplan einen Namen."); setSyncStatus("error"); return; }
     const clean = normalizePlan({ ...draft, name: draft.name.trim(), savings: draft.savings.map((item) => ({ ...item, name: item.name.trim(), symbol: item.kind === "security" ? item.symbol?.trim().toUpperCase() : undefined })) });
     if (await persistPlan(clean, baseline.current)) {
       setEditing(false);
@@ -684,11 +705,18 @@ export default function Home() {
     if (!await persistPlan(clean)) setOnboardingError("Dein Finanzplan konnte gerade nicht gespeichert werden. Bitte versuche es erneut.");
   }
 
+  function selectCheckInDate(date: string, source = baseline.current) {
+    if (!source) return;
+    const fields = checkInFields(source, date, localDay());
+    setCheckInDate(date);
+    setCheckInAccounts(fields.accounts);
+    setCheckInNote(fields.note);
+  }
+
   function openCheckIn() {
+    if (!plan) return;
     baseline.current = plan;
-    setCheckInAccounts(structuredClone(active.accounts));
-    setCheckInDate(localDay());
-    setCheckInNote("");
+    selectCheckInDate(localDay(), plan);
     setCheckingIn(true);
   }
 
@@ -696,10 +724,8 @@ export default function Home() {
     event.preventDefault();
     const initial = baseline.current;
     if (!initial || !checkInDate || checkInDate > localDay()) return;
-    const accounts = checkInAccounts.map((account) => ({ ...account, name: account.name.trim() || "Unbenanntes Konto" }));
-    const balances = Object.fromEntries(accounts.map((account) => [account.id, account.balance]));
-    const netBalance = accounts.reduce((sum, account) => sum + (account.type === "credit" ? -account.balance : account.balance), 0);
-    const snapshot: Snapshot = { id: uid(), date: checkInDate, balances, note: checkInNote.trim(), netBalance };
+    const accounts = checkInAccounts.map(account => ({ ...account, name: account.name.trim() || "Unbenanntes Konto" }));
+    const snapshot = checkInRecord(initial, checkInDate, localDay(), accounts, checkInNote, uid());
     const updated: Plan = {
       ...initial,
       accounts: checkInDate === localDay() ? accounts : initial.accounts,
@@ -712,9 +738,16 @@ export default function Home() {
     setImportError("");
     setImportPreview(null);
     try {
-      if (new TextEncoder().encode(importText).byteLength > 500_000) throw new Error();
+      if (new TextEncoder().encode(importText).byteLength > 4_000_000) {
+        setImportError("Die Sicherung überschreitet die maximale Dateigröße von 4 MB.");
+        return;
+      }
       const data = backupPlan(JSON.parse(importText));
       if (!data) throw new Error();
+      if (new TextEncoder().encode(JSON.stringify(data)).byteLength > 500_000) {
+        setImportError("Der Finanzplan ist zu groß für den Cloud-Abgleich.");
+        return;
+      }
       setImportPreview(normalizePlan(data as Partial<Plan>));
     } catch {
       setImportError("Diese Datei enthält keine vollständige Njora-Plansicherung.");
@@ -743,7 +776,7 @@ export default function Home() {
 
   async function exportPlan() {
     if (!plan) return;
-    const backup = JSON.stringify(storagePlan(plan), null, 2);
+    const backup = JSON.stringify(storagePlan(plan));
     const filename = `njora-sicherung-${localDay()}.json`;
     if (Capacitor.isNativePlatform()) {
       try {
@@ -764,13 +797,17 @@ export default function Home() {
   }
 
   async function deleteAccount() {
-    if (deleteConfirmation !== "LÖSCHEN") return;
+    const copy = current.current;
+    if (deleteConfirmation !== "LÖSCHEN" || deletingAccount || !copy) return;
+    let failure = "Die Löschung konnte nicht bestätigt werden. Bitte prüfe deine Verbindung und versuche es erneut.";
     setDeletingAccount(true);
     try {
-      const copy = current.current;
-      if (!copy) return;
       const response = await fetch("/api/account", { method: "DELETE", headers: {"x-njora-browser-session":copy.session} });
-      if (!response.ok) throw new Error("delete failed");
+      if (!response.ok) {
+        const issue = await response.json().catch(() => null);
+        if (issue?.code === "billing_cancellation_unconfirmed" && typeof issue.error === "string") failure = issue.error;
+        throw new Error("delete failed");
+      }
       await updateCopy(copy.user.email, copy.session, () => undefined, true);
       channel.current?.postMessage("session");
       window.localStorage.removeItem(STORAGE_KEY);
@@ -778,6 +815,7 @@ export default function Home() {
       window.localStorage.removeItem(OLD_STORAGE_KEY);
       window.location.href = cloudUser?.local ? "/" : "/login";
     } catch {
+      setProblem(failure);
       setSyncStatus("error");
       setDeletingAccount(false);
     }
@@ -819,8 +857,8 @@ export default function Home() {
   if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
 
   const currentMonth = new Date().getMonth();
-  const lastSnapshot = [...active.snapshots].sort((a, b) => b.date.localeCompare(a.date))[0];
-  const daysSinceUpdate = lastSnapshot ? Math.max(0, Math.floor((new Date().getTime() - new Date(`${lastSnapshot.date}T12:00:00`).getTime()) / 86400000)) : null;
+  const lastSnapshot = active.snapshots.filter(item => validCalendarDay(item.date)).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const daysSinceUpdate = lastSnapshot ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(lastSnapshot.date)) / 86400000)) : null;
   const lastUpdateLabel = lastSnapshot ? new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${lastSnapshot.date}T12:00:00`)) : "Noch kein Update";
   const updateDue = daysSinceUpdate === null || daysSinceUpdate >= (active.checkInCadence === "daily" ? 1 : 7);
   const currentMonthName = new Intl.DateTimeFormat("de-DE", { month: "long" }).format(new Date());
@@ -834,6 +872,12 @@ export default function Home() {
   const costLoans = (costDetail.category ? selectedCostGroup?.loans ?? [] : active.commitments)
     .filter(loan => monthlyLoanPayment(loan) > 0)
     .sort((a, b) => monthlyLoanPayment(b) - monthlyLoanPayment(a) || a.name.localeCompare(b.name, "de"));
+
+  const pastCheckIn = checkingIn && checkInDate < today;
+  const previousCheckIn = checkingIn && baseline.current?.snapshots.find(entry => entry.date === checkInDate);
+  const checkInTotal = checkingIn && baseline.current
+    ? checkInRecord(baseline.current, checkInDate, today, checkInAccounts, checkInNote, "").netBalance ?? 0
+    : 0;
 
   const editorCopy: Record<EditorScope, { eyebrow: string; title: string; intro: string }> = {
     accounts: { eyebrow: "Konten & Karten", title: "Konten bearbeiten", intro: "Passe ausschließlich deine Konten und Karten an. Aktuelle Stände pflegst du weiterhin am schnellsten über den Check-in." },
@@ -877,7 +921,7 @@ export default function Home() {
 
   function navigate(view: View) {
     setActiveView(view);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0 });
   }
 
   const syncLabel = {idle:"", saving:"Wird auf diesem Gerät gespeichert …", saved:"Mit der Cloud abgeglichen",
@@ -896,7 +940,7 @@ export default function Home() {
 
   if (billing && !billing.active && activeView !== "more") return (
     <main className="legal-page"><article>
-      <BillingOffer billing={billing} />
+      <BillingOffer billing={billing} standalone />
       <button type="button" className="text-action" onClick={() => navigate("more")}>Konto, Datenexport und Löschung</button>
       <LegalLinks />
     </article></main>
@@ -912,14 +956,14 @@ export default function Home() {
           <NavButton active={activeView === "goals"} onClick={() => navigate("goals")}>Ziele</NavButton>
           <NavButton active={activeView === "more"} onClick={() => navigate("more")}>Mehr</NavButton>
         </nav>
-        <button className="profile-button" type="button" onClick={() => navigate("more")} aria-label="Konto und Einstellungen"><span aria-hidden="true">{active.name.charAt(0).toUpperCase()}</span><b>{active.name}</b></button>
+        <button className="profile-button" type="button" onClick={() => navigate("more")} aria-label={active.name + " – Konto und Einstellungen"}><span aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" focusable="false"><circle cx="12" cy="8" r="3.3" /><path d="M4.7 20a7.3 7.3 0 0 1 14.6 0" /></svg></span><b>{active.name}</b></button>
       </header>
 
       {!editing && !checkingIn && !savingsOpen && (plan || billing?.active === false) && saveNotice}
 
       <div className="app-content">
         {activeView === "home" && <section className="view home-view" aria-labelledby="home-title">
-          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Heute</h1></div><button type="button" className="dashboard-account-link" title={updateDue ? "Check-in fällig · Kontostände aktualisieren" : "Kontostände aktualisieren"} aria-label="Kontostände aktualisieren" onClick={openCheckIn}><TitleAmount value={metrics.netBalance} label="Kontostand bearbeiten" /></button></div>
+          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Heute</h1></div><button type="button" className="dashboard-account-link" title={updateDue ? "Check-in fällig · Kontostände aktualisieren" : "Kontostände aktualisieren"} onClick={openCheckIn}><TitleAmount value={metrics.netBalance} label="Kontostand bearbeiten" /></button></div>
           <div className="njora-columns"><div className="njora-column">
           <button type="button" className="dashboard-balance" aria-expanded={showForecast} aria-controls="forecast-detail" onClick={() => setShowForecast(!showForecast)}>
             <span>Prognose zum Monatsende</span>
@@ -959,7 +1003,7 @@ export default function Home() {
           </div><div className="njora-column">
           {plan && <BalanceHistory plan={plan} />}
           <div className="dashboard-specials">
-            <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} aria-label={`Sonderposten im ${currentMonthName} anzeigen und bearbeiten`}><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen →</p></button>
+            <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} title="Sonderposten anzeigen und bearbeiten"><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen →</p></button>
           </div>
           <details className="dashboard-income"><summary>Einkommen im Detail</summary><article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article></details>
           </div></div>
@@ -1033,7 +1077,7 @@ export default function Home() {
             {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
             <small>{savingsMetrics.latestQuote ? `Letzter Datenstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Aktien und ETFs per ISIN mit Schlusskurs bewerten"}</small>
           </button>
-          <article className="detail-card goal-allocation"><div className="section-title compact"><div><p className="eyebrow">Machbarkeitscheck</p><h2>Was deine Termine erfordern</h2></div></div>{active.goals.map((goal) => <div className="allocation-line" key={goal.id}><span>{goal.name}<small>{goal.targetDate ? `bis ${new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T12:00:00`))}` : "ohne festen Termin"}</small></span><strong>{goal.targetDate ? `${euro(goalMonthlyNeed(goal))} / Monat` : "flexibel"}</strong></div>)}<div className="allocation-total"><span>Rechnerischer Bedarf aus Terminzielen</span><strong>{euro(metrics.goalNeed)}</strong></div><p className={`goal-feasibility ${metrics.goalNeed > metrics.available ? "warning" : ""}`}>{metrics.goalNeed === 0 ? "Ohne Zieldatum bleibt dein gesamter Überschuss frei verteilbar." : metrics.goalNeed <= metrics.available ? `Nach allen Terminzielen blieben rechnerisch ${euro(metrics.available - metrics.goalNeed)} pro Monat frei.` : `Die Terminziele übersteigen deinen Überschuss um ${euro(metrics.goalNeed - metrics.available)} pro Monat.`}</p></article>
+          <article className="detail-card goal-allocation"><div className="section-title compact"><div><p className="eyebrow">Machbarkeitscheck</p><h2>Was deine Termine erfordern</h2></div></div>{active.goals.map((goal) => <div className="allocation-line" key={goal.id}><span>{goal.name}<small>{validCalendarDay(goal.targetDate) ? `bis ${new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T12:00:00`))}` : goal.targetDate ? "Datum bitte prüfen" : "ohne festen Termin"}</small></span><strong>{goal.targetDate ? `${euro(goalMonthlyNeed(goal))} / Monat` : "flexibel"}</strong></div>)}<div className="allocation-total"><span>Rechnerischer Bedarf aus Terminzielen</span><strong>{euro(metrics.goalNeed)}</strong></div><p className={`goal-feasibility ${metrics.goalNeed > metrics.available ? "warning" : ""}`}>{metrics.goalNeed === 0 ? "Ohne Zieldatum bleibt dein gesamter Überschuss frei verteilbar." : metrics.goalNeed <= metrics.available ? `Nach allen Terminzielen blieben rechnerisch ${euro(metrics.available - metrics.goalNeed)} pro Monat frei.` : `Die Terminziele übersteigen deinen Überschuss um ${euro(metrics.goalNeed - metrics.available)} pro Monat.`}</p></article>
         </section>}
 
         {activeView === "more" && <section className="view" aria-labelledby="more-title">
@@ -1048,8 +1092,10 @@ export default function Home() {
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
           {billing && <article className="account-card"><BillingOffer billing={billing} /></article>}
+          {/* This API endpoint serves its own HTML document and needs a full navigation. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <article className="account-card"><h3>ChatGPT</h3><a href="/api/chatgpt/manage">Verbindung verwalten</a></article>
-          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncLabel}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p>{billing && <p>Ein Web-Abo endet mit der Kontolöschung. Ein Apple-Abo kündigst du zusätzlich in deinen Apple-Abonnements.</p>}<label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
+          <article className="account-card"><div className="account-card-head"><span>{cloudUser?.displayName.charAt(0).toUpperCase() || "N"}</span><div><p>{cloudUser?.local ? "Lokale Version" : "E-Mail-Konto"}</p><strong>{cloudUser?.local ? cloudUser.displayName : cloudUser?.email}</strong>{cloudUser?.local && <small>Keine Anmeldung erforderlich</small>}</div></div><div className="account-status"><span><i className={syncStatus === "saving" ? "saving" : ""} />{syncLabel}</span><small>{remoteUpdatedAt ? `Zuletzt ${new Intl.DateTimeFormat("de-DE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(remoteUpdatedAt))}` : cloudUser?.local ? "Noch keine lokale Speicherung" : "Noch keine Cloud-Speicherung"}</small></div><div className="account-actions"><button type="button" disabled={!plan} onClick={exportPlan}>Daten exportieren</button>{!cloudUser?.local && <button type="button" onClick={signOut}>Abmelden</button>}</div><details className="danger-zone"><summary>{cloudUser?.local ? "Lokale Finanzdaten löschen" : "Account und Finanzdaten löschen"}</summary><p>{cloudUser?.local ? "Diese Aktion löscht deinen Finanzplan endgültig aus der lokalen Entwicklungsdatenbank." : "Diese Aktion löscht dein Passwortkonto, alle Sitzungen und deinen Finanzplan endgültig aus der Njora-Cloud."}</p>{!cloudUser?.local && <p>Ein Web-Abo endet sofort. Ein App-Store-Abo läuft nach der Kontolöschung weiter, auch in der Probezeit. Kündige es vor dem Löschen in deinen <a href="https://apps.apple.com/account/subscriptions" target="_blank" rel="noopener noreferrer">Apple-Abonnements</a>, um weitere Abbuchungen zu vermeiden. Der bisherige Kauf ist an dieses Njora-Konto gebunden.</p>}<label>Zur Bestätigung LÖSCHEN eingeben<input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><button type="button" disabled={deleteConfirmation !== "LÖSCHEN" || deletingAccount} onClick={deleteAccount}>{deletingAccount ? "Wird gelöscht …" : "Endgültig löschen"}</button></details></article>
           <article className="privacy-card"><span>{cloudUser?.local ? "Lokale Entwicklung" : "Dein persönlicher Bereich"}</span><p>{cloudUser?.local ? "Auf localhost ist keine Anmeldung nötig. Die Daten bleiben in der lokalen Entwicklungsdatenbank und werden nicht mit einem Online-Account synchronisiert." : "Deine Finanzdaten werden deinem angemeldeten Account zugeordnet und zwischen deinen Geräten synchronisiert. Eine Bankverbindung ist nicht erforderlich."}</p></article>
           <LegalLinks />
         </section>}
@@ -1077,38 +1123,38 @@ export default function Home() {
           <div className="onboarding-content">
             {onboardingStep === 0 && <>
               <p className="eyebrow">Willkommen bei Njora</p><h2 id="onboarding-title">Wie möchtest du deinen Finanzplan nennen?</h2><p className="onboarding-intro">Der Name erscheint nur in deinem persönlichen Bereich. Lege außerdem fest, wie oft du deine Kontostände prüfen möchtest.</p>
-              <div className="onboarding-fields two"><label><FieldTitle required>Profilname</FieldTitle><input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Finanzplan" /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
+              <div className="onboarding-fields two"><label><FieldTitle required>Profilname</FieldTitle><input autoFocus maxLength={80} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Finanzplan" /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
             </>}
 
             {onboardingStep === 1 && <>
               <p className="eyebrow">Konten & Karten</p><h2 id="onboarding-title">Wo liegt dein Geld heute?</h2><p className="onboarding-intro">Nur Name und aktueller Stand – eine Bankverbindung oder IBAN ist nicht nötig.</p>
-              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput fixedMinus={item.type === "credit"} value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"], bookingDay: e.target.value === "credit" ? item.bookingDay : undefined })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <BookingDayField label="Monatlicher Abbuchungstag" day={item.bookingDay} update={bookingDay => updateList("accounts", index, { bookingDay })} />}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.accounts.map((item, index) => <div className="onboarding-row account" key={item.id}><label><FieldTitle required={index === 0}>Name</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label><FieldTitle>Aktueller Stand</FieldTitle><span className="currency-input"><DecimalInput fixedMinus={item.type === "credit"} value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle required={index === 0}>Art</FieldTitle><select value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"], bookingDay: e.target.value === "credit" ? item.bookingDay : undefined })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <BookingDayField label="Monatlicher Abbuchungstag" day={item.bookingDay} update={bookingDay => updateList("accounts", index, { bookingDay })} />}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>
             </>}
 
             {onboardingStep === 2 && <>
               <p className="eyebrow">Monatliches Einkommen</p><h2 id="onboarding-title">Was kommt regelmäßig rein?</h2><p className="onboarding-intro">Ein monatlicher Betrag reicht für den Start. Weitere oder jährliche Einnahmen kannst du später ergänzen.</p>
-              <div className="onboarding-list">{draft.incomes.filter((item) => !item.annual).map((item) => ({ item, index: draft.incomes.findIndex((entry) => entry.id === item.id) })).map(({ item, index }) => <div className="onboarding-row income" key={item.id}><label><FieldTitle required>Quelle</FieldTitle><input value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /></label><label><FieldTitle required>Monatlicher Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="0" /><b>€</b></span></label><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.incomes.filter((item) => !item.annual).map((item) => ({ item, index: draft.incomes.findIndex((entry) => entry.id === item.id) })).map(({ item, index }) => <div className="onboarding-row income" key={item.id}><label><FieldTitle required>Quelle</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /></label><label><FieldTitle required>Monatlicher Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="0" /><b>€</b></span></label><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}</div>
               {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>}
             </>}
 
             {onboardingStep === 3 && <>
               <p className="eyebrow">Fixkosten</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
               <div className="optional-note"><b>Optional</b><span>Du kannst direkt weitergehen.</span></div>
-              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
             </>}
 
             {onboardingStep === 4 && <>
               <p className="eyebrow">Kredite</p><h2 id="onboarding-title">Zahlst du einen Kredit zurück?</h2><p className="onboarding-intro">Eine vereinbarte Rate kannst du hier in deinen Monatsplan aufnehmen.</p>
               <div className="onboarding-optional-groups">
-              <section><div className="onboarding-group-head"><div><strong>Kredite & Verpflichtungen</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit</AddButton></div>{draft.commitments.map((item, index) => <div className="onboarding-row loan" key={item.id}><label>Kreditname<input aria-label="Kreditname" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Autokredit" /></label><label>Restschuld<span className="currency-input"><DecimalInput aria-label="Restschuld" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><b>€</b></span></label><label>Monatsrate<span className="currency-input"><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><b>€</b></span></label>{loanCategoryField(item, index)}<BookingDayField day={item.bookingDay} update={bookingDay => updateList("commitments", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>)}</section></div>
+              <section><div className="onboarding-group-head"><div><strong>Kredite & Verpflichtungen</strong><small>Optional</small></div><AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit</AddButton></div>{draft.commitments.map((item, index) => <div className="onboarding-row loan" key={item.id}><label>Kreditname<input maxLength={120} aria-label="Kreditname" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Autokredit" /></label><label>Restschuld<span className="currency-input"><DecimalInput aria-label="Restschuld" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /><b>€</b></span></label><label>Monatsrate<span className="currency-input"><DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /><b>€</b></span></label>{loanCategoryField(item, index)}<BookingDayField day={item.bookingDay} update={bookingDay => updateList("commitments", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>)}</section></div>
             </>}
 
             {onboardingStep === 5 && <>
               <p className="eyebrow">Ziele & Abschluss</p><h2 id="onboarding-title">Wofür möchtest du Raum schaffen?</h2><p className="onboarding-intro">Ziele sind optional. Danach ist dein Finanzplan bereit; Ersparnisse und Wertpapiere kannst du später in Ruhe ergänzen.</p>
               <div className="optional-note"><b>Optional</b><span>Ohne Ziel kannst du die Einrichtung direkt abschließen.</span></div>
-              <div className="onboarding-list">{draft.goals.map((item, index) => <div className="onboarding-row goal" key={item.id}><label><FieldTitle>Ziel</FieldTitle><input value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label><FieldTitle>Zielbetrag</FieldTitle><span className="currency-input"><DecimalInput value={item.target} onValueChange={(value) => updateList("goals", index, { target: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Schon gespart</FieldTitle><span className="currency-input"><DecimalInput value={item.saved} onValueChange={(value) => updateList("goals", index, { saved: value })} placeholder="0" /><b>€</b></span></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.goals.map((item, index) => <div className="onboarding-row goal" key={item.id}><label><FieldTitle>Ziel</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label><FieldTitle>Zielbetrag</FieldTitle><span className="currency-input"><DecimalInput value={item.target} onValueChange={(value) => updateList("goals", index, { target: value })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Schon gespart</FieldTitle><span className="currency-input"><DecimalInput value={item.saved} onValueChange={(value) => updateList("goals", index, { saved: value })} placeholder="0" /><b>€</b></span></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>
               <div className="onboarding-summary"><span>✓</span><div><strong>Deine Übersicht ist gleich bereit.</strong><p>{draft.accounts.filter((item) => item.name.trim()).length} Konten/Karten · {draft.incomes.filter((item) => !item.annual && item.amount > 0).length} Einkommen · {draft.expenses.filter((item) => item.amount > 0).length} Ausgaben</p></div></div>
             </>}
@@ -1120,14 +1166,14 @@ export default function Home() {
         </form>
       </section></div>}
 
-      {editing && plan && !showLegacyPrompt && <div className="modal-backdrop"><section className={`editor-card ${editorScope ? "focused-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      {billing?.active !== false && editing && plan && !showLegacyPrompt && <div className="modal-backdrop"><section className={`editor-card ${editorScope ? "focused-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="editor-header"><div><p className="eyebrow">{currentEditorCopy?.eyebrow ?? "Dein lokaler Finanzplan"}</p><h2 id="editor-title">{currentEditorCopy?.title ?? (plan ? "Plan bearbeiten" : "Lass uns Klarheit schaffen.")}</h2></div>{plan && <button type="button" className="close-button" onClick={closeEditor} aria-label="Schließen">×</button>}</div>
         <p className="editor-intro">{currentEditorCopy?.intro ?? "Richte deinen Alltag einmal ein. Danach reichen kurze Check-ins, um jederzeit ein klares Bild zu haben."}</p>
         <form onSubmit={savePlan}>
-          {!editorScope && <div className="editor-section basis-grid"><label>Profilname<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Budget" required /></label><label>Check-in-Rhythmus<select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="daily">täglich</option><option value="weekly">wöchentlich</option></select></label></div>}
+          {!editorScope && <div className="editor-section basis-grid"><label>Profilname<input maxLength={80} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Budget" required /></label><label>Check-in-Rhythmus<select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="daily">täglich</option><option value="weekly">wöchentlich</option></select></label></div>}
 
           {(!editorScope || editorScope === "accounts") && <EditorSection id="editor-accounts" title="Konten & Karten" subtitle="Nur der aktuelle Stand – keine Bankverbindung nötig">
-            {draft.accounts.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row four" key={item.id}><label>Kontoname<input aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label>Kontostand<DecimalInput aria-label="Aktueller Stand" fixedMinus={item.type === "credit"} value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /></label><label>Kontotyp<select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"], bookingDay: e.target.value === "credit" ? item.bookingDay : undefined })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <BookingDayField label="Monatlicher Abbuchungstag" day={item.bookingDay} update={bookingDay => updateList("accounts", index, { bookingDay })} />}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
+            {draft.accounts.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row four" key={item.id}><label>Kontoname<input maxLength={120} aria-label="Kontoname" value={item.name} onChange={(e) => updateList("accounts", index, { name: e.target.value })} placeholder="z. B. Girokonto" /></label><label>Kontostand<DecimalInput aria-label="Aktueller Stand" fixedMinus={item.type === "credit"} value={item.balance} onValueChange={(value) => updateList("accounts", index, { balance: value })} placeholder="Stand" /></label><label>Kontotyp<select aria-label="Kontotyp" value={item.type} onChange={(e) => updateList("accounts", index, { type: e.target.value as Account["type"], bookingDay: e.target.value === "credit" ? item.bookingDay : undefined })}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label>{item.type === "credit" && <BookingDayField label="Monatlicher Abbuchungstag" day={item.bookingDay} update={bookingDay => updateList("accounts", index, { bookingDay })} />}<RemoveButton onClick={() => removeListItem("accounts", index)} /></div>)}
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, accounts: [...draft.accounts, { id: uid(), name: "", type: "bank", balance: 0 }] })}>Konto oder Karte</AddButton>}
           </EditorSection>}
 
@@ -1145,25 +1191,25 @@ export default function Home() {
 
           {(!editorScope || editorScope === "expenses" || editorScope === "specials") && <EditorSection id="editor-expenses" title="Fixkosten" subtitle="Betrag, Rhythmus und Fälligkeit">
             {editorTarget && !editorTarget.startsWith("item:") && <div className="category-color-editor"><div><span className="category-color-preview" style={{ backgroundColor: draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget] }} /><span><strong>Kategoriefarbe</strong><small>Für Diagramm und Monatsübersicht</small></span></div><label><input aria-label={`Farbe für ${editorTarget}`} type="color" value={draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget]} onChange={(e) => setDraft({ ...draft, categoryColors: { ...draft.categoryColors, [editorTarget]: e.target.value } })} /></label></div>}
-            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><label>Ausgabe<input aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label>Betrag je Zahlung (€)<DecimalInput aria-label="Betrag je Zahlung" value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="Betrag je Zahlung" /></label><label>Kategorie<select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>{item.frequency !== "once" && <label>Buchungstag<input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /></label>}<ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
+            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><label>Ausgabe<input maxLength={120} aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label>Betrag je Zahlung (€)<DecimalInput aria-label="Betrag je Zahlung" value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="Betrag je Zahlung" /></label><label>Kategorie<select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>{item.frequency !== "once" && <label>Buchungstag<input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /></label>}<ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
             {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget ?? "Wohnen", bookingDay: 0, ...(editorScope === "specials" ? { frequency: "annual" as const, month: currentMonth } : {}) }] })}>Ausgabe</AddButton>}
           </EditorSection>}
 
 
           {(!editorScope || editorScope === "loans") && <EditorSection id="editor-loans" title="Kredite & Verpflichtungen" subtitle="Restschuld und Rate reichen aus; Vertragsdetails verbessern die Prognose">
-            {draft.commitments.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="loan-editor-item" key={item.id}><div className="editor-row four"><label>Kreditname<input aria-label="Verpflichtung" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Immobilienkredit" /></label><label>Restschuld (€)<DecimalInput aria-label="Restbetrag" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /></label><label>Monatsrate (€)<DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /></label><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>{loanCategoryField(item, index)}<BookingDayField day={item.bookingDay} update={bookingDay => updateList("commitments", index, { bookingDay })} /><details className="loan-details" open={Boolean(item.interestRate || item.termMonths || item.extraPayment)}><summary>Optionale Vertragsdetails für genauere Prognose</summary><div><label>Zinssatz p. a.<span className="currency-input"><DecimalInput aria-label="Zinssatz pro Jahr" value={item.interestRate} onValueChange={(value) => updateList("commitments", index, { interestRate: value })} placeholder="z. B. 3,5" /><b>%</b></span></label><label>Restlaufzeit<span className="currency-input"><input aria-label="Restlaufzeit in Monaten" inputMode="numeric" value={item.termMonths || ""} onChange={(e) => updateList("commitments", index, { termMonths: numberValue(e.target.value) })} placeholder="Monate" /><b>M</b></span></label><label>Zusätzliche Monatsrate<span className="currency-input"><DecimalInput aria-label="Zusätzliche monatliche Tilgung" value={item.extraPayment} onValueChange={(value) => updateList("commitments", index, { extraPayment: value })} placeholder="optional" /><b>€</b></span></label></div></details></div>)}
+            {draft.commitments.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="loan-editor-item" key={item.id}><div className="editor-row four"><label>Kreditname<input maxLength={120} aria-label="Verpflichtung" value={item.name} onChange={(e) => updateList("commitments", index, { name: e.target.value })} placeholder="z. B. Immobilienkredit" /></label><label>Restschuld (€)<DecimalInput aria-label="Restbetrag" value={item.balance} onValueChange={(value) => updateList("commitments", index, { balance: value })} placeholder="Restschuld" /></label><label>Monatsrate (€)<DecimalInput aria-label="Monatsrate" value={item.payment} onValueChange={(value) => updateList("commitments", index, { payment: value })} placeholder="Monatsrate" /></label><RemoveButton onClick={() => removeListItem("commitments", index)} /></div>{loanCategoryField(item, index)}<BookingDayField day={item.bookingDay} update={bookingDay => updateList("commitments", index, { bookingDay })} /><details className="loan-details" open={Boolean(item.interestRate || item.termMonths || item.extraPayment)}><summary>Optionale Vertragsdetails für genauere Prognose</summary><div><label>Zinssatz p. a.<span className="currency-input"><DecimalInput aria-label="Zinssatz pro Jahr" value={item.interestRate} onValueChange={(value) => updateList("commitments", index, { interestRate: value })} placeholder="z. B. 3,5" /><b>%</b></span></label><label>Restlaufzeit<span className="currency-input"><input aria-label="Restlaufzeit in Monaten" type="number" min="0" step="1" inputMode="numeric" value={item.termMonths || ""} onChange={(e) => updateList("commitments", index, { termMonths: numberValue(e.target.value) })} placeholder="Monate" /><b>M</b></span></label><label>Zusätzliche Monatsrate<span className="currency-input"><DecimalInput aria-label="Zusätzliche monatliche Tilgung" value={item.extraPayment} onValueChange={(value) => updateList("commitments", index, { extraPayment: value })} placeholder="optional" /><b>€</b></span></label></div></details></div>)}
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, commitments: [...draft.commitments, { id: uid(), name: "", balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }] })}>Kredit oder Verpflichtung</AddButton>}
           </EditorSection>}
 
           {(!editorScope || editorScope === "goals") && <EditorSection id="editor-goals" title="Ziele" subtitle="Zieldatum optional – Ziele werden nur aus deinem Überschuss bedient">
-            {draft.goals.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row five" key={item.id}><label>Ziel<input aria-label="Ziel" value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label>Zielbetrag (€)<DecimalInput aria-label="Zielbetrag" value={item.target} onValueChange={(value) => updateList("goals", index, { target: value })} placeholder="Zielbetrag" /></label><label>Schon gespart (€)<DecimalInput aria-label="Schon gespart" value={item.saved} onValueChange={(value) => updateList("goals", index, { saved: value })} placeholder="Schon gespart" /></label><label>Optionales Zieldatum<input aria-label="Optionales Zieldatum" type="date" value={item.targetDate || ""} onChange={(e) => updateList("goals", index, { targetDate: e.target.value })} /></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}
+            {draft.goals.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="editor-row five" key={item.id}><label>Ziel<input maxLength={120} aria-label="Ziel" value={item.name} onChange={(e) => updateList("goals", index, { name: e.target.value })} placeholder="z. B. Notgroschen" /></label><label>Zielbetrag (€)<DecimalInput aria-label="Zielbetrag" value={item.target} onValueChange={(value) => updateList("goals", index, { target: value })} placeholder="Zielbetrag" /></label><label>Schon gespart (€)<DecimalInput aria-label="Schon gespart" value={item.saved} onValueChange={(value) => updateList("goals", index, { saved: value })} placeholder="Schon gespart" /></label><label>Optionales Zieldatum<input aria-label="Optionales Zieldatum" type="date" value={item.targetDate || ""} onChange={(e) => updateList("goals", index, { targetDate: e.target.value })} /></label><RemoveButton onClick={() => removeListItem("goals", index)} /></div>)}
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>}
           </EditorSection>}
 
           {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title="Depot & Ersparnisse" subtitle="ISIN und Stückzahl für automatische Schlusskurse oder einen manuellen Kurs eintragen">
             {draft.savings.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="saving-editor-item" key={item.id}>
               <div className={`editor-row ${item.kind === "security" ? "saving-security-edit" : "saving-balance-edit"}`}>
-                <label>Bezeichnung<input aria-label="Bezeichnung der Ersparnis" value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder={item.kind === "security" ? "Wertpapiername" : "z. B. Notgroschen"} /></label>
+                <label>Bezeichnung<input maxLength={120} aria-label="Bezeichnung der Ersparnis" value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder={item.kind === "security" ? "Wertpapiername" : "z. B. Notgroschen"} /></label>
                 <label>Art der Ersparnis<select aria-label="Art der Ersparnis" value={item.kind} onChange={(e) => updateList("savings", index, { kind: e.target.value as SavingKind })}>{Object.entries(savingKindLabels).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}</select></label>
                 {item.kind === "security" ? <>
                   <label>ISIN oder Börsensymbol<input aria-label="ISIN für automatische Schlusskurse oder Börsensymbol" value={item.symbol ?? ""} onChange={(e) => updateList("savings", index, { symbol: e.target.value.trim().toUpperCase(), price: 0, priceEur: 0, quoteVenue: undefined, quoteUpdatedAt: undefined })} placeholder="ISIN, z. B. DE0007164600" autoCapitalize="characters" /></label>
@@ -1200,7 +1246,7 @@ export default function Home() {
         </form>
       </section></div>}
 
-      {savingsOpen && <div className="modal-backdrop"><section className="savings-card" role="dialog" aria-modal="true" aria-labelledby="savings-title">
+      {billing?.active !== false && savingsOpen && <div className="modal-backdrop"><section className="savings-card" role="dialog" aria-modal="true" aria-labelledby="savings-title">
         <div className="editor-header"><div><p className="eyebrow">Vermögen & Depot</p><h2 id="savings-title">Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /><button type="button" className="close-button" onClick={() => setSavingsOpen(false)} aria-label="Schließen">×</button></div>
         <p>Getrennt vom Kontostand und der Monatsprognose.</p>
         <div className="savings-toolbar"><div><button type="button" onClick={() => openFocusedEditor("savings", "security")}>+ Wertpapier</button><button type="button" onClick={() => openFocusedEditor("savings", "saving")}>+ Sparform</button></div></div>
@@ -1214,16 +1260,19 @@ export default function Home() {
         <p className="market-note">Bei unterstützten ISINs bewertet Njora deine Stückzahl mit dem letzten verfügbaren Euro-Schlusskurs von Cboe Europe. Der Datenstand bezeichnet die Kursdatei. Bei selten gehandelten Titeln kann der Kurs älter sein.</p>
       </section></div>}
 
-      {checkingIn && <div className="modal-backdrop"><section className="checkin-card" role="dialog" aria-modal="true" aria-labelledby="checkin-title">
+      {billing?.active !== false && checkingIn && <div className="modal-backdrop"><section className="checkin-card" role="dialog" aria-modal="true" aria-labelledby="checkin-title">
         <div className="editor-header"><div><p className="eyebrow">Konten & Karten</p><h2 id="checkin-title">Stände aktualisieren</h2></div><button type="button" className="close-button" onClick={() => setCheckingIn(false)} aria-label="Schließen">×</button></div>
         <p className="editor-intro">Ein Check-in für heute aktualisiert deine Konten. Frühere Stände werden im Verlauf ergänzt.</p>
         <form onSubmit={saveCheckIn}>
-          <label>Stand vom<input type="date" max={localDay()} value={checkInDate} onChange={(e) => setCheckInDate(e.target.value)} required /></label>
-          <div className="checkin-accounts">{checkInAccounts.map((account, index) => <div className="checkin-account-edit" key={account.id}><label>Kontoname<input aria-label="Kontoname" value={account.name} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Kontoname" /></label><label>Kontotyp<select aria-label={`Typ von ${account.name || "Konto"}`} value={account.type} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: e.target.value as Account["type"] } : item))}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><label>Kontostand<span className="currency-input"><DecimalInput aria-label={`Stand von ${account.name || "Konto"}`} fixedMinus={account.type === "credit"} value={account.balance} onValueChange={(value) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, balance: value } : item))} placeholder="Stand" /><b>€</b></span></label>{checkInAccounts.length > 1 && <RemoveButton onClick={() => setCheckInAccounts((current) => current.filter((_, itemIndex) => itemIndex !== index))} />}</div>)}<button className="account-add-line" type="button" onClick={() => setCheckInAccounts((current) => [...current, { id: uid(), name: "", type: "bank", balance: 0 }])}><span>+</span> Konto oder Karte hinzufügen</button></div>
-          <label>Notiz (optional)<input value={checkInNote} onChange={(e) => setCheckInNote(e.target.value)} placeholder="z. B. Kreditkarte bereits ausgeglichen" /></label>
-          <div className="checkin-preview"><span>Netto-Stand am gewählten Datum</span><strong>{euro(checkInAccounts.reduce((sum, account) => sum + (account.type === "credit" ? -account.balance : account.balance), 0))}</strong></div>
+          <label>Stand vom<input type="date" max={localDay()} value={checkInDate} onChange={(e) => selectCheckInDate(e.target.value)} required /></label>
+          {pastCheckIn && <p className="editor-intro">{previousCheckIn
+            ? "Du bearbeitest den gespeicherten Stand dieses Tages. Frühere Konten bleiben im Verlauf erhalten."
+            : "Für diesen Tag gibt es noch keinen Check-in. Die heutigen Beträge sind vorausgefüllt. Trage die damaligen Stände ein."}</p>}
+          <div className="checkin-accounts" key={checkInDate}>{checkInAccounts.map((account, index) => <div className="checkin-account-edit" key={account.id}><label>Kontoname<input disabled={pastCheckIn} maxLength={120} aria-label="Kontoname" value={account.name} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Kontoname" /></label><label>Kontotyp<select disabled={pastCheckIn} aria-label={`Typ von ${account.name || "Konto"}`} value={account.type} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: e.target.value as Account["type"] } : item))}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><label>Kontostand<span className="currency-input"><DecimalInput aria-label={`Stand von ${account.name || "Konto"}`} fixedMinus={account.type === "credit"} value={account.balance} onValueChange={(value) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, balance: value } : item))} placeholder="Stand" /><b>€</b></span></label>{!pastCheckIn && checkInAccounts.length > 1 && <RemoveButton onClick={() => setCheckInAccounts((current) => current.filter((_, itemIndex) => itemIndex !== index))} />}</div>)}{!pastCheckIn && <button className="account-add-line" type="button" onClick={() => setCheckInAccounts((current) => [...current, { id: uid(), name: "", type: "bank", balance: 0 }])}><span>+</span> Konto oder Karte hinzufügen</button>}</div>
+          <label>Notiz (optional)<input maxLength={500} value={checkInNote} onChange={(e) => setCheckInNote(e.target.value)} placeholder="z. B. Kreditkarte bereits ausgeglichen" /></label>
+          <div className="checkin-preview"><span>Netto-Stand am gewählten Datum</span><strong>{exactEuros.format(checkInTotal)}</strong></div>
           {saveNotice}
-          <button className="primary-button wide" type="submit">Stand speichern <b>→</b></button>
+          <button className="primary-button wide" type="submit" disabled={syncStatus === "saving"}>Stand speichern <b>→</b></button>
         </form>
       </section></div>}
     </main>
@@ -1231,15 +1280,15 @@ export default function Home() {
 }
 
 function Brand() {
-  return <span className="brand-lockup" role="img" aria-label="Njora"><img className="brand-mark" src="/njora-mark.png" width="42" height="42" alt="" /><img className="brand-wordmark" src="/njora-wordmark.png" width="112" height="35" alt="" /></span>;
+  return <span className="brand-lockup" role="img" aria-label="Njora"><Image unoptimized className="brand-mark" src="/njora-mark-small.webp" width="42" height="42" alt="" /><Image unoptimized className="brand-wordmark" src="/njora-wordmark-small.webp" width="112" height="35" alt="" /></span>;
 }
 
 function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return <button className={active ? "active" : ""} type="button" onClick={onClick}>{children}</button>;
+  return <button className={active ? "active" : ""} aria-current={active ? "page" : undefined} type="button" onClick={onClick}>{children}</button>;
 }
 
 function MobileNavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) {
-  return <button aria-label={label} className={active ? "active" : ""} type="button" onClick={onClick}><span aria-hidden="true">{icon}</span><small>{label}</small></button>;
+  return <button aria-label={label} className={active ? "active" : ""} aria-current={active ? "page" : undefined} type="button" onClick={onClick}><span aria-hidden="true">{icon}</span><small>{label}</small></button>;
 }
 
 type HeadingAmount = { value: number; label: string };
@@ -1270,7 +1319,7 @@ function IncomeEditorRow({ item, annualOnly = false, update, remove }: {
   remove: () => void;
 }) {
   return <div className={annualOnly ? "income-fields annual-income" : "income-fields"}>
-    <label>Einkommensquelle<input value={item.name} onChange={e => update({ name: e.target.value })}
+    <label>Einkommensquelle<input maxLength={120} value={item.name} onChange={e => update({ name: e.target.value })}
       placeholder={annualOnly ? "z. B. Weihnachtsgeld" : "z. B. Gehalt"} /></label>
     <label>Betrag (€)<DecimalInput value={item.amount} onValueChange={amount => update({ amount })} /></label>
     {!annualOnly && <label>Rhythmus<select value={item.annual ? "annual" : "monthly"} onChange={e => {

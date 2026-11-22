@@ -21,13 +21,22 @@ struct WidgetSnapshot: Codable {
         return try? JSONDecoder().decode(Self.self, from: data)
     }
 
-    static func replace(with snapshot: WidgetSnapshot?) {
+    func representsSameSummary(as other: Self, calendar: Calendar = .current) -> Bool {
+        calendar.isDate(updated, inSameDayAs: other.updated) &&
+            balance == other.balance && income == other.income && fixedCosts == other.fixedCosts &&
+            available == other.available && forecastLow == other.forecastLow && forecastHigh == other.forecastHigh
+    }
+
+    /// WidgetKit limits timeline reloads. An unrelated edit or a cloud acknowledgement
+    /// does not need a reload when today's displayed values are already on disk.
+    static func replace(with snapshot: WidgetSnapshot?) -> Bool {
         guard let file else {
             Logger.widget.error("Widget container unavailable")
-            return
+            return snapshot == nil
         }
         do {
             if let snapshot {
+                if let stored = read(), stored.representsSameSummary(as: snapshot) { return false }
                 try JSONEncoder().encode(snapshot).write(to: file, options: [.atomic, .completeFileProtection])
                 var url = file
                 var options = URLResourceValues()
@@ -36,10 +45,13 @@ struct WidgetSnapshot: Codable {
             } else {
                 try FileManager.default.removeItem(at: file)
             }
+            return true
         } catch CocoaError.fileNoSuchFile {
-            // First launch or an already cleared session.
+            // Invalidate any entry WidgetKit may still have cached after sign-out.
+            return true
         } catch {
             Logger.widget.error("Widget summary could not be updated")
+            return snapshot == nil
         }
     }
 }

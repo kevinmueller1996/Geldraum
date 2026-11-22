@@ -1,4 +1,4 @@
-const VERSION = "njora-mobile-v4";
+const VERSION = "njora-mobile-v5";
 const STATIC_CACHE = `${VERSION}-static`;
 const OFFLINE_PAGE = "/offline.html";
 const PRECACHE = [
@@ -8,8 +8,8 @@ const PRECACHE = [
   "/favicon.png",
   "/apple-touch-icon.png",
   "/icon-512.png",
-  "/njora-mark.png",
-  "/njora-wordmark.png",
+  "/njora-mark-small.webp",
+  "/njora-wordmark-small.webp",
 ];
 
 self.addEventListener("install", (event) => {
@@ -26,6 +26,13 @@ self.addEventListener("activate", (event) => {
   ]));
 });
 
+function cacheCopy(key, response) {
+  const copy = response.clone();
+  return caches.open(STATIC_CACHE).then(cache => cache.put(key, copy)).catch(() => {
+    // Browser storage may be full. A successful network response remains usable.
+  });
+}
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
@@ -38,7 +45,7 @@ self.addEventListener("fetch", (event) => {
       try {
         const response = await fetch(request);
         if (url.pathname === "/" && !url.search && response.ok && !response.redirected && response.headers.get("content-type")?.includes("text/html")) {
-          await (await caches.open(STATIC_CACHE)).put("/", response.clone());
+          event.waitUntil(cacheCopy("/", response));
         }
         return response;
       } catch {
@@ -48,18 +55,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  const isSafeStaticAsset = PRECACHE.includes(url.pathname)
+  const isSafeStaticAsset = (url.pathname !== "/" && PRECACHE.includes(url.pathname))
     || url.pathname.startsWith("/_next/static/")
     || url.pathname.startsWith("/assets/");
   if (!isSafeStaticAsset) return;
 
-  event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-    if (response.ok) {
-      const copy = response.clone();
-      void caches.open(STATIC_CACHE).then((cache) => cache.put(request, copy));
-    }
+  event.respondWith((async () => {
+    const cached = await caches.match(request).catch(() => undefined);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok && !response.redirected) event.waitUntil(cacheCopy(request, response));
     return response;
-  })));
+  })());
 });
 
 self.addEventListener("message", (event) => {

@@ -3,20 +3,31 @@ import { useState } from "react";
 
 export type BillingStatus = {active:boolean; provider:"apple"|"stripe"|null; webTrialEligible:boolean; stripeCustomer:boolean};
 
-export default function BillingOffer({billing}:{billing:BillingStatus}) {
+export default function BillingOffer({billing, standalone = false}:{billing:BillingStatus; standalone?:boolean}) {
+  const Heading = standalone ? "h1" : "h2";
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
   async function open(action:"checkout"|"portal") {
     setBusy(true); setError("");
     try {
-      const response=await fetch("/api/billing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
-      const data=await response.json();
-      if(!response.ok || !data.url) throw new Error(data.error || "Die Abrechnung ist gerade nicht erreichbar.");
+      const response = await fetch("/api/billing", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({action}),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await response.json() as {url?: string; error?: string};
+      if (!response.ok || !data.url) {
+        setError(data.error || "Die Abrechnung ist gerade nicht erreichbar.");
+        setBusy(false);
+        return;
+      }
       window.location.assign(data.url);
-    } catch(e) {setError(e instanceof Error ? e.message : "Bitte versuche es erneut.");setBusy(false);}
+    } catch {
+      setError("Die Abrechnung ist gerade nicht erreichbar. Bitte prüfe deine Verbindung und versuche es erneut.");
+      setBusy(false);
+    }
   }
   return <section>
-    <h2>{billing.active ? "Dein Njora-Abo" : "Njora abonnieren"}</h2>
+    <Heading>{billing.active ? "Dein Njora-Abo" : "Njora abonnieren"}</Heading>
     {billing.active ? <p>Dein Zugang ist aktiv.</p> : <>
       <p>{billing.webTrialEligible ? "Die ersten 30 Tage sind kostenlos. Danach zahlst du 0,99 € pro Monat." : "Njora kostet 0,99 € pro Monat."} Dein Abo verlängert sich monatlich, bis du kündigst.</p>
       <p><a href="/nutzungsbedingungen">AGB</a> · <a href="/datenschutz">Datenschutz</a></p>

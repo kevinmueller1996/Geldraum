@@ -1,8 +1,8 @@
 # Njora
 
 Njora ist eine persönliche Finanz-App für Kontostände, Monatsplanung, Kredite,
-Ziele und Ersparnisse. Die Anwendung läuft mit vinext auf Cloudflare Workers
-und speichert Accounts sowie Finanzpläne in D1.
+Ziele und Ersparnisse. Das Web-Frontend auf njora.de läuft auf Vercel. Das Sites-Backend nutzt
+Cloudflare Workers und speichert Konten und Finanzpläne in D1.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ neutrale D1-Bindung `DB`.
 - `app/` enthält Oberfläche, Login und API-Routen.
 - `db/` und `drizzle/` enthalten das Schema und die Migrationen.
 - `public/` enthält PWA-Dateien und die Njora-Markenassets.
-- `ios/` enthält das mit Capacitor erzeugte Xcode-Projekt.
+- `ios/` enthält die SwiftUI-App für iPhone und iPad und die WidgetKit-Erweiterung.
 - `ios/App/App.xcodeproj` öffnet die native iOS-App in Xcode.
 - `.openai/hosting.example.json` ist die neutrale lokale Vorlage.
 
@@ -116,9 +116,11 @@ Ohne direkte D1-Konfiguration verwendet Vercel das bestehende Njora-Backend.
 Mit `GELDRAUM_BACKEND_ORIGIN` lässt sich dessen HTTPS-Adresse explizit setzen.
 Eine nur teilweise konfigurierte D1-Verbindung meldet einen Fehler.
 
-## gettex-Kurse aktivieren
+## Wertpapierkurse
 
-In Web und iOS tragen Nutzer den Kurs je Stück in Euro selbst ein. Stückzahl und Kurs bestimmen den Depotwert. Die API liefert ohne freigeschalteten Zugang keine Marktdaten.
+Für unterstützte Aktien und ETFs mit ISIN lädt Njora den letzten verfügbaren Euro-Schlusskurs aus der allgemeinen Referenzdatei von Cboe Europe. Der angezeigte Datenstand stammt aus der Datei. Ein Nutzer kann einen Kurs manuell eintragen. Erst eine neuere Datei löst diesen Wert ab. Der Monatsplan bleibt auch während einer Störung der Kursquelle verfügbar.
+
+### Optionaler gettex-Zugang
 
 Mit freigeschaltetem Zugang ruft Njora den letzten gettex-Handel über dxFeed REST ab. Für den Betrieb muss der bereitgestellte Zugang die Nutzung
 von gettex-Echtzeitdaten für externe Anzeige, Depotbewertung und die Speicherung
@@ -148,9 +150,8 @@ auswählen, falls sie auf gettex umgestellt werden sollen.
 - `npm run build`: Produktions-Build prüfen
 - `npm test`: Build und Integrationsprüfungen ausführen
 - `npm run db:generate`: Migrationen nach Schemaänderungen erzeugen
-- `npm run ios:sync`: Web- und Plugin-Konfiguration ins Xcode-Projekt übernehmen
 - `npm run ios:open`: das Njora-Projekt in Xcode öffnen
-- `npm run ios:run`: Njora im Simulator oder auf einem verbundenen iPhone starten
+- In Xcode das Schema `App` und ein iPhone bzw. iPad wählen und ausführen.
 
 ## Learn More
 

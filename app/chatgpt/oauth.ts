@@ -1,3 +1,4 @@
+import { readBodyBytes } from "../request-body";
 import { NextRequest } from "next/server";
 import { getSessionIdentity } from "../password-auth";
 import { base, clientId, hash, issuer, randomToken, redirectUri, resource, scopeSet, tokenShape } from "./config";
@@ -15,9 +16,13 @@ export function oauthJson(body: object, status = 200) {
 
 export async function formData(request: Request) {
   if (request.method !== "POST" || !request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) return null;
-  const text = await request.text();
-  if (text.length > 6000) return null;
-  const params = new URLSearchParams(text);
+  let bytes;
+  try {
+    bytes = await readBodyBytes(request, 6000);
+  } catch {
+    return null;
+  }
+  const params = new URLSearchParams(new TextDecoder().decode(bytes));
   if ([...params.keys()].some(k => params.getAll(k).length !== 1)) return null;
   return params;
 }

@@ -1,3 +1,4 @@
+import { readFormObject } from "../../../request-body";
 import { NextRequest, NextResponse } from "next/server";
 import { authEmailConfigured, sendAuthEmail } from "../../../auth-email";
 import { normalizeEmail, requestEmailVerification } from "../../../password-auth";
@@ -14,11 +15,18 @@ export async function POST(request: NextRequest) {
   if (!authEmailConfigured()) {
     return NextResponse.json({ error: "Der E-Mail-Versand ist gerade nicht verfügbar." }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
-  const body = await request.json().catch(() => null) as { email?: unknown } | null;
+  const body = await readFormObject(request);
   const email = normalizeEmail(body?.email);
-  if (email) {
-    const verification = await requestEmailVerification(email);
-    if (verification && "email" in verification) await sendAuthEmail(verification.email, verification.token, "verify_email");
+  try {
+    if (email) {
+      const verification = await requestEmailVerification(email);
+      if (verification && "email" in verification) await sendAuthEmail(verification.email, verification.token, "verify_email");
+    }
+  } catch {
+    console.error("Njora account email request could not be processed");
+    return NextResponse.json({ error: "Der E-Mail-Versand ist gerade nicht verfügbar. Bitte versuche es später erneut." }, {
+      status: 503, headers: { "Cache-Control": "no-store" }
+    });
   }
   return NextResponse.json({ accepted: true, message: "Falls ein unbestätigtes Konto vorhanden ist, wurde eine E-Mail versendet." }, {
     status: 202,

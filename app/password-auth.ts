@@ -73,6 +73,7 @@ export type SessionIdentity = {
   email: string;
   emailMask: string;
   local: false;
+  accountCreatedAt: string;
 };
 
 export class PasswordAuthError extends Error {
@@ -94,7 +95,7 @@ type CredentialRow = {
 
 type PasswordVerification =
   | { error: "locked" | "invalid" | "unverified" }
-  | { id: string; emailMask: string };
+  | { id: string; emailMask: string; passwordHash: string };
 
 type EmailPurpose = "verify_email" | "password_reset";
 
@@ -168,18 +169,19 @@ export function emailVerificationRequired() {
   return runtimeEnv.AUTH_REQUIRE_EMAIL_VERIFICATION === "1" || process.env.NODE_ENV === "production";
 }
 
-async function createSession(userIdValue: string) {
+async function createSession(userIdValue: string, passwordHash: string) {
   const db = await ensureAuthSchema();
   const rawToken = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = bytesToBase64Url(await sha256(rawToken));
   const now = new Date();
   const expires = new Date(now.getTime() + SESSION_SECONDS * 1_000);
-  await db.batch([
+  const [, inserted] = await db.batch([
     db.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").bind(now.toISOString()),
-    db.prepare("INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-      .bind(tokenHash, userIdValue, now.toISOString(), expires.toISOString()),
+    db.prepare(`INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
+      SELECT ?, user_id, ?, ? FROM auth_credentials WHERE user_id = ? AND password_hash = ?`)
+      .bind(tokenHash, now.toISOString(), expires.toISOString(), userIdValue, passwordHash),
   ]);
-  return rawToken;
+  return inserted.meta.changes ? rawToken : null;
 }
 
 async function createActionToken(userIdValue: string, purpose: EmailPurpose) {
@@ -282,7 +284,9 @@ export async function registerPasswordAccount(email: string, password: string | 
     return { verificationRequired: true as const, verificationToken: action.token, id, emailMask, email };
   }
   try {
-    return { verificationRequired: false as const, token: await createSession(id), id, emailMask };
+    const token = await createSession(id, passwordHash);
+    if (!token) throw new Error("Credentials changed during registration");
+    return { verificationRequired: false as const, token, id, emailMask };
   } catch (error) {
     throw new PasswordAuthError("session", error);
   }
@@ -321,11 +325,11 @@ export async function verifyPasswordAccount(email: string, password: string): Pr
 
   await db.prepare("DELETE FROM auth_attempts WHERE email_hash = ?").bind(id).run();
   if (!credential.email_address) {
-    await db.prepare("UPDATE auth_credentials SET email_address = ?, updated_at = ? WHERE user_id = ?")
-      .bind(email, new Date().toISOString(), id).run();
+    await db.prepare("UPDATE auth_credentials SET email_address = ? WHERE user_id = ? AND email_address IS NULL")
+      .bind(email, id).run();
   }
   if (emailVerificationRequired() && !credential.email_verified_at) return { error: "unverified" as const };
-  return { id, emailMask: credential.email_mask };
+  return { id, emailMask: credential.email_mask, passwordHash: credential.password_hash };
 }
 
 export async function requestEmailVerification(email: string) {
@@ -334,8 +338,8 @@ export async function requestEmailVerification(email: string) {
   const credential = await db.prepare("SELECT email_verified_at FROM auth_credentials WHERE user_id = ?")
     .bind(id).first<{ email_verified_at: string | null }>();
   if (!credential || credential.email_verified_at) return null;
-  await db.prepare("UPDATE auth_credentials SET email_address = ?, updated_at = ? WHERE user_id = ?")
-    .bind(email, new Date().toISOString(), id).run();
+  await db.prepare("UPDATE auth_credentials SET email_address = ? WHERE user_id = ? AND email_address IS NULL")
+    .bind(email, id).run();
   const action = await createActionToken(id, "verify_email");
   if ("error" in action) return action;
   return { email, token: action.token };
@@ -360,7 +364,8 @@ export async function confirmEmailVerification(rawToken: string, password: strin
       .bind(action.now, action.tokenHash, action.now),
   ]);
   if (!results[0].meta.changes) return null;
-  return { token: await createSession(action.userId) };
+  const token = await createSession(action.userId, passwordHash);
+  return token ? { token } : null;
 }
 
 export async function requestPasswordReset(email: string) {
@@ -369,8 +374,8 @@ export async function requestPasswordReset(email: string) {
   const credential = await db.prepare("SELECT user_id FROM auth_credentials WHERE user_id = ?")
     .bind(id).first<{ user_id: string }>();
   if (!credential) return null;
-  await db.prepare("UPDATE auth_credentials SET email_address = ?, updated_at = ? WHERE user_id = ?")
-    .bind(email, new Date().toISOString(), id).run();
+  await db.prepare("UPDATE auth_credentials SET email_address = ? WHERE user_id = ? AND email_address IS NULL")
+    .bind(email, id).run();
   const action = await createActionToken(id, "password_reset");
   if ("error" in action) return action;
   return { email, token: action.token };
@@ -398,13 +403,15 @@ export async function resetPasswordWithToken(rawToken: string, password: string)
       .bind(action.now, action.tokenHash, action.now),
   ]);
   if (!results[0].meta.changes) return null;
-  return { token: await createSession(action.userId) };
+  const token = await createSession(action.userId, passwordHash);
+  return token ? { token } : null;
 }
 
 export async function loginPasswordAccount(email: string, password: string) {
   const result = await verifyPasswordAccount(email, password);
   if ("error" in result) return result;
-  return { id: result.id, emailMask: result.emailMask, token: await createSession(result.id) };
+  const token = await createSession(result.id, result.passwordHash);
+  return token ? { id: result.id, emailMask: result.emailMask, token } : { error: "invalid" as const };
 }
 
 export async function getSessionIdentity(request: NextRequest): Promise<SessionIdentity | null> {
@@ -412,16 +419,16 @@ export async function getSessionIdentity(request: NextRequest): Promise<SessionI
   if (!token) return null;
   const db = await ensureAuthSchema();
   const tokenHash = bytesToBase64Url(await sha256(token));
-  const row = await db.prepare(`SELECT sessions.user_id, users.display_name, credentials.email_mask, credentials.email_address
+  const row = await db.prepare(`SELECT sessions.user_id, users.display_name, users.created_at, credentials.email_mask, credentials.email_address
     FROM auth_sessions AS sessions
     JOIN users ON users.id = sessions.user_id
     JOIN auth_credentials AS credentials ON credentials.user_id = sessions.user_id
     WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND credentials.password_salt = ?
       AND (? = 0 OR credentials.email_verified_at IS NOT NULL)`)
     .bind(tokenHash, new Date().toISOString(), PASSWORD_SCHEME, emailVerificationRequired() ? 1 : 0)
-    .first<{ user_id: string; display_name: string; email_mask: string; email_address: string | null }>();
+    .first<{ user_id: string; display_name: string; created_at: string; email_mask: string; email_address: string | null }>();
   if (!row) return null;
-  return { id: row.user_id, displayName: row.display_name, email: row.email_address ?? row.email_mask, emailMask: row.email_mask, local: false };
+  return { id: row.user_id, accountCreatedAt: row.created_at, displayName: row.display_name, email: row.email_address ?? row.email_mask, emailMask: row.email_mask, local: false };
 }
 
 export async function destroySession(request: NextRequest) {

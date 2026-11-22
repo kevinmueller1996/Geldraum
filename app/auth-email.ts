@@ -67,6 +67,7 @@ export async function sendAuthEmail(to: string, token: string, purpose: AuthMail
       text: `${intro}\n\n${action}: ${url.toString()}\n\nDer Link ist ${expiry} gültig. Falls du das nicht angefordert hast, ignoriere diese Nachricht.`,
       html: `<!doctype html><html lang="de"><body style="margin:0;background:#f5f0e8;color:#34201b;font-family:Arial,sans-serif"><div style="max-width:560px;margin:0 auto;padding:48px 24px"><p style="font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#4a2b24">NJORA</p><h1 style="font-family:Georgia,serif;font-size:38px;font-weight:400;line-height:1.08;margin:28px 0 18px">${action}</h1><p style="font-size:16px;line-height:1.65;color:#74645e">${intro}</p><p style="margin:30px 0"><a href="${safeUrl}" style="display:inline-block;padding:15px 20px;border-radius:12px;background:#4a2b24;color:#fffaf4;text-decoration:none;font-weight:700">${action}</a></p><p style="font-size:13px;line-height:1.6;color:#74645e">Der Link ist ${expiry} gültig. Falls du das nicht angefordert hast, kannst du diese Nachricht ignorieren.</p></div></body></html>`,
     }),
+    redirect: "manual",
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`Transactional email provider returned ${response.status}`);

@@ -12,6 +12,17 @@ const invoice = {type:"invoice", name:"Verbrauch 2025", amount:84, dueDate:"2026
 const rate = {type:"rate", name:"Strom", amount:65, effectiveDate:"2027-01-15"};
 const now = day("2026-11-18");
 
+test("monthly averages, scenarios and negative values round only the final EUR result", () => {
+  const fractional = {...plan,expenses:[{id:"fee",name:"Gebühr",amount:0.06,category:"Gebühren",frequency:"annual",month:1}]};
+  const month = readFinance(fractional,"month",{},now);
+  assert.equal(month.averageMonthlyFixedCosts,0.01);
+  assert.equal(month.monthlyAvailable,2000);
+  const scenario = readFinance(fractional,"scenario",{monthlyDelta:2000},now);
+  assert.equal(scenario.simulatedMonthlyAvailable,-0.01);
+  const negative = readFinance({...fractional,incomes:[]},"month",{},now);
+  assert.equal(negative.monthlyAvailable,-0.01);
+});
+
 test("one-off bill and future rate remain independent; dates and exact EUR match app forecasts", () => {
   const {actions, preview} = prepareChanges(plan,[invoice,rate],now);
   assert.equal(preview.length,2);

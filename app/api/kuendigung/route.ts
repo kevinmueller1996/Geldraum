@@ -1,4 +1,6 @@
+import { readFormObject } from "../../request-body";
 import { env } from "cloudflare:workers";
+import { validCalendarDay } from "../../plan-validation";
 import { normalizeEmail } from "../../password-auth";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../vercel/proxy-api";
 
@@ -12,7 +14,7 @@ export async function POST(request: Request) {
   if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
   if (request.headers.get("origin") !== new URL(request.url).origin) return reply({error:"Unzulässige Anfrage."},403);
   if (!request.headers.get("content-type")?.startsWith("application/json")) return reply({error:"JSON erwartet."},415);
-  const data = await request.json().catch(() => null);
+  const data = await readFormObject(request);
   if (!data || typeof data !== "object") return reply({error:"Angaben fehlen."},400);
   const email = normalizeEmail(data.email);
   const confirmation = data.reply ? normalizeEmail(data.reply) : email;
@@ -20,7 +22,7 @@ export async function POST(request: Request) {
   const name = clean(data.name,120);
   const contract = clean(data.contract,120);
   const special = data.kind === "extraordinary";
-  if (!name || !contract || !email || !confirmation || (!special && data.kind !== "ordinary") || (data.end && !/^\d{4}-\d{2}-\d{2}$/.test(data.end))) {
+  if (!name || !contract || !email || !confirmation || (!special && data.kind !== "ordinary") || (data.end && !validCalendarDay(data.end))) {
     return reply({error:"Bitte prüfe die Vertrags- und Kontaktdaten."},400);
   }
   try {
@@ -48,7 +50,7 @@ export async function POST(request: Request) {
       body: JSON.stringify([
         {from,to:[support],subject:"Njora-Web-Abo · Kündigung bearbeiten",text:receipt+"\nBestätigungsadresse: "+confirmation},
         {from,to:[confirmation],subject:"Eingang deiner Njora-Kündigung",text:receipt+"\n\nWir prüfen die Zuordnung und bestätigen dir das Vertragsende."}
-      ]), signal:AbortSignal.timeout(8000)
+      ]), redirect:"manual", signal:AbortSignal.timeout(8000)
     });
     if (!sent.ok) throw new Error();
     return reply({receipt});

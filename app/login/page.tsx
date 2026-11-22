@@ -1,6 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import { useBrowserReady } from "../browser-runtime";
+import { AuthResponseError, authMessage } from "../auth-link";
 import { isLocalHostname } from "../local-host";
 import LegalLinks from "../legal-links";
 import PreviewCarousel from "./preview-carousel";
@@ -8,26 +11,40 @@ import "./landing.css";
 
 type Mode = "login" | "register";
 
+function signInDestination() {
+  const next = new URLSearchParams(window.location.search).get("weiter");
+  if (!next) return "/";
+  try {
+    const target = new URL(next, window.location.origin);
+    const allowed = ["/api/chatgpt/authorize", "/api/chatgpt/confirm", "/api/chatgpt/manage"];
+    if (target.origin === window.location.origin && allowed.includes(target.pathname)) return target.pathname + target.search;
+  } catch { /* Incomplete return URLs fall back to the dashboard. */ }
+  return "/";
+}
+
 export default function LoginPage() {
-  const [mode, setMode] = useState<Mode>("login");
+  const [selectedMode, setMode] = useState<Mode | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
-  const [error, setError] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("verification") === "invalid"
-    ? "Der Bestätigungslink ist ungültig oder abgelaufen."
-    : "");
+  const [formError, setError] = useState<string | null>(null);
+  const emailInput = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState("");
-  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resend, setNeedsVerification] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
-  const [local, setLocal] = useState(false);
+  const ready = useBrowserReady();
+  const local = ready && isLocalHostname(window.location.hostname);
+  const query = new URLSearchParams(ready ? window.location.search : "");
+  const invalidLink = query.get("verification") === "invalid";
+  const mode = selectedMode ?? (query.get("start") === "register" ? "register" : "login");
+  const error = formError ?? (invalidLink ? "Der Bestätigungslink ist ungültig oder abgelaufen." : "");
+  const needsVerification = resend ?? invalidLink;
   const showPassword = mode === "login" || local;
 
   useEffect(() => {
-    setLocal(isLocalHostname(window.location.hostname));
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "1") window.location.replace("/");
-    if (params.get("start") === "register") {
-      setMode("register");
+    if (params.get("start") === "register" || params.get("verification") === "invalid") {
       document.getElementById("zugang")?.scrollIntoView({ block: "start" });
     }
   }, []);
@@ -45,31 +62,29 @@ export default function LoginPage() {
     try {
       const response = await fetch(`/api/auth/${mode}`, {
         method: "POST",
+        signal: AbortSignal.timeout(15000),
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(showPassword ? { email, password } : { email }),
+        body: JSON.stringify(showPassword ? { email: email.trim(), password } : { email: email.trim() }),
       });
       const data = await response.json() as { error?: string; code?: string; verificationRequired?: boolean; message?: string };
       if (!response.ok) {
         if (data.code === "email_unverified") setNeedsVerification(true);
-        throw new Error(data.error || "Die Anmeldung ist fehlgeschlagen.");
+        throw new AuthResponseError(data.error || "Die Anmeldung ist fehlgeschlagen.");
       }
       if (data.verificationRequired) {
         setNotice(data.message || "Bitte bestätige deine E-Mail-Adresse über den Link in deinem Postfach.");
         setLoading(false);
         return;
       }
-      const next = new URLSearchParams(window.location.search).get("weiter");
-      const target = next ? new URL(next, window.location.origin) : null;
-      const allowed = ["/api/chatgpt/authorize", "/api/chatgpt/confirm", "/api/chatgpt/manage"];
-      window.location.href = target && target.origin === window.location.origin && allowed.includes(target.pathname)
-        ? target.pathname + target.search : "/";
+      window.location.assign(signInDestination());
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Die Anmeldung ist fehlgeschlagen.");
+      setError(authMessage(caught, "Die Anmeldung ist gerade nicht erreichbar. Bitte versuche es erneut."));
       setLoading(false);
     }
   }
 
   function changeMode(next: Mode) {
+    if (loading || next === mode) return;
     setMode(next);
     setError("");
     setNotice("");
@@ -86,20 +101,22 @@ export default function LoginPage() {
   }
 
   async function requestEmailAction(kind: "resend-verification" | "forgot-password") {
+    if (!emailInput.current?.reportValidity()) return;
     setLoading(true);
     setError("");
     setNotice("");
     try {
       const response = await fetch(`/api/auth/${kind}`, {
         method: "POST",
+        signal: AbortSignal.timeout(15000),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
       const data = await response.json() as { error?: string; message?: string };
-      if (!response.ok) throw new Error(data.error || "Die Anfrage konnte nicht verarbeitet werden.");
+      if (!response.ok) throw new AuthResponseError(data.error || "Die Anfrage konnte nicht verarbeitet werden.");
       setNotice(data.message || "Bitte prüfe dein E-Mail-Postfach.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Die Anfrage konnte nicht verarbeitet werden.");
+      setError(authMessage(caught, "Die Anfrage konnte nicht gesendet werden. Bitte prüfe deine Verbindung und versuche es erneut."));
     } finally {
       setLoading(false);
     }
@@ -107,7 +124,7 @@ export default function LoginPage() {
 
   return <main className="nj-landing" id="start">
     <header className="nj-header nj-wrap">
-      <a className="nj-brand" href="#start" aria-label="Njora Startseite"><img src="/njora-mark.png" width="40" height="40" alt="" /><img src="/njora-wordmark.png" width="105" height="26" alt="Njora" /></a>
+      <a className="nj-brand" href="#start" aria-label="Njora Startseite"><Image unoptimized src="/njora-mark-small.webp" width="40" height="40" alt="" /><Image unoptimized src="/njora-wordmark-small.webp" width="105" height="26" alt="Njora" /></a>
       <nav aria-label="Seitennavigation"><a href="#produkt">Einblick</a><a href="#preis">Preis</a><a href="#faq">Fragen</a></nav>
       <button className="nj-secondary" type="button" onClick={() => openAccess("login")}>Anmelden</button>
     </header>
@@ -134,26 +151,26 @@ export default function LoginPage() {
     </section>
 
     <section className="nj-access nj-wrap" aria-labelledby="access-title">
-      <div className="nj-price" id="preis"><p className="nj-kicker">Das Njora-Monatsabo</p><h2>0,99 € <small>pro Monat</small></h2><p>Zum Verkaufsstart erhältst du beim ersten Web-Abo 30 Tage kostenlos. Danach verlängert sich das Abo automatisch um jeweils einen Monat.</p>
+      <div className="nj-price" id="preis"><p className="nj-kicker">Das Njora-Monatsabo</p><h2>0,99 € <small>pro Monat</small></h2><p>Die ersten 30 Tage im Web sind kostenlos, wenn für dein Njora-Konto bisher weder ein Web-Abo noch ein Apple-Kauf hinterlegt war. Das Abo verlängert sich automatisch um jeweils einen Monat.</p>
         <p>Du kannst jederzeit zum Ende des laufenden Zeitraums kündigen. Die Registrierung allein löst keine Zahlung aus.</p>
       </div>
       <aside className="landing-auth-card nj-form" id="zugang">
         <h2 id="access-title" tabIndex={-1}>{mode === "login" ? "Willkommen zurück." : "Dein Njora-Konto."}</h2>
-        <p>{mode === "login" ? "Öffne deinen persönlichen Finanzplan." : "Wir schicken dir einen Link, über den du deine E-Mail-Adresse bestätigst und dein Passwort festlegst."}</p>
+        <p>{mode === "login" ? "Öffne deinen persönlichen Finanzplan." : local ? "Wähle eine E-Mail-Adresse und ein Passwort für dein lokales Testkonto." : "Wir schicken dir einen Link, über den du deine E-Mail-Adresse bestätigst und dein Passwort festlegst."}</p>
         <div className="auth-tabs" aria-label="Anmeldung oder Registrierung">
-          <button type="button" aria-pressed={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Anmelden</button>
-          <button type="button" aria-pressed={mode === "register"} className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Konto erstellen</button>
+          <button type="button" disabled={loading} aria-pressed={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Anmelden</button>
+          <button type="button" disabled={loading} aria-pressed={mode === "register"} className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Konto erstellen</button>
         </div>
         <form className="login-form" onSubmit={submit}>
-          <label>E-Mail-Adresse<input type="email" name="username" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} placeholder="name@beispiel.de" /></label>
+          <label>E-Mail-Adresse<input ref={emailInput} type="email" name="username" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} placeholder="name@beispiel.de" /></label>
           {showPassword && <label>Passwort<input type="password" name="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={10} maxLength={72} placeholder="Mindestens 10 Zeichen" /></label>}
           {mode === "register" && showPassword && <label>Passwort wiederholen<input type="password" name="password-confirmation" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required minLength={10} maxLength={72} placeholder="Passwort erneut eingeben" /></label>}
           {error && <p className="login-error" role="alert">{error}</p>}
           {notice && <p className="login-notice" role="status">{notice}</p>}
-          {needsVerification && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("resend-verification")}>Bestätigungs-E-Mail erneut senden</button>}
+          {needsVerification && <button className="login-link-button" type="button" disabled={loading} onClick={() => requestEmailAction("resend-verification")}>Bestätigungs-E-Mail erneut senden</button>}
           {mode === "register" && <small>Du erstellst zunächst dein Konto. Das Monatsabo für deinen Finanzplan schließt du separat ab. Es gelten die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Hier findest du die <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</small>}
           <button className="auth-button login-submit" type="submit" disabled={loading}>{loading ? "Bitte einen Moment …" : mode === "login" ? "Anmelden" : local ? "Konto erstellen" : "Bestätigungslink senden"}</button>
-          {mode === "login" && <button className="login-link-button" type="button" disabled={loading || !email} onClick={() => requestEmailAction("forgot-password")}>Passwort vergessen?</button>}
+          {mode === "login" && <button className="login-link-button" type="button" disabled={loading} onClick={() => requestEmailAction("forgot-password")}>Passwort vergessen?</button>}
         </form>
       </aside>
     </section>
@@ -168,7 +185,7 @@ export default function LoginPage() {
       </div>
     </section>
     <footer className="nj-footer nj-wrap">
-      <span className="nj-credit">Njora by <a href="https://www.rheinland-solutions.de/"><img src="/rheinland-solutions.png" width="432" height="89" alt="Rheinland Solutions" /></a></span>
+      <span className="nj-credit">Njora by <a href="https://www.rheinland-solutions.de/"><Image unoptimized src="/rheinland-solutions.png" width="432" height="89" alt="Rheinland Solutions" /></a></span>
       <LegalLinks />
     </footer>
   </main>;

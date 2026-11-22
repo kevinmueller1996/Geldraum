@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
 const screens = [
@@ -97,7 +98,7 @@ export default function PreviewCarousel() {
         const style = { "--turn": angle + "deg", "--untilt": -angle + "deg",
           "--tilt": -25 * Math.sin(radians) + "deg" } as CSSProperties;
         return <div className="nj-phone" data-screen={index} key={screen.title} style={style} aria-hidden={index !== active}>
-          <img src={screen.image} width="354" height="770" draggable={false}
+          <Image unoptimized loading={index === 0 ? "eager" : "lazy"} src={screen.image} width="354" height="770" draggable={false}
             alt={screen.description} fetchPriority={index === 0 ? "high" : "auto"} />
           <span className="nj-island" aria-hidden="true" />
         </div>;

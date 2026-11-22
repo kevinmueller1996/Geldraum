@@ -54,3 +54,10 @@ test("prices change the selected position only, retain manual holdings and never
   assert.equal(applyClosingPrices(result,{asOf:"2026-11-19",prices:{}}),result);
   assert.equal(applyClosingPrices(result,null),result);
 });
+
+
+test("a new manual valuation survives refresh until a later daily file becomes available", () => {
+  const plan = {savings:[{kind:"security", symbol:isin, priceEur:200, quoteVenue:"Manuell", quoteUpdatedAt:"2026-11-19T18:30:00.000Z"}]};
+  for (const asOf of ["2026-11-18","2026-11-19"]) assert.equal(applyClosingPrices(plan,{asOf, prices:{[isin]:198}}),plan);
+  assert.equal(applyClosingPrices(plan,{asOf:"2026-11-20",prices:{[isin]:201}}).savings[0].priceEur,201);
+});

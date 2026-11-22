@@ -1,3 +1,4 @@
+import { readBodyBytes } from "../request-body";
 import { issuer } from "./config";
 import { backendOrigin } from "../vercel/proxy-api";
 
@@ -17,25 +18,17 @@ export async function proxyPlugin(request: Request, action: string) {
   }
   let body: Uint8Array<ArrayBuffer> | undefined;
   if (request.body) {
-    const reader = request.body.getReader(), chunks: Uint8Array[] = [];
-    let size = 0;
-    while (true) {
-      const {value,done} = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 65536) { await reader.cancel(); return new Response(null,{status:413}); }
-      chunks.push(value);
+    try {
+      body = await readBodyBytes(request, 65536);
+    } catch (error) {
+      if (error instanceof RangeError) return new Response(null, {status:413});
+      throw error;
     }
-    body = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) { body.set(chunk,offset); offset += chunk.length; }
   }
   const upstream = new URL("/api/chatgpt/"+action,backendOrigin());
   upstream.search = new URL(request.url).search;
   const res = await fetch(upstream,{headers,method:request.method,body,cache:"no-store",redirect:"manual",signal:AbortSignal.timeout(15000)});
-  // Browser form submissions need an Origin for the same-origin POST check.
-  // OAuth redirects and API responses should never forward a referrer.
-  const formPage = browser && res.headers.get("content-type")?.startsWith("text/html");
+  const formPage = browser && res.status >= 200 && res.status < 300 && res.headers.get("content-type")?.startsWith("text/html");
   const out = new Headers({"cache-control":"no-store","referrer-policy":formPage ? "same-origin" : "no-referrer"});
   for (const name of ["content-type","www-authenticate","location","allow","content-security-policy","mcp-protocol-version","mcp-session-id","x-frame-options"]) {
     const value = res.headers.get(name);
