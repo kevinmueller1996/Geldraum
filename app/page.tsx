@@ -1,5 +1,6 @@
 "use client";
 
+import { UiIcon, type IconName } from "./ui-icon";
 import { applyClosingPrices, closeVenue, securityISIN, type ClosingPrices } from "./market/closing-prices";
 import { currentSession, offlineCopy, updateCopy, mergeDraft, reconcile, bindBrowserCopy, differentAccount, pending, Conflict, SessionChanged, type Copy, type Remote, type Choice } from "./browser-plan";
 import { expireMarker } from "./browser-session";
@@ -614,7 +615,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
       <span>{dated ? `${row.day}. · ` : ""}{row.name}
         {!dated && <small>{row.dueDate ? "Offen · fällig am " + row.dueDate : row.monthUnknown ? "Monat offen" : row.day ? "Heute fällig" : "Ohne Buchungstag"}</small>}
       </span>
-      <b>{exactEuros.format(row.amount)}</b><span aria-hidden="true">›</span>
+      <b>{exactEuros.format(row.amount)}</b><span aria-hidden="true"><UiIcon name="next" /></span>
     </button>;
   }
 
@@ -897,7 +898,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
 
   if (!ready) return <main className="loading" aria-label="Njora wird geladen"><span className="loading-mark" /></main>;
   if (authStatus === "anonymous") return <main className="loading" aria-label="Weiterleitung zur Anmeldung" />;
-  if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b>↻</b></button></section></main>;
+  if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b><UiIcon name="retry" /></b></button></section></main>;
 
   const currentMonth = new Date().getMonth();
   const lastSnapshot = active.snapshots.filter(item => validCalendarDay(item.date)).sort((a, b) => b.date.localeCompare(a.date))[0];
@@ -1024,7 +1025,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           {showForecast && <section id="forecast-detail" className="detail-card">
             <h2>Monatsendprognose</h2>
             <h3>Rechnung ab heute</h3>
-            <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Eingetragener Nettokontostand</span><b>{exactEuros.format(metrics.netBalance)}</b><span aria-hidden="true">›</span></button>
+            <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Eingetragener Nettokontostand</span><b>{exactEuros.format(metrics.netBalance)}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>
             {metrics.forecast.rowsFromToday.map(entry => {
               if (entry.kind === "payment") return forecastButton(entry.row, true);
               const { account, date } = entry;
@@ -1032,7 +1033,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
                 <span>{date && date.toLocaleDateString("de-DE", { day: "numeric", month: "short" }) + " · "}{account.name}
                   <small>{date ? "Kartenausgleich · bereits im Nettostand" : "Kartenausgleich · Abbuchungstag offen"}</small>
                 </span>
-                <b>{exactEuros.format(-account.balance)}</b><span aria-hidden="true">›</span>
+                <b>{exactEuros.format(-account.balance)}</b><span aria-hidden="true"><UiIcon name="next" /></span>
               </button>;
             })}
             <div className="detail-row"><strong>Mit datierten Zahlungen</strong><b>{exactEuros.format(metrics.forecast.datedBalance)}</b></div>
@@ -1048,7 +1049,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           </div><div className="njora-column">
           {plan && <BalanceHistory plan={plan} />}
           <div className="dashboard-specials">
-            <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} title="Sonderposten anzeigen und bearbeiten"><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen →</p></button>
+            <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} title="Sonderposten anzeigen und bearbeiten"><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen <UiIcon name="forward" /></p></button>
           </div>
           <details className="dashboard-income"><summary>Einkommen im Detail</summary><article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{euro(item.amount)}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{euro(item.amount)}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article></details>
           </div></div>
@@ -1063,21 +1064,21 @@ function FinanceDashboard({ business }: { business: boolean }) {
             {metrics.income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / metrics.income * 100}%`, backgroundColor: item.color }} key={item.label} />)}</div>}
             <div className="flow-list">{monthOutflows.map((item) => {
               const share = metrics.income > 0 ? item.value / metrics.income : null;
-              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true">›</span></button>;
+              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>;
             })}</div>
           </article>
           </div>
         </section>}
 
         {activeView === "expenses" && <section className="view" aria-labelledby="expenses-title">
-          <button type="button" className="edit-chip" onClick={() => navigate(costDetail.from)}>‹ {costDetail.from === "month" ? "Monatsplan" : "Heute"}</button>
+          <button type="button" className="edit-chip" onClick={() => navigate(costDetail.from)}><UiIcon name="back" /> {costDetail.from === "month" ? "Monatsplan" : "Heute"}</button>
           <div className="section-title financial-heading"><h2 id="expenses-title">{costDetail.category ?? "Fixkosten"}</h2><TitleAmount value={costDetail.category ? selectedCostGroup?.value ?? 0 : metrics.fixedCosts} label="Ø pro Monat" /></div>
           <div className="category-details">
             {costLoans.length > 0 && <article className="detail-card category-card">
               <h3>Kredite</h3>
               {costLoans.map(loan => <button className="detail-row forecast-entry" type="button" key={loan.id} onClick={() => openFocusedEditor("loans", undefined, loan.id)}>
                 <span>{loan.name}<small>{loan.category || "Kreditraten"} · Monatsrate{loan.bookingDay ? ` · am ${loan.bookingDay}.` : ""}</small></span>
-                <b>{exactEuros.format(monthlyLoanPayment(loan))}</b><span aria-hidden="true">›</span>
+                <b>{exactEuros.format(monthlyLoanPayment(loan))}</b><span aria-hidden="true"><UiIcon name="next" /></span>
               </button>)}
             </article>}
             {(["monthly", "quarterly", "annual", "once"] as const).map(frequency => {
@@ -1088,7 +1089,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
                 <h3>{title}</h3>
                 {entries.map(item => <button className="detail-row forecast-entry" type="button" key={item.id} onClick={() => openFocusedEditor("expenses", undefined, "item:" + item.id)}>
                   <span>{item.name}<small>{item.category}{frequency === "once" ? ` · ${item.dueDate} · ${item.paid ? "Beglichen" : "Offen"}` : frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}{frequency !== "once" && item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</small></span>
-                  <b>{exactEuros.format(expenseAmount(item, today))}</b><span aria-hidden="true">›</span>
+                  <b>{exactEuros.format(expenseAmount(item, today))}</b><span aria-hidden="true"><UiIcon name="next" /></span>
                 </button>)}
               </article>;
             })}
@@ -1106,7 +1107,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             const projection = loanProjection(item);
             const share = metrics.totalDebt ? Math.round((item.balance / metrics.totalDebt) * 100) : 0;
             const hasDetails = Boolean(item.interestRate || item.termMonths || item.extraPayment);
-            return <article className="loan-card" key={item.id}><div className="loan-top"><span className="loan-mark">↘</span><button className="edit-chip" type="button" onClick={() => openFocusedEditor("loans", undefined, item.id)}>Ändern</button></div><span className="loan-share">{item.category || "Kreditraten"} · {share}% der Restschuld</span><h2>{item.name}</h2><strong>{euro(item.balance)}</strong><div className="loan-stats">
+            return <article className="loan-card" key={item.id}><div className="loan-top"><span className="loan-mark"><UiIcon name="loans" /></span><button className="edit-chip" type="button" onClick={() => openFocusedEditor("loans", undefined, item.id)}>Ändern</button></div><span className="loan-share">{item.category || "Kreditraten"} · {share}% der Restschuld</span><h2>{item.name}</h2><strong>{euro(item.balance)}</strong><div className="loan-stats">
               {repayment.repaidPrincipal !== null && <div><span>Schon getilgt</span><b>{exactEuros.format(repayment.repaidPrincipal)} von {exactEuros.format(original.originalPrincipal!)}</b></div>}
               {repayment.lifetimeInterest !== null && <div><span>Zinsen und ggf. Gebühren gesamt · geschätzt</span><b>{exactEuros.format(repayment.lifetimeInterest)}</b></div>}
               <div><span>{original.paidBefore === undefined ? "Rückzahlung ab erfasstem Stand inkl. Zinsen" : "Gesamte Rückzahlung inkl. Zinsen"}</span><b>{repayment.total === null ? "Mit dieser Rate nicht berechenbar" : exactEuros.format(repayment.total)}</b></div>{(!original.balanceDate || !original.bookingDay) && <small>Für die automatische Tilgung bitte Stichtag und Buchungstag ergänzen.</small>}<div><span>Effektive Monatsrate{item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</span><b>{euro(projection.payment)}</b></div><div><span>Voraussichtlich offen</span><b>{repayment.remainingMonths === null ? "–" : `${repayment.remainingMonths} Monate`}</b></div>{item.interestRate ? <div><span>Zinskosten geschätzt</span><b>{repayment.remainingInterest === null ? "Rate und Zinssatz prüfen" : marketPrice(repayment.remainingInterest)}</b></div> : null}</div>{item.termMonths && projection.balanceAtTerm > 1 ? <p className="loan-warning">Nach der angegebenen Laufzeit wären noch etwa {euro(projection.balanceAtTerm)} offen.</p> : <p>{hasDetails ? `${item.interestRate || 0}% p. a.${item.extraPayment ? ` · ${euro(item.extraPayment)} extra` : ""}` : "Berechnet mit 0 % Jahreszins."}</p>}</article>;
@@ -1137,7 +1138,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             const sum = active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, index)).reduce((total, item) => total + item.amount, 0);
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
           })}</div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button></article>
-          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b>›</b></button>
+          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, Ziele, Ersparnisse und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
           </>}
           <AppearancePicker {...appearance} />
           <InstallAppCard />
@@ -1153,17 +1154,17 @@ function FinanceDashboard({ business }: { business: boolean }) {
       </div>
 
       <nav className={business ? "bottom-nav business-nav" : "bottom-nav"} aria-label="Mobile Hauptnavigation">
-        <MobileNavButton icon="◉" label="Heute" active={activeView === "home"} onClick={() => navigate("home")} />
-        {business && <MobileNavButton icon="▥" label="Umsatz" active={activeView === "revenue"} onClick={() => navigate("revenue")} />}
-        <MobileNavButton icon="%" label="Monatsplan" active={activeView === "month"} onClick={() => navigate("month")} />
-        <MobileNavButton icon="↘" label="Kredite" active={activeView === "loans"} onClick={() => navigate("loans")} />
-        <MobileNavButton icon="◇" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />
-        <MobileNavButton icon="●" label="Mehr" active={activeView === "more"} onClick={() => navigate("more")} />
+        <MobileNavButton icon="today" label="Heute" active={activeView === "home"} onClick={() => navigate("home")} />
+        {business && <MobileNavButton icon="revenue" label="Umsatz" active={activeView === "revenue"} onClick={() => navigate("revenue")} />}
+        <MobileNavButton icon="calendar" label="Monatsplan" active={activeView === "month"} onClick={() => navigate("month")} />
+        <MobileNavButton icon="loans" label="Kredite" active={activeView === "loans"} onClick={() => navigate("loans")} />
+        <MobileNavButton icon="goals" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />
+        <MobileNavButton icon="more" label="Mehr" active={activeView === "more"} onClick={() => navigate("more")} />
       </nav>
 
       <footer><span>Njora</span><p>{cloudUser?.local ? "Lokal gespeichert · ohne Anmeldung" : "Persönlich synchronisiert · ohne Kontoanbindung"}</p><span>Verstehe, was war. Gestalte, was kommt.</span></footer>
 
-      {billing?.active !== false && showLegacyPrompt && legacyPlan && <div className="modal-backdrop"><section className="migration-card" role="dialog" aria-modal="true" aria-labelledby="migration-title"><span className="migration-icon">↗</span><p className="eyebrow">Lokale Daten gefunden</p><h2 id="migration-title">Gehört dieser Finanzplan dir?</h2><p>{cloudUser?.local ? "Auf diesem Gerät liegt ein früherer lokaler Plan. Du kannst ihn jetzt in die lokale Entwicklungsdatenbank übernehmen." : "Auf diesem Gerät liegt ein früherer lokaler Plan. Erst mit deiner Bestätigung wird er deinem persönlichen Account zugeordnet und online synchronisiert."}</p><div><button className="secondary-button" type="button" onClick={() => setShowLegacyPrompt(false)}>Neu beginnen</button><button className="primary-button" type="button" onClick={importLegacyPlan} disabled={syncStatus === "saving"}>Ja, sicher übernehmen <b>→</b></button></div><small>{cloudUser?.local ? "Nach der Übernahme werden die alten lokalen Browserschlüssel entfernt." : "Nach erfolgreicher Übernahme werden die alten lokalen Schlüssel entfernt."}</small></section></div>}
+      {billing?.active !== false && showLegacyPrompt && legacyPlan && <div className="modal-backdrop"><section className="migration-card" role="dialog" aria-modal="true" aria-labelledby="migration-title"><span className="migration-icon"><UiIcon name="external" /></span><p className="eyebrow">Lokale Daten gefunden</p><h2 id="migration-title">Gehört dieser Finanzplan dir?</h2><p>{cloudUser?.local ? "Auf diesem Gerät liegt ein früherer lokaler Plan. Du kannst ihn jetzt in die lokale Entwicklungsdatenbank übernehmen." : "Auf diesem Gerät liegt ein früherer lokaler Plan. Erst mit deiner Bestätigung wird er deinem persönlichen Account zugeordnet und online synchronisiert."}</p><div><button className="secondary-button" type="button" onClick={() => setShowLegacyPrompt(false)}>Neu beginnen</button><button className="primary-button" type="button" onClick={importLegacyPlan} disabled={syncStatus === "saving"}>Ja, sicher übernehmen <b><UiIcon name="forward" /></b></button></div><small>{cloudUser?.local ? "Nach der Übernahme werden die alten lokalen Browserschlüssel entfernt." : "Nach erfolgreicher Übernahme werden die alten lokalen Schlüssel entfernt."}</small></section></div>}
 
       {billing?.active !== false && !plan && !showLegacyPrompt && <div className="modal-backdrop onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <div className="onboarding-top"><Brand /><span>Kurzer Fragebogen · etwa 3 Minuten</span></div>
@@ -1215,7 +1216,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
 
           {onboardingError && <p className="onboarding-error" role="alert">{onboardingError}</p>}
           {saveNotice}
-          <div className="onboarding-actions"><button className="secondary-button" type="button" onClick={previousOnboardingStep} disabled={onboardingStep === 0}>Zurück</button><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : onboardingStep < onboardingSteps.length - 1 ? "Du kannst Angaben später ändern." : "Bereit für deinen Überblick."}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{onboardingStep < onboardingSteps.length - 1 ? <>Weiter <b>→</b></> : <>Njora starten <b>→</b></>}</button></div>
+          <div className="onboarding-actions"><button className="secondary-button" type="button" onClick={previousOnboardingStep} disabled={onboardingStep === 0}>Zurück</button><span>{syncStatus === "saving" ? "Wird sicher gespeichert …" : onboardingStep < onboardingSteps.length - 1 ? "Du kannst Angaben später ändern." : "Bereit für deinen Überblick."}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{onboardingStep < onboardingSteps.length - 1 ? <>Weiter <b><UiIcon name="forward" /></b></> : <>Njora starten <b><UiIcon name="forward" /></b></>}</button></div>
         </form>
       </section></div>}
 
@@ -1295,7 +1296,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           </details>}
 
           {saveNotice}
-          <div className="editor-actions"><span>{syncLabel}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b>→</b></button></div>
+          <div className="editor-actions"><span>{syncLabel}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b><UiIcon name="forward" /></b></button></div>
         </form>
       </section></div>}
 
@@ -1331,7 +1332,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           <label>Notiz (optional)<input maxLength={500} value={checkInNote} onChange={(e) => setCheckInNote(e.target.value)} placeholder="z. B. Kreditkarte bereits ausgeglichen" /></label>
           <div className="checkin-preview"><span>Netto-Stand am gewählten Datum</span><strong>{exactEuros.format(checkInTotal)}</strong></div>
           {saveNotice}
-          <button className="primary-button wide" type="submit" disabled={syncStatus === "saving" || (business && revenueAmount === null)}>Stand speichern <b>→</b></button>
+          <button className="primary-button wide" type="submit" disabled={syncStatus === "saving" || (business && revenueAmount === null)}>Stand speichern <b><UiIcon name="forward" /></b></button>
         </form>
       </section></div>}
     </main>
@@ -1346,8 +1347,8 @@ function NavButton({ active, onClick, children }: { active: boolean; onClick: ()
   return <button className={active ? "active" : ""} aria-current={active ? "page" : undefined} type="button" onClick={onClick}>{children}</button>;
 }
 
-function MobileNavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) {
-  return <button aria-label={label} className={active ? "active" : ""} aria-current={active ? "page" : undefined} type="button" onClick={onClick}><span aria-hidden="true">{icon}</span><small>{label}</small></button>;
+function MobileNavButton({ icon, label, active, onClick }: { icon: IconName; label: string; active: boolean; onClick: () => void }) {
+  return <button aria-label={label} className={active ? "active" : ""} aria-current={active ? "page" : undefined} type="button" onClick={onClick}><span aria-hidden="true"><UiIcon name={icon} /></span><small>{label}</small></button>;
 }
 
 type HeadingAmount = { value: number; label: string };
@@ -1363,7 +1364,7 @@ function ViewHeader({ id, eyebrow, title, copy, total }: { id: string; eyebrow: 
 }
 
 function SummaryCard({ label, value, tone = "", onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) {
-  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} ›</span><strong>{exactEuros.format(value)}</strong></button>;
+  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} <UiIcon name="next" /></span><strong>{exactEuros.format(value)}</strong></button>;
   return <article className={`summary-card ${tone}`}><span>{label}</span><strong>{euro(value)}</strong></article>;
 }
 

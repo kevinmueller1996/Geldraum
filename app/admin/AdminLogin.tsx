@@ -1,5 +1,6 @@
 "use client";
 
+import { UiIcon } from "../ui-icon";
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { AdminBrand } from "./Brand";
@@ -42,9 +43,9 @@ export function AdminLogin() {
         <label>E-Mail-Adresse<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} /></label>
         <label>Passwort<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={10} maxLength={72} /></label>
         {error ? <p className={styles.error} role="alert">{error}</p> : null}
-        <button type="submit" disabled={loading}>{loading ? "Anmeldung wird geprüft …" : "Sicher anmelden"}<span>→</span></button>
+        <button type="submit" disabled={loading}>{loading ? "Anmeldung wird geprüft …" : "Sicher anmelden"}<span><UiIcon name="forward" /></span></button>
       </form>
-      <Link prefetch={false} className={styles.back} href="/">Zur Njora-App ↗</Link>
+      <Link prefetch={false} className={styles.back} href="/">Zur Njora-App <UiIcon name="external" /></Link>
     </section>
     <aside className={styles.loginVisual} aria-hidden="true"><span>Privacy by Design</span><strong>Nur sehen,<br />was nötig ist.</strong><div><i /><i /><i /></div><p>Keine Klarnamen.<br />Keine Finanzinhalte.</p></aside>
   </main>;

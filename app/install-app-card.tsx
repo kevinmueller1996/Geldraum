@@ -1,5 +1,6 @@
 "use client";
 
+import { UiIcon } from "./ui-icon";
 import { Capacitor } from "@capacitor/core";
 import { useBrowserReady } from "./browser-runtime";
 import Image from "next/image";
@@ -88,9 +89,9 @@ export default function InstallAppCard() {
 
   return <>
     <button ref={trigger} className={`install-card ${installed ? "installed" : ""}`} type="button" onClick={install} disabled={installed}>
-      <span className="install-icon" aria-hidden="true">{installed ? "✓" : "⇧"}</span>
+      <span className="install-icon" aria-hidden="true"><UiIcon name={installed ? "check" : "share"} /></span>
       <span><strong>{installed ? "Njora ist als App installiert" : platform === "appleMobile" ? "Als App auf dem iPhone oder iPad" : "Njora auf diesem Gerät installieren"}</strong><small>{installed ? "Du öffnest Njora direkt vom Home-Bildschirm – ohne Browserleiste." : "Mit eigenem Icon, Vollbildmodus und schnellerem Start vom Home-Bildschirm."}</small></span>
-      {!installed && <b aria-hidden="true">›</b>}
+      {!installed && <b aria-hidden="true"><UiIcon name="next" /></b>}
     </button>
 
     {showHelp && <div className="modal-backdrop install-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowHelp(false); }}>

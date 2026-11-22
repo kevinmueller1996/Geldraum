@@ -1,5 +1,6 @@
 "use client";
 
+import { UiIcon } from "../ui-icon";
 import { type FormEvent, useState } from "react";
 import Image from "next/image";
 import { AuthResponseError, authMessage, useAuthLinkToken } from "../auth-link";
@@ -47,7 +48,7 @@ export default function ConfirmEmailPage() {
         <label>Passwort wiederholen<input type="password" name="password-confirmation" autoComplete="new-password" minLength={10} maxLength={72} required value={repeat} onChange={(event) => setRepeat(event.target.value)} /></label>
         {error && <p className="login-error" role="alert">{error}</p>}
         <small>Mit dem Öffnen deines Kontos akzeptierst du die <a href="/nutzungsbedingungen" target="_blank" rel="noopener">AGB</a>. Informationen zur Datenverarbeitung findest du im <a href="/datenschutz" target="_blank" rel="noopener">Datenschutz</a>.</small>
-        <button className="auth-button" type="submit" disabled={loading || token === null}>{loading ? "Wird bestätigt …" : "Konto öffnen"}<b>→</b></button>
+        <button className="auth-button" type="submit" disabled={loading || token === null}>{loading ? "Wird bestätigt …" : "Konto öffnen"}<b><UiIcon name="forward" /></b></button>
       </form>}
     </section>
     <aside className="auth-visual login-visual" aria-hidden="true"><div className="brand-story-lockup"><Image unoptimized src="/njora-mark.png" width="260" height="260" alt="" /><Image unoptimized src="/njora-wordmark.png" width="300" height="94" alt="" /></div><div className="brand-story-rule" /><div className="brand-story-copy"><strong>Verstehe, was war.</strong><em>Gestalte, was kommt.</em><span>Dein persönlicher Finanzüberblick</span></div></aside>
