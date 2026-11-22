@@ -99,8 +99,9 @@ struct LocalPlanDisk {
     static func key(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    func file(_ email: String) -> URL {
-        directory.appendingPathComponent(Self.key(email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()))
+    func file(_ email: String, workspace: FinanceWorkspace = .personal) -> URL {
+        let owner = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return directory.appendingPathComponent(Self.key(workspace == .personal ? owner : "business\0" + owner))
     }
     func load(from file: URL) throws -> LocalFinancePlan? {
         do {

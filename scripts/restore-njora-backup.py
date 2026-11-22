@@ -23,12 +23,14 @@ def restore(source, destination):
     stream = contextlib.nullcontext(sys.stdin.buffer) if source == Path("-") else source.open(encoding="utf-8")
     with stream as file:
         backup = json.load(file)
-    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2):
+    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2, 3):
         raise ValueError("Unbekanntes Sicherungsformat")
     tables = backup["tables"]
     columns_by_table = dict(COLUMNS)
-    if backup["version"] == 2:
+    if backup["version"] >= 2:
         columns_by_table["njora_subscribers"] = ("user_id", "account_token", "stripe_customer", "apple_original", "apple_environment")
+    if backup["version"] == 3:
+        columns_by_table["business_plans"] = COLUMNS["finance_plans"]
     if not isinstance(tables, dict) or set(tables) != set(columns_by_table):
         raise ValueError("Die Sicherung enthält nicht die erwarteten Tabellen")
 
@@ -44,7 +46,7 @@ def restore(source, destination):
                 rows = tables[table]
                 if not isinstance(rows, list) or any(not isinstance(row, dict) or set(row) != set(columns) for row in rows):
                     raise ValueError(f"Unerwartete Spalten in {table}")
-                if table == "finance_plans":
+                if table in ("finance_plans", "business_plans"):
                     for row in rows:
                         plan = json.loads(row["plan_json"])
                         required_lists = ("incomes", "expenses", "annualCosts", "commitments", "accounts", "goals", "snapshots")
@@ -56,7 +58,7 @@ def restore(source, destination):
                 placeholders = ", ".join("?" for _ in columns)
                 sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
                 db.executemany(sql, (tuple(row[column] for column in columns) for row in rows))
-            if backup["version"] == 2 and db.execute(
+            if backup["version"] >= 2 and db.execute(
                 "SELECT 1 FROM njora_subscribers s LEFT JOIN users u ON u.id=s.user_id WHERE u.id IS NULL LIMIT 1"
             ).fetchone():
                 raise ValueError("Abonnement ohne zugehöriges Nutzerkonto")

@@ -59,7 +59,14 @@ struct ClosingPrices: Decodable {
     }
 }
 
+enum FinanceWorkspace: String, CaseIterable {
+    case personal, business
+    var title: String { self == .personal ? "Privat" : "Business" }
+    var endpoint: String { self == .personal ? "/api/account" : "/api/account/business" }
+}
+
 struct AccountPayload: Decodable {
+    var workspace: String? = nil
     var closingPrices: ClosingPrices? = nil
     let billing: BillingStatus?
     struct User: Codable, Equatable {
@@ -182,10 +189,14 @@ actor NjoraAPI {
         try await authenticate(action.endpoint, fields: ["token": .string(action.token), "password": .string(password)])
     }
 
-    func account(session: String, positions: [PlanItem] = []) async throws -> AccountPayload {
+    func account(session: String, workspace: FinanceWorkspace = .personal, positions: [PlanItem] = []) async throws -> AccountPayload {
         let symbols = Set(positions.compactMap(ClosingPrices.isin)).sorted().joined(separator: ",")
-        let (data, _) = try await send("/api/account", method: "GET", body: nil, expectedSession: session, closingSymbols: symbols)
-        return try decoder.decode(AccountPayload.self, from: data)
+        let (data, _) = try await send(workspace.endpoint, method: "GET", body: nil, expectedSession: session, closingSymbols: symbols)
+        let reply = try decoder.decode(AccountPayload.self, from: data)
+        guard workspace == .personal ? reply.workspace != "business" : reply.workspace == "business" else {
+            throw APIError(503, "Dieser Finanzbereich ist gerade nicht verfügbar.")
+        }
+        return reply
     }
 
     func confirmPurchase(_ transaction: String, environment: String, session: String) async throws -> Bool {
@@ -196,9 +207,9 @@ actor NjoraAPI {
         return reply.active
     }
 
-    func save(_ plan: Plan, revision: Int?, session: String) async throws -> Int {
+    func save(_ plan: Plan, revision: Int?, session: String, workspace: FinanceWorkspace = .personal) async throws -> Int {
         struct Saved: Decodable { let revision: Int }
-        let reply: Saved = try await request("/api/account", method: "PUT", body: [
+        let reply: Saved = try await request(workspace.endpoint, method: "PUT", body: [
             "plan": .object(plan.storagePlan.fields), "revision": revision.map { .number(Double($0)) } ?? .null
         ], expectedSession: session)
         return reply.revision

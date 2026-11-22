@@ -16,6 +16,15 @@ export const financePlans = sqliteTable("finance_plans", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const businessPlans = sqliteTable("business_plans", {
+  userId: text("user_id").primaryKey().references(() => users.id),
+  planJson: text("plan_json").notNull(),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const userActivity = sqliteTable("user_activity", {
   userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   emailMask: text("email_mask").notNull(),

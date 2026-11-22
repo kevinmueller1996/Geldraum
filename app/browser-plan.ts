@@ -69,18 +69,22 @@ export function reconcile(copy: Copy, reply: Remote, choice?: Choice): Copy {
   return { ...reply, session: copy.session, draft, sending: null };
 }
 
-let database: Promise<IDBDatabase> | undefined;
-function open() {
-  if (!database) database = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("njora-browser-plans", 1);
-    request.onupgradeneeded = () => request.result.createObjectStore("plans").createIndex("session", "session");
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => { database = undefined; reject(request.error); };
-  });
+const databases = new Map<boolean, Promise<IDBDatabase>>();
+function open(business: boolean) {
+  let database = databases.get(business);
+  if (!database) {
+    database = new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(business ? "njora-business-plans" : "njora-browser-plans", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("plans").createIndex("session", "session");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => { databases.delete(business); reject(request.error); };
+    });
+    databases.set(business, database);
+  }
   return database;
 }
-export async function offlineCopy(session: string) {
-  const db = await open();
+export async function offlineCopy(session: string, business = false) {
+  const db = await open(business);
   return new Promise<Copy | undefined>((resolve,reject) => {
     const query = db.transaction("plans").objectStore("plans").index("session").get(session);
     query.onsuccess = () => resolve(query.result); query.onerror = () => reject(query.error);
@@ -88,8 +92,8 @@ export async function offlineCopy(session: string) {
 }
 
 // IndexedDB serializes read/modify/write across tabs. Resolve only after the transaction commits.
-export async function updateCopy(email: string, session: string, change: (copy?: Copy) => Copy | undefined, remove = false) {
-  const db = await open();
+export async function updateCopy(email: string, session: string, change: (copy?: Copy) => Copy | undefined, remove = false, business = false) {
+  const db = await open(business);
   return new Promise<Copy | undefined>((resolve,reject) => {
     const tx = db.transaction("plans", "readwrite");
     const store = tx.objectStore("plans"), key = email.trim().toLowerCase();

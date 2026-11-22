@@ -17,6 +17,7 @@ const PLAN_TABLE_SQL = `CREATE TABLE IF NOT EXISTS finance_plans (
   FOREIGN KEY (user_id) REFERENCES users(id)
 )`;
 
+const BUSINESS_PLAN_SQL = PLAN_TABLE_SQL.replace("finance_plans", "business_plans");
 const PLAN_UPDATED_INDEX_SQL = "CREATE INDEX IF NOT EXISTS finance_plans_updated_at_idx ON finance_plans(updated_at)";
 
 const USER_ACTIVITY_TABLE_SQL = `CREATE TABLE IF NOT EXISTS user_activity (
@@ -43,7 +44,7 @@ export function ensurePlanSchema() {
 async function initializeSchema() {
   const db = env.DB;
   if (!db) throw new Error("D1 binding DB is unavailable");
-  for (const statement of [USER_TABLE_SQL, PLAN_TABLE_SQL, PLAN_UPDATED_INDEX_SQL, USER_ACTIVITY_TABLE_SQL, USER_ACTIVITY_LAST_SEEN_INDEX_SQL]) {
+  for (const statement of [USER_TABLE_SQL, PLAN_TABLE_SQL, BUSINESS_PLAN_SQL, PLAN_UPDATED_INDEX_SQL, USER_ACTIVITY_TABLE_SQL, USER_ACTIVITY_LAST_SEEN_INDEX_SQL]) {
     await db.prepare(statement).run();
   }
   return db;

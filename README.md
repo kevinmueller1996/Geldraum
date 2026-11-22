@@ -41,9 +41,8 @@ Die App verwahrt ihre Sitzung im iOS-Schlüsselbund.
 Schema: `App`. Ziel: iOS 16 oder neuer. Die Bundle-ID
 `de.njora.finanzueberblick` bleibt für den bestehenden App-Store-Eintrag gleich.
 
-E-Mail-Bestätigungen und Passwort-Resets funktionieren in der App über
-„Link aus E-Mail öffnen“ und durch Einfügen des vollständigen Links.
-Automatische Weiterleitung aus Mail ist eine optionale spätere Ergänzung.
+Der Link in der Njora-E-Mail öffnet die Bestätigung oder das Zurücksetzen des Passworts
+im Browser. Anschließend ist die Anmeldung in der App mit diesem Passwort möglich.
 
 Zum Prüfen in Xcode: Anmeldung mit einem Testkonto, Monatsplan bearbeiten,
 auf der Website gegenprüfen und den Plan in der App neu laden. Wertpapiersuche,

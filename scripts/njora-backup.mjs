@@ -47,8 +47,9 @@ async function download(token, fetchImpl) {
   const bytes = Buffer.concat(chunks, size);
   const data = JSON.parse(bytes);
   const tables = ["users", "finance_plans", "user_activity", "auth_credentials"];
-  if (data?.version === 2) tables.push("njora_subscribers");
-  if (data?.format !== "njora-database-backup" || ![1, 2].includes(data.version)
+  if (data?.version >= 2) tables.push("njora_subscribers");
+  if (data?.version === 3) tables.push("business_plans");
+  if (data?.format !== "njora-database-backup" || ![1, 2, 3].includes(data.version)
       || !data.tables || Object.keys(data.tables).length !== tables.length
       || !tables.every(name => Array.isArray(data.tables[name]))) {
     throw new BackupError("Die Antwort enthält keinen vollständigen Njora-Export.");

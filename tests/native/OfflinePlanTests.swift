@@ -10,6 +10,8 @@ private final class AccountTransport: URLProtocol, @unchecked Sendable {
     struct Server {
         var online = true
         var plan = Plan.blank(name: "Testplan")
+        var business = Plan.blank(name: "Firma")
+        var businessRevision = 1
         var revision = 1
         var loseNextReply = false
         var writes = 0
@@ -29,7 +31,8 @@ private final class AccountTransport: URLProtocol, @unchecked Sendable {
         do {
             let (status, json): (Int, Data) = try Self.change { server in
                 guard server.online else { throw URLError(.notConnectedToInternet) }
-                guard request.url?.path == "/api/account" else { throw TestFailure(reason: "Unexpected route") }
+                let business = request.url?.path == "/api/account/business"
+                guard business || request.url?.path == "/api/account" else { throw TestFailure(reason: "Unexpected route") }
                 if request.httpMethod == "PUT" {
                     struct Write: Decodable { let revision: Int; let plan: Plan }
                     var body = request.httpBody ?? Data()
@@ -44,6 +47,12 @@ private final class AccountTransport: URLProtocol, @unchecked Sendable {
                         }
                     }
                     let write = try JSONDecoder().decode(Write.self, from: body)
+                    if business {
+                        guard write.revision == server.businessRevision else { return (409, Data("{}".utf8)) }
+                        server.business = write.plan
+                        server.businessRevision += 1
+                        return (200, try JSONSerialization.data(withJSONObject: ["revision": server.businessRevision]))
+                    }
                     guard write.revision == server.revision else { return (409, Data("{}".utf8)) }
                     server.plan = write.plan
                     server.revision += 1
@@ -55,11 +64,11 @@ private final class AccountTransport: URLProtocol, @unchecked Sendable {
                     }
                     return (200, try JSONSerialization.data(withJSONObject: ["revision": server.revision]))
                 }
-                let plan = try JSONSerialization.jsonObject(with: JSONEncoder().encode(server.plan))
-                return (200, try JSONSerialization.data(withJSONObject: ["authenticated": true,
+                let plan = try JSONSerialization.jsonObject(with: JSONEncoder().encode(business ? server.business : server.plan))
+                return (200, try JSONSerialization.data(withJSONObject: ["authenticated": true, "workspace": business ? "business" : "private",
                     "billing": ["active": server.active, "accountToken": "BB000000-AAAA-CCCC-BBBB-000000000001"],
                     "user": ["email": "test@example.invalid", "displayName": "Test", "accountCreatedAt": server.accountCreatedAt],
-                    "plan": server.hasPlan ? plan : NSNull(), "revision": server.hasPlan ? server.revision as Any : NSNull()]))
+                    "plan": server.hasPlan ? plan : NSNull(), "revision": server.hasPlan ? (business ? server.businessRevision : server.revision) as Any : NSNull()]))
             }
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -82,6 +91,22 @@ private enum OfflinePlanTests {
         var store: NjoraStore? = makeStore()
         await store!.restore()
         try check(store!.state == .ready, "First online load")
+        await store!.switchWorkspace(to: .business)
+        try check(store!.workspace == .business && store!.plan?.name == "Firma", "Independent business plan")
+        var firm = store!.plan!
+        firm.fields["name"] = .string("Firmenplan")
+        try check(await store!.save(firm), "Edit business workspace")
+        _ = await store!.refresh()
+        try check(AccountTransport.change { $0.business.name == "Firmenplan" && $0.plan.name == "Testplan" }, "Business write is isolated")
+        AccountTransport.change { $0.online = false }
+        await store!.switchWorkspace(to: .personal)
+        try check(store!.plan?.name == "Testplan", "Switch back offline")
+        await store!.switchWorkspace(to: .business)
+        try check(store!.plan?.name == "Firmenplan", "Return to business offline")
+        store = makeStore()
+        await store!.restore()
+        try check(store!.workspace == .business && store!.plan?.name == "Firmenplan", "Restore selected workspace offline")
+        await store!.switchWorkspace(to: .personal)
         AccountTransport.change { $0.online = false }
         try check(!(await store!.refresh()), "Offline read must not report a successful refresh on a clean plan")
         var changed = store!.plan!

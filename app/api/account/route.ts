@@ -93,6 +93,10 @@ export async function GET(request: NextRequest) {
   return response;
 }
 
+function planTable(request: NextRequest) {
+  return request.nextUrl.pathname.replace(/\/$/, "") === "/api/account/business" ? "business_plans" : "finance_plans";
+}
+
 async function getAccount(request: NextRequest) {
   if (needsCloudflareBackendProxy()) {
     const response = await proxyApiRequest(request);
@@ -107,13 +111,13 @@ async function getAccount(request: NextRequest) {
     const { db, id } = await upsertUser(identity, true);
     const billing = billingEnabled(id) && !identity.local ? await membership(await subscriber(id, identity.accountCreatedAt)) : null;
     const result = await db.prepare(`SELECT users.created_at, p.plan_json, p.revision, p.updated_at
-      FROM users LEFT JOIN finance_plans p ON p.user_id=users.id
+      FROM users LEFT JOIN ${planTable(request)} p ON p.user_id=users.id
       WHERE users.id=? AND (? IS NULL OR users.created_at=?)`)
       .bind(id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null)
       .first<{ created_at: string; plan_json: string | null; revision: number | null; updated_at: string | null }>();
     if (!result) return json({ authenticated: false }, 401);
     return json({
-      authenticated: true, billing,
+      authenticated: true, billing, workspace: planTable(request) === "business_plans" ? "business" : "private",
       user: { displayName: identity.displayName, email: identity.email, local: identity.local, accountCreatedAt: result.created_at },
       plan: result.plan_json ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
       revision: result.revision,
@@ -147,10 +151,11 @@ export async function PUT(request: NextRequest) {
     if (new TextEncoder().encode(planJson).byteLength > 500_000) return json({ error: "Der Finanzplan ist zu groß." }, 413);
 
     const { db, id, now } = await upsertUser(identity);
-    const existing = await db.prepare("SELECT revision FROM finance_plans WHERE user_id = ?").bind(id).first<{ revision: number }>();
+    const table = planTable(request);
+    const existing = await db.prepare(`SELECT revision FROM ${table} WHERE user_id = ?`).bind(id).first<{ revision: number }>();
     if (!existing) {
       if (body.revision != null) return json({ error: "Der bisherige Finanzplan existiert nicht mehr.", revision: null }, 409);
-      const inserted = await db.prepare(`INSERT INTO finance_plans (user_id, plan_json, schema_version, revision, created_at, updated_at)
+      const inserted = await db.prepare(`INSERT INTO ${table} (user_id, plan_json, schema_version, revision, created_at, updated_at)
         SELECT id, ?, 1, 1, ?, ? FROM users WHERE id=? AND (? IS NULL OR created_at=?) ON CONFLICT(user_id) DO NOTHING`)
         .bind(planJson, now, now, id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null).run();
       if (!inserted.meta.changes) return json({ error: "Der Finanzplan wurde zwischenzeitlich geändert." }, 409);
@@ -159,7 +164,7 @@ export async function PUT(request: NextRequest) {
 
     if (body.revision !== existing.revision) return json({ error: "Der Finanzplan wurde zwischenzeitlich auf einem anderen Gerät geändert.", revision: existing.revision }, 409);
     const nextRevision = existing.revision + 1;
-    const result = await db.prepare("UPDATE finance_plans SET plan_json = ?, schema_version = 1, revision = ?, updated_at = ? WHERE user_id = ? AND revision = ? AND EXISTS (SELECT 1 FROM users WHERE id=finance_plans.user_id AND (? IS NULL OR created_at=?))")
+    const result = await db.prepare(`UPDATE ${table} SET plan_json = ?, schema_version = 1, revision = ?, updated_at = ? WHERE user_id = ? AND revision = ? AND EXISTS (SELECT 1 FROM users WHERE id=${table}.user_id AND (? IS NULL OR created_at=?))`)
       .bind(planJson, nextRevision, now, id, existing.revision, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null).run();
     if (!result.meta.changes) return json({ error: "Der Finanzplan wurde zwischenzeitlich geändert." }, 409);
     return json({ saved: true, revision: nextRevision, updatedAt: now });
@@ -190,6 +195,7 @@ export async function DELETE(request: NextRequest) {
     const deleted = await db.batch([
       ...await removeBillingAccount(id, created),
       owned("DELETE FROM finance_plans WHERE user_id=?"),
+      owned("DELETE FROM business_plans WHERE user_id=?"),
       owned("DELETE FROM user_activity WHERE user_id=?"),
       owned("DELETE FROM auth_sessions WHERE user_id=?"),
       owned("DELETE FROM auth_action_tokens WHERE user_id=?"),

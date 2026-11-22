@@ -13,6 +13,8 @@ final class NjoraStore: ObservableObject {
         #endif
     }
     @Published private(set) var state: State = .loading
+    @Published private(set) var workspace: FinanceWorkspace = .personal
+    @Published var workspaceError: String?
     @Published private(set) var plan: Plan? {
         didSet { updateWidget() }
     }
@@ -34,6 +36,7 @@ final class NjoraStore: ObservableObject {
     var needsSync: Bool { local?.pending == true }
     private var widgetDay: Date?
     private func updateWidget() {
+        guard workspace == .personal else { return }
         let visible = billing?.active == false ? nil : plan
         publishWidget(visible)
         widgetDay = visible == nil ? nil : Date()
@@ -93,6 +96,7 @@ final class NjoraStore: ObservableObject {
                 guard let key = try await self.api.restoreSessionID() else { self.plan = nil; self.state = .signedOut; return }
                 self.session = key
                 if let file = try self.disk.boundFile(session: key), let record = try self.disk.load(from: file) {
+                    self.workspace = file == self.disk.file(record.user.email, workspace: .business) ? .business : .personal
                     self.file = file
                     self.apply(record)
                     self.syncStatus = record.pending ? "Auf diesem Gerät gespeichert. Cloud-Abgleich ausstehend." : ""
@@ -189,8 +193,8 @@ final class NjoraStore: ObservableObject {
 
     private func synchronize(session: String, generation: UUID) async -> Bool {
         do {
-            let reply = try await api.account(session: session, positions: local?.local?[.savings] ?? [])
-            guard generation == epoch, var record = local, disk.file(reply.user.email) == file else { return false }
+            let reply = try await api.account(session: session, workspace: workspace, positions: local?.local?[.savings] ?? [])
+            guard generation == epoch, var record = local, disk.file(reply.user.email, workspace: workspace) == file else { return false }
             let replacedAccount = !record.belongsToAccount(in: reply)
             if replacedAccount {
                 record = .cloud(reply)
@@ -220,7 +224,7 @@ final class NjoraStore: ObservableObject {
                 }
                 next.sending = outgoing
                 try persist(next)
-                let revision = try await api.save(outgoing, revision: next.revision, session: session)
+                let revision = try await api.save(outgoing, revision: next.revision, session: session, workspace: workspace)
                 guard generation == epoch, var latest = local else { return false }
                 latest.base = outgoing
                 latest.revision = revision
@@ -284,6 +288,47 @@ final class NjoraStore: ObservableObject {
         return true
     }
 
+    func switchWorkspace(to target: FinanceWorkspace) async {
+        guard target != workspace, !busy, let session, let user, let current = local else { return }
+        busy = true
+        defer { busy = false }
+        let previousEpoch = epoch
+        // Finish any write already sent before retiring this view and its editors.
+        _ = await syncTask?.value
+        guard previousEpoch == epoch else { return }
+        do {
+            let targetFile = disk.file(user.email, workspace: target)
+            let record: LocalFinancePlan
+            if let cached = try disk.load(from: targetFile),
+               let created = current.user.accountCreatedAt, cached.user.accountCreatedAt == created {
+                record = cached
+            } else {
+                let reply = try await api.account(session: session, workspace: target)
+                guard epoch == previousEpoch, reply.user == user else { throw CancellationError() }
+                record = .cloud(reply)
+                try disk.write(record, to: targetFile)
+            }
+            try disk.bind(targetFile, session: session)
+            epoch = UUID()
+            syncTask?.cancel(); syncTask = nil
+            retryTask?.cancel(); retryTask = nil
+            syncing = false
+            retryDelay = 2
+            conflict = false
+            conflictingReply = nil
+            notices.removeAll()
+            refreshNotices.removeAll()
+            syncStatus = ""
+            workspace = target
+            file = targetFile
+            accountLifetime = UUID()
+            apply(record)
+            requestSync()
+        } catch {
+            workspaceError = "Der Wechsel ist gerade nicht möglich. Zum ersten Öffnen eines Bereichs benötigst du eine Verbindung zu Njora."
+        }
+    }
+
     func endSession(deleteAccount: Bool, in scope: NoticeScope = .account) async {
         if !deleteAccount && local?.pending == true {
             notices[scope] = "Auf diesem Gerät sind Änderungen offen. Gleiche sie vor dem Abmelden mit der Cloud ab."
@@ -292,7 +337,13 @@ final class NjoraStore: ObservableObject {
         }
         await run(in: scope) {
             _ = await self.syncTask?.value
+            let other = self.user.map { self.disk.file($0.email, workspace: self.workspace == .personal ? .business : .personal) }
+            if !deleteAccount, let other, try self.disk.load(from: other)?.pending == true {
+                self.notices[scope] = "Im anderen Finanzbereich sind Änderungen offen. Öffne ihn vor dem Abmelden zum Abgleichen."
+                return
+            }
             try await self.api.endSession(deleteAccount: deleteAccount)
+            if let other { try? FileManager.default.removeItem(at: other) }
             if let file = self.file { try? FileManager.default.removeItem(at: file) }
             await self.signOutLocally()
         }
@@ -306,6 +357,8 @@ final class NjoraStore: ObservableObject {
         refreshNotices.removeAll()
         if let session { try? disk.unbind(session: session) }
         if let file, local?.pending == false { try? FileManager.default.removeItem(at: file) }
+        workspace = .personal
+        workspaceError = nil
         session = nil
         file = nil
         local = nil
@@ -338,6 +391,7 @@ final class NjoraStore: ObservableObject {
         plan = nil
         user = nil
         billing = nil
+        workspace = .personal
         session = await api.sessionID()
         do { try await openAccount() }
         catch { state = .offline; throw error }
@@ -346,9 +400,9 @@ final class NjoraStore: ObservableObject {
     private func openAccount() async throws {
         guard let session else { throw CancellationError() }
         let generation = epoch
-        let reply = try await api.account(session: session)
+        let reply = try await api.account(session: session, workspace: workspace)
         guard generation == epoch else { throw CancellationError() }
-        let target = disk.file(reply.user.email)
+        let target = disk.file(reply.user.email, workspace: workspace)
         let cached = try disk.load(from: target)
         let replacedAccount = cached.map { !$0.belongsToAccount(in: reply) } ?? false
         var record = replacedAccount ? .cloud(reply) : cached ?? .cloud(reply)

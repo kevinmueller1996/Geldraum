@@ -15,9 +15,9 @@ struct NjoraApp: App {
             Group {
                 switch store.state {
                 case .loading: ProgressView("Njora wird geöffnet …")
-                case .signedOut: LoginView(store: store, emailAction: $emailAction)
+                case .signedOut: LoginView(store: store)
                 case .subscription: SubscriptionView(store: store)
-                case .setup: SetupView(store: store)
+                case .setup: SetupView(store: store).id(store.accountLifetime)
                 case .ready: Dashboard(store: store, tab: $tab).id(store.accountLifetime)
                 case .offline:
                     VStack(spacing: 20) {
@@ -61,15 +61,22 @@ struct NjoraApp: App {
             }
             .onOpenURL { url in
                 if url.scheme == "njora", url.host == "widget" {
-                    switch url.path {
+                    Task {
+                        if store.workspace == .business { await store.switchWorkspace(to: .personal) }
+                        guard store.workspace == .personal else { return }
+                        switch url.path {
                     case "/budget": tab = .month
                     case "/balance": tab = .today
-                    default: break
+                        default: break
+                        }
                     }
                     return
                 }
                 if let action = EmailAction(link: url.absoluteString) { emailAction = action }
             }
+            .alert("Finanzbereich wechseln", isPresented: Binding(get: { store.workspaceError != nil }, set: { if !$0 { store.workspaceError = nil } })) {
+                Button("OK") { store.workspaceError = nil }
+            } message: { Text(store.workspaceError ?? "") }
             .sheet(item: $emailAction) { action in
                 EmailPasswordView(action: action, store: store)
             }
@@ -110,16 +117,32 @@ struct Notice: View {
     }
 }
 
+private struct LoginFieldStyle: ViewModifier {
+    @Environment(\.njoraAppearance) private var theme
+    let focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(minHeight: 48)
+            .background(theme.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(theme.accent.opacity(focused ? 0.85 : 0.28), lineWidth: focused ? 2 : 1)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
 struct LoginView: View {
     @ObservedObject var store: NjoraStore
-    @Binding var emailAction: EmailAction?
     @State private var email = ""
     @State private var password = ""
+    private enum Field { case email, password }
+    @FocusState private var focusedField: Field?
     @State private var registering = false
-    @State private var showLinkInput = false
-    @State private var pendingEmailAction: EmailAction?
-    @State private var mailLink = ""
-    @State private var linkError = ""
 
     var body: some View {
         ScrollView {
@@ -128,8 +151,6 @@ struct LoginView: View {
                 Text(registering ? "Dein Finanzplan beginnt hier." : "Willkommen zurück.")
                     .font(.system(.largeTitle, design: .serif, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
-                Text(registering ? "Bestätige deine E-Mail-Adresse, um ein Konto anzulegen." : "Melde dich an und öffne deinen persönlichen Finanzüberblick.")
-                    .foregroundStyle(.secondary)
                 Picker("Zugang", selection: $registering) {
                     Text("Anmelden").tag(false)
                     Text("Konto erstellen").tag(true)
@@ -137,16 +158,21 @@ struct LoginView: View {
                 VStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("E-Mail-Adresse").font(.subheadline.weight(.medium)).accessibilityHidden(true)
-                        TextField("E-Mail-Adresse", text: $email, prompt: Text("name@firma.de"))
+                        TextField("E-Mail-Adresse", text: $email, prompt: Text("alex@beispiel.de").foregroundColor(.secondary))
+                            .focused($focusedField, equals: .email)
+                            .modifier(LoginFieldStyle(focused: focusedField == .email))
                             .textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
                     if !registering {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Passwort").font(.subheadline.weight(.medium)).accessibilityHidden(true)
-                            SecureField("Passwort", text: $password).textContentType(.password)
+                            SecureField("Passwort", text: $password)
+                                .textContentType(.password)
+                                .focused($focusedField, equals: .password)
+                                .modifier(LoginFieldStyle(focused: focusedField == .password))
                         }
                     }
-                }.textFieldStyle(.roundedBorder)
+                }
                 if registering {
                     Text("Du erstellst zunächst dein Konto. Das Monatsabo für deinen Finanzplan schließt du separat ab. Es gelten die [AGB](https://njora.de/nutzungsbedingungen). Hier findest du die [Datenschutzerklärung](https://njora.de/datenschutz).").font(.footnote)
                 }
@@ -164,36 +190,12 @@ struct LoginView: View {
                     Button("Passwort vergessen?") { Task { await store.mail(action: "forgot-password", email: email) } }
                         .disabled(email.isEmpty || store.busy)
                 }
-                Button("Link aus E-Mail öffnen") { mailLink = ""; linkError = ""; showLinkInput = true }
                 Notice(text: store.message)
-                LegalLinksView()
+                DisclosureGroup("Rechtliches und Support") {
+                    LegalLinksView().frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+                }.font(.footnote)
             }
             .padding(28).frame(maxWidth: 500).frame(maxWidth: .infinity)
-        }
-        .sheet(isPresented: $showLinkInput, onDismiss: {
-            if let pendingEmailAction {
-                self.pendingEmailAction = nil
-                emailAction = pendingEmailAction
-            }
-        }) {
-            NavigationStack {
-                Form {
-                    Text("Kopiere den Bestätigungs- oder Reset-Link aus der Njora-E-Mail und füge ihn hier ein.")
-                    TextField("Link einfügen", text: $mailLink)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                    Notice(text: linkError)
-                    Button("Weiter") {
-                        guard let action = EmailAction(link: mailLink) else {
-                            linkError = "Bitte füge den vollständigen Njora-Link ein."; return
-                        }
-                        pendingEmailAction = action
-                        mailLink = ""
-                        showLinkInput = false
-                    }.disabled(mailLink.isEmpty)
-                }.planFormStyle().navigationTitle("Link aus E-Mail").toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { showLinkInput = false } }
-                }
-            }
         }
     }
 }
@@ -235,13 +237,14 @@ struct SetupView: View {
     @State private var confirmDelete = false
 
     var body: some View {
+        let business = store.workspace == .business
         NavigationStack {
             Form {
                 Section {
-                    Text("Gib deinem Finanzplan einen Namen. Weitere Konten, Ausgaben und Sparziele kannst du jederzeit ergänzen.")
-                    PlanField(title: "Dein Name", text: $name, prompt: "Vorname")
-                    PlanField(title: "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
-                    PlanField(title: "Aktueller Kontostand", text: $balance, prompt: "0", unit: "€", keyboard: .numbersAndPunctuation)
+                    Text(business ? "Lege den Finanzplan für dein Unternehmen an." : "Gib deinem Finanzplan einen Namen. Weitere Konten, Ausgaben und Sparziele kannst du jederzeit ergänzen.")
+                    PlanField(title: business ? "Unternehmen" : "Dein Name", text: $name, prompt: business ? "Firmenname" : "Vorname")
+                    PlanField(title: business ? "Betriebseinnahmen pro Monat" : "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
+                    PlanField(title: business ? "Stand des Geschäftskontos" : "Aktueller Kontostand", text: $balance, prompt: "0", unit: "€", keyboard: .numbersAndPunctuation)
                     Picker("Check-in", selection: $cadence) {
                         Text("Wöchentlich").tag("weekly")
                         Text("Täglich").tag("daily")
@@ -253,6 +256,10 @@ struct SetupView: View {
                         store.message = "Bitte prüfe deine Beträge."; return
                     }
                     var plan = Plan.blank(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+                    if business {
+                        plan[.income][0].fields["name"] = .string("Betriebseinnahmen")
+                        plan[.accounts][0].fields["name"] = .string("Geschäftskonto")
+                    }
                     plan.fields["checkInCadence"] = .string(cadence)
                     plan[.income][0].fields["amount"] = .number(earnings)
                     plan[.accounts][0].fields["balance"] = .number(current)
@@ -266,7 +273,8 @@ struct SetupView: View {
                 }
             }
             .planFormStyle()
-            .navigationTitle("Dein Finanzplan")
+            .navigationTitle(business ? "Business einrichten" : "Dein Finanzplan")
+            .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
             .accountDeletionDialog(isPresented: $confirmDelete) {
                 Task { await store.endSession(deleteAccount: true) }
             }
@@ -280,7 +288,7 @@ private struct AccountDeletionConfirmation: ViewModifier {
     let delete: () -> Void
 
     func body(content: Content) -> some View {
-        content.confirmationDialog("Konto und Finanzplan dauerhaft löschen?", isPresented: $isPresented, titleVisibility: .visible) {
+        content.confirmationDialog("Konto und alle Finanzbereiche löschen?", isPresented: $isPresented, titleVisibility: .visible) {
             Button("Apple-Abonnements öffnen") { openURL(URL(string: "https://apps.apple.com/account/subscriptions")!) }
             Button("Konto endgültig löschen", role: .destructive, action: delete)
             Button("Abbrechen", role: .cancel) {}

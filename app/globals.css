@@ -1404,3 +1404,7 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .saving-add-actions {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
 }
+
+.workspace-brand { display: flex; align-items: center; gap: .65rem; min-width: 0; }
+.workspace-picker { width: auto; min-height: 44px; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 10px; background: var(--cream); color: var(--ink); font: inherit; }
+@media (max-width: 600px) { .workspace-brand .brand { display: none; } }

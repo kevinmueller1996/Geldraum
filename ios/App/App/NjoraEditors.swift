@@ -305,7 +305,8 @@ struct PlanEditor: View {
     }
 
     private func categoryPicker(default fallback: String) -> some View {
-        let base = standardExpenseCategories + (section == .loans ? ["Kreditraten"] : [])
+        let categories = store.workspace == .business ? ["Betriebskosten", "Personal", "Büro", "Software", "Marketing", "Versicherungen", "Mobilität", "Sonstige"] : standardExpenseCategories
+        let base = categories + (section == .loans ? ["Kreditraten"] : [])
         let used = plan[.expenses].map(\.expenseCategory) + plan[.loans].map(\.loanCategory)
         let selected = item.costCategory(default: fallback)
         var seen = Set<String>()

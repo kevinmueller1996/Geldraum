@@ -45,7 +45,7 @@ export async function proxyApiRequest(request: Request) {
     const target = new URL(origin.origin);
     target.pathname = incomingUrl.pathname;
     target.search = incomingUrl.search;
-    const bodyLimit = request.method === "PUT" && incomingUrl.pathname === "/api/account" ? 600_000 : formBodyLimit;
+    const bodyLimit = request.method === "PUT" && ["/api/account", "/api/account/business"].includes(incomingUrl.pathname) ? 600_000 : formBodyLimit;
     const contentLength = Number(request.headers.get("content-length") ?? "0");
     if (Number.isFinite(contentLength) && contentLength > bodyLimit) return errorResponse("Die Anfrage ist zu groß.", 413);
     const headers = new Headers();

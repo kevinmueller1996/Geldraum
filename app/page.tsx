@@ -243,6 +243,17 @@ function migrateOldProfile(): Plan | null {
 }
 
 export default function Home() {
+  const ready = useBrowserReady();
+  if (!ready) return <main className="loading" aria-label="Njora wird geladen"><span className="loading-mark" /></main>;
+  return <FinanceDashboard business={new URLSearchParams(location.search).get("bereich") === "business"} />;
+}
+
+function FinanceDashboard({ business }: { business: boolean }) {
+  const accountEndpoint = business ? "/api/account/business" : "/api/account";
+  const workspacePicker = <select className="workspace-picker" aria-label="Finanzbereich" value={business ? "business" : "private"}
+    onChange={event => location.assign(event.target.value === "business" ? "/?bereich=business" : "/")}>
+    <option value="private">Privat</option><option value="business">Business</option>
+  </select>;
   const appearance = useAppearance();
   const [plan, setPlan] = useState<Plan | null>(null);
   const [draft, setDraft] = useState<Plan>(emptyPlan());
@@ -311,8 +322,14 @@ export default function Home() {
       setRemoteUpdatedAt(copy.updatedAt);
       setReady(true);
       if (first) {
-        setDraft(copy.draft ?? emptyPlan(copy.user.displayName.split(" ")[0] || "Mein Budget"));
-        if (!copy.draft) {
+        const initial = emptyPlan(business ? "" : copy.user.displayName.split(" ")[0] || "Mein Budget");
+        if (business) {
+          initial.incomes[0].name = "Betriebseinnahmen";
+          initial.expenses[0].category = "Betriebskosten";
+          initial.accounts = [{ id: uid(), name: "Geschäftskonto", type: "bank", balance: 0 }];
+        }
+        setDraft(copy.draft ?? initial);
+        if (!business && !copy.draft) {
           try {
             const saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(PREVIOUS_STORAGE_KEY);
             const legacy = saved ? normalizePlan(JSON.parse(saved)) : migrateOldProfile();
@@ -329,7 +346,7 @@ export default function Home() {
       const headers: Record<string,string> = {"x-njora-browser": "1"};
       headers["x-njora-closing-prices"] = [...new Set(previous?.draft?.savings.filter(s => s.kind === "security").map(s => securityISIN(s.symbol)).filter(Boolean))].join(",") || "1";
       if (previous) headers["x-njora-browser-session"] = previous.session;
-      const response = await fetch("/api/account", {headers, cache: "no-store", signal: AbortSignal.timeout(15000)});
+      const response = await fetch(accountEndpoint, {headers, cache: "no-store", signal: AbortSignal.timeout(15000)});
       if (cancelled) return;
       if (response.status === 401 || response.status === 412) {
         if (!previous || currentSession() === previous.session) document.cookie = expireMarker(location.href);
@@ -337,7 +354,8 @@ export default function Home() {
         return;
       }
       if (!response.ok) throw new Error("Der Cloud-Abgleich ist gerade nicht möglich.");
-      const { closingPrices:daily, ...reply } = await response.json() as Remote & {closingPrices?:ClosingPrices | null};
+      const { closingPrices:daily, ...reply } = await response.json() as Remote & {workspace?: string; closingPrices?:ClosingPrices | null};
+      if (business && reply.workspace !== "business") throw new Error("Geschäftsbereich nicht verfügbar.");
       if (reply.plan) reply.plan = normalizePlan(reply.plan);
       const session = response.headers.get("x-njora-browser-session");
       if (!session || session !== currentSession() || (previous && reply.user.email !== previous.user.email)) throw new SessionChanged();
@@ -350,7 +368,7 @@ export default function Home() {
           return {...merged, draft:applyClosingPrices(merged.draft, daily)};
         }
         catch (e) { if (!(e instanceof Conflict)) throw e; overlap = true; return bound; }
-      });
+      }, false, business);
       if (!copy || cancelled) return;
       show(copy);
       if (overlap) { clash.current = reply; setSyncStatus("conflict"); return; }
@@ -361,9 +379,9 @@ export default function Home() {
       const sent = await updateCopy(email, session, saved => {
         if (!saved || saved.session !== session) throw new SessionChanged();
         return {...saved, sending: saved.draft};
-      });
+      }, false, business);
       if (!sent?.sending) return;
-      const saved = await fetch("/api/account", {method: "PUT", headers: {"Content-Type":"application/json", "x-njora-browser-session":session},
+      const saved = await fetch(accountEndpoint, {method: "PUT", headers: {"Content-Type":"application/json", "x-njora-browser-session":session},
         body: JSON.stringify({plan:storagePlan(sent.sending), revision:sent.revision}), signal:AbortSignal.timeout(15000)});
       if (saved.status === 409 || saved.status === 401 || saved.status === 412 || saved.status === 402) throw new Error("Der Kontostand wird erneut geprüft.");
       if (!saved.ok) throw new Error(saved.status === 400 || saved.status === 413 ? "Der Finanzplan wurde von der Cloud abgelehnt. Bitte prüfe deine Eingaben." : "Die Cloud ist gerade nicht erreichbar.");
@@ -372,7 +390,7 @@ export default function Home() {
         if (!stored || stored.session !== session) throw new SessionChanged();
         if (stored.revision !== sent.revision) return stored;
         return {...stored, plan:sent.sending, sending:null, revision:ack.revision, updatedAt:ack.updatedAt};
-      });
+      }, false, business);
       if (!latest || cancelled) return;
       show(latest);
       again ||= pending(latest);
@@ -422,13 +440,13 @@ export default function Home() {
     void (async () => {
       try {
         const session = currentSession();
-        const cached = session && await offlineCopy(session);
+        const cached = session && await offlineCopy(session, business);
         if (cached && !cancelled) { show(cached); setSyncStatus(pending(cached) ? "pending" : "offline"); }
       } finally { if (!cancelled) void sync(); }
     })().catch(() => {});
     return () => { cancelled = true; clearInterval(marketTimer); messages?.close(); channel.current = null; clearTimeout(timer); window.removeEventListener("online",resume);
       window.removeEventListener("pageshow",changed); window.removeEventListener("storage",changed); document.removeEventListener("visibilitychange",changed); };
-  }, []);
+  }, [business, accountEndpoint]);
 
   const hasPlan = Boolean(plan);
   const [today, setToday] = useState(() => localDay());
@@ -481,7 +499,7 @@ export default function Home() {
 
   const source = plan ?? demoPlan;
   const active = useMemo(() => orderedPlan({ ...source, commitments: source.commitments.map(loan => currentLoan(loan, today)) }), [source, today]);
-  const categoryOptions = [...new Set([...categories, ...draft.expenses.map((item) => item.category), ...draft.commitments.flatMap(item => item.category ? [item.category] : [])])];
+  const categoryOptions = [...new Set([...(business ? ["Betriebskosten", "Personal", "Büro", "Software", "Marketing", "Versicherungen", "Mobilität", "Sonstige"] : categories), ...draft.expenses.map((item) => item.category), ...draft.commitments.flatMap(item => item.category ? [item.category] : [])])];
   const metrics = useMemo(() => {
     const now = new Date(today + "T12:00:00");
     const income = active.incomes.filter((item) => !item.annual).reduce((sum, item) => sum + item.amount, 0);
@@ -573,7 +591,7 @@ export default function Home() {
     let nextTarget = target ?? null;
     if (add === "account") next.accounts.push({ id: uid(), name: "", type: "bank", balance: 0 });
     if (add === "income") next.incomes.push({ id: uid(), name: "", amount: 0, annual: false, month: undefined });
-    if (add === "expense") { const id = uid(); next.expenses.push({ id, name: "", amount: 0, category: target ?? "Lebenshaltung", bookingDay: 0 }); nextTarget = `item:${id}`; }
+    if (add === "expense") { const id = uid(); next.expenses.push({ id, name: "", amount: 0, category: target ?? (business ? "Betriebskosten" : "Lebenshaltung"), bookingDay: 0 }); nextTarget = `item:${id}`; }
     if (add === "loan") { const id = uid(); next.commitments.push({ id, name: "", balanceDate: today, balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }); nextTarget = id; }
     if (add === "goal") { const id = uid(); next.goals.push({ id, name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }); nextTarget = id; }
     if (add === "security") { const id = uid(); next.savings.push({ id, name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }); nextTarget = id; }
@@ -618,7 +636,7 @@ export default function Home() {
           throw new RangeError("Der Finanzplan ist zu groß für den Cloud-Abgleich.");
         }
         return {...saved, draft:merged};
-      });
+      }, false, business);
       if (!result) throw new Error();
       current.current = result;
       setPlan(result.draft);
@@ -642,7 +660,7 @@ export default function Home() {
       const result = await updateCopy(copy.user.email, copy.session, saved => {
         if (!saved || saved.session !== copy.session || differentAccount(copy.user, saved.user)) throw new SessionChanged();
         return reconcile(saved, remote, choice);
-      });
+      }, false, business);
       if (result) {
         current.current = result; clash.current = null; setPlan(result.draft); setProblem("");
         setSyncStatus("pending"); syncNow.current();
@@ -817,7 +835,8 @@ export default function Home() {
         if (issue?.code === "billing_cancellation_unconfirmed" && typeof issue.error === "string") failure = issue.error;
         throw new Error("delete failed");
       }
-      await updateCopy(copy.user.email, copy.session, () => undefined, true);
+      await updateCopy(copy.user.email, copy.session, () => undefined, true, business);
+      await updateCopy(copy.user.email, copy.session, () => undefined, true, !business);
       channel.current?.postMessage("session");
       window.localStorage.removeItem(STORAGE_KEY);
       window.localStorage.removeItem(PREVIOUS_STORAGE_KEY);
@@ -834,13 +853,15 @@ export default function Home() {
     const copy = current.current;
     if (!copy) return;
     try {
-      const stored = await offlineCopy(copy.session);
-      if (stored && pending(stored)) {
-        setProblem("Bitte gleiche deine offenen Änderungen vor dem Abmelden ab."); syncNow.current(); return;
+      const stored = await offlineCopy(copy.session, business);
+      const other = await offlineCopy(copy.session, !business);
+      if ((stored && pending(stored)) || (other && pending(other))) {
+        setProblem("Bitte gleiche offene Änderungen in beiden Bereichen vor dem Abmelden ab."); syncNow.current(); return;
       }
       const response = await fetch("/api/auth/logout", {method:"POST", headers:{"x-njora-browser-session":copy.session}});
       if (!response.ok) throw new Error();
-      await updateCopy(copy.user.email, copy.session, saved => saved && (saved.session !== copy.session || pending(saved)) ? saved : undefined, true);
+      await updateCopy(copy.user.email, copy.session, saved => saved && (saved.session !== copy.session || pending(saved)) ? saved : undefined, true, business);
+      await updateCopy(copy.user.email, copy.session, saved => saved && (saved.session !== copy.session || pending(saved)) ? saved : undefined, true, !business);
       channel.current?.postMessage("session");
       location.replace("/login");
     } catch { setProblem("Abmelden ist fehlgeschlagen. Bitte prüfe die Verbindung."); }
@@ -957,7 +978,7 @@ export default function Home() {
   return (
     <main id="top" className="page-shell" data-appearance={appearance.appearance}>
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => navigate("home")} aria-label="Njora Startseite"><Brand /></button>
+        <div className="workspace-brand">{workspacePicker}<button className="brand" type="button" onClick={() => navigate("home")} aria-label="Njora Startseite"><Brand /></button></div>
         <nav className="desktop-nav" aria-label="Hauptnavigation">
           <NavButton active={activeView === "home"} onClick={() => navigate("home")}>Heute</NavButton>
           <NavButton active={activeView === "month"} onClick={() => navigate("month")}>Monatsplan</NavButton>
@@ -972,7 +993,7 @@ export default function Home() {
 
       <div className="app-content">
         {activeView === "home" && <section className="view home-view" aria-labelledby="home-title">
-          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">Heute</h1></div><button type="button" className="dashboard-account-link" title={updateDue ? "Check-in fällig · Kontostände aktualisieren" : "Kontostände aktualisieren"} onClick={openCheckIn}><TitleAmount value={metrics.netBalance} label="Kontostand bearbeiten" /></button></div>
+          <div className="mobile-greeting"><div><p className="eyebrow">{currentMonthName}</p><h1 id="home-title">{business ? active.name : "Heute"}</h1></div><button type="button" className="dashboard-account-link" title={updateDue ? "Check-in fällig · Kontostände aktualisieren" : "Kontostände aktualisieren"} onClick={openCheckIn}><TitleAmount value={metrics.netBalance} label="Kontostand bearbeiten" /></button></div>
           <div className="njora-columns"><div className="njora-column">
           <button type="button" className="dashboard-balance" aria-expanded={showForecast} aria-controls="forecast-detail" onClick={() => setShowForecast(!showForecast)}>
             <span>Prognose zum Monatsende</span>
@@ -980,9 +1001,9 @@ export default function Home() {
             <span>Mit datierten Zahlungen{metrics.forecast.uncertain.length > 0 ? ` · ${metrics.forecast.uncertain.length} ${metrics.forecast.uncertain.length === 1 ? "Buchung" : "Buchungen"} offen` : ""}</span>
           </button>
           <div className="dashboard-metrics">
-            <button type="button" onClick={() => openFocusedEditor("income")}><span>Einkommen im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
-            <button type="button" onClick={() => showCosts("home")}><span>Fixkosten · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
-            <button type="button" onClick={() => navigate("month")}><span>Monatlicher Spielraum</span><strong>{exactEuros.format(metrics.available)}</strong></button>
+            <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen" : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
+            <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten" : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
+            <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(metrics.available)}</strong></button>
             <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
           </div>
           {showForecast && <section id="forecast-detail" className="detail-card">
@@ -1129,6 +1150,7 @@ export default function Home() {
 
       {billing?.active !== false && !plan && !showLegacyPrompt && <div className="modal-backdrop onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <div className="onboarding-top"><Brand /><span>Kurzer Fragebogen · etwa 3 Minuten</span></div>
+        {workspacePicker}
         <div className="onboarding-progress-copy"><span>Schritt {onboardingStep + 1} von {onboardingSteps.length}</span><strong>{onboardingSteps[onboardingStep]}</strong></div>
         <div className="onboarding-progress" role="progressbar" aria-label="Fortschritt bei der Einrichtung" aria-valuemin={1} aria-valuemax={onboardingSteps.length} aria-valuenow={onboardingStep + 1}><i style={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }} /></div>
         <ol className="onboarding-step-list" aria-label="Einrichtungsschritte">{onboardingSteps.map((step, index) => <li className={index === onboardingStep ? "active" : index < onboardingStep ? "done" : ""} key={step}><span>{index < onboardingStep ? "✓" : index + 1}</span><small>{step}</small></li>)}</ol>
@@ -1136,8 +1158,8 @@ export default function Home() {
         <form onSubmit={finishOnboarding} noValidate>
           <div className="onboarding-content">
             {onboardingStep === 0 && <>
-              <p className="eyebrow">Willkommen bei Njora</p><h2 id="onboarding-title">Wie möchtest du deinen Finanzplan nennen?</h2><p className="onboarding-intro">Der Name erscheint nur in deinem persönlichen Bereich. Lege außerdem fest, wie oft du deine Kontostände prüfen möchtest.</p>
-              <div className="onboarding-fields two"><label><FieldTitle required>Profilname</FieldTitle><input autoFocus maxLength={80} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Finanzplan" /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
+              <p className="eyebrow">Willkommen bei Njora</p><h2 id="onboarding-title">{business ? "Wie heißt dein Unternehmen?" : "Wie möchtest du deinen Finanzplan nennen?"}</h2><p className="onboarding-intro">Lege fest, wie oft du deine Kontostände prüfen möchtest.</p>
+              <div className="onboarding-fields two"><label><FieldTitle required>{business ? "Firmenname" : "Profilname"}</FieldTitle><input autoFocus maxLength={80} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder={business ? "Firmenname" : "z. B. Mein Finanzplan"} /></label><label><FieldTitle required>Check-in-Rhythmus</FieldTitle><select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="weekly">wöchentlich</option><option value="daily">täglich</option></select></label></div>
             </>}
 
             {onboardingStep === 1 && <>
@@ -1156,7 +1178,7 @@ export default function Home() {
               <p className="eyebrow">Fixkosten</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
               <div className="optional-note"><b>Optional</b><span>Du kannst direkt weitergehen.</span></div>
               <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
-              <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
+              <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: business ? "Betriebskosten" : "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
             </>}
 
             {onboardingStep === 4 && <>

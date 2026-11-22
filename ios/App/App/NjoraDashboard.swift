@@ -20,24 +20,30 @@ struct Dashboard: View {
     @Binding var tab: DashboardTab
 
     var body: some View {
-        if let plan = store.plan {
+        if let plan = store.plan, store.workspace == .business {
+            BusinessDashboard(store: store, plan: plan)
+        } else if let plan = store.plan {
             let navigation = TabView(selection: $tab) {
                 NavigationStack {
                     Overview(plan: plan, store: store)
                         .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Heute", systemImage: "sun.max") }.tag(DashboardTab.today)
                 NavigationStack {
                     MonthlyPlan(plan: plan, store: store)
                         .financialTitle("Monatsplan", width: DashboardLayout.maxWidth, amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Monatsplan", systemImage: "calendar") }.tag(DashboardTab.month)
                 NavigationStack {
                     PlanSectionView(section: .loans, store: store)
+                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Kredite", systemImage: "banknote") }.tag(DashboardTab.loans)
                 NavigationStack {
                     PlanSectionView(section: .goals, store: store)
+                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Ziele", systemImage: "target") }.tag(DashboardTab.goals)
                 NavigationStack {
                     List {
@@ -49,6 +55,7 @@ struct Dashboard: View {
                     .njoraNavigationBackground()
                     .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                     .scrollContentBackground(.hidden).background(theme.paper)
+                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Mehr", systemImage: "ellipsis") }.tag(DashboardTab.more)
             }
             if #available(iOS 18, *), UIDevice.current.userInterfaceIdiom == .pad {
@@ -59,6 +66,67 @@ struct Dashboard: View {
         }
     }
 
+}
+
+struct WorkspacePicker: View {
+    @ObservedObject var store: NjoraStore
+
+    var body: some View {
+        Menu {
+            ForEach(FinanceWorkspace.allCases, id: \.self) { choice in
+                Button { Task { await store.switchWorkspace(to: choice) } } label: {
+                    if choice == store.workspace { Label(choice.title, systemImage: "checkmark") }
+                    else { Text(choice.title) }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(store.workspace.title)
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+        }.disabled(store.busy)
+        .accessibilityLabel("Finanzbereich: " + store.workspace.title)
+        .accessibilityIdentifier("njora.workspace")
+    }
+}
+
+private struct BusinessDashboard: View {
+    @ObservedObject var store: NjoraStore
+    let plan: Plan
+
+    var body: some View {
+        let metrics = PlanMetrics(plan: plan)
+        NavigationStack {
+            List {
+                Section("Liquidität") {
+                    NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
+                        LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
+                    }
+                }
+                Section("Monatsplanung") {
+                    NavigationLink { PlanSectionView(section: .income, store: store) } label: {
+                        LabeledAmount(label: "Regelmäßige Betriebseinnahmen", amount: metrics.income)
+                    }
+                    NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
+                        LabeledAmount(label: "Betriebskosten inkl. Kreditraten", amount: metrics.fixedCosts)
+                    }
+                    LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
+                }
+                Section("Finanzierung") {
+                    NavigationLink("Geschäftskredite") { PlanSectionView(section: .loans, store: store) }
+                    NavigationLink("Rücklagenziele") { PlanSectionView(section: .goals, store: store) }
+                }
+                if store.conflict || store.needsSync { Notice(text: store.syncStatus) }
+            }
+            .planFormStyle()
+            .navigationTitle(plan.name)
+            .refreshable { await store.refresh(in: .overview) }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) }
+                ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) }
+            }
+        }
+    }
 }
 
 private struct ProfileButton: View {
@@ -529,6 +597,14 @@ struct PlanSectionView: View {
     }
     private var newItem: PlanItem {
         var item = section.newItem
+        if store.workspace == .business {
+            switch section {
+            case .accounts: item.fields["name"] = .string("Geschäftskonto")
+            case .income: item.fields["name"] = .string("Betriebseinnahme")
+            case .expenses: item.fields["category"] = .string("Betriebskosten")
+            default: break
+            }
+        }
         if let category { item.fields["category"] = .string(category) }
         return item
     }
@@ -681,9 +757,6 @@ private struct PlanItemRow: View {
                 LabeledContent(fields["paidBefore"] == nil ? "Rückzahlung ab Stichtag inkl. Zinsen" : "Gesamt inkl. Zinsen",
                                value: total.map { euros($0) } ?? "Nicht berechenbar")
                     .font(.footnote)
-                if fields.text("balanceDate").isEmpty || (fields.integer("bookingDay") ?? 0) == 0 {
-                    Text("Für die automatische Tilgung Stichtag und Buchungstag ergänzen.").font(.footnote).foregroundStyle(.secondary)
-                }
             }
             if section == .goals, fields.amount("target") > 0 {
                 ProgressView(value: max(0, min(1, fields.amount("saved") / fields.amount("target"))))

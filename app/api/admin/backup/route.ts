@@ -36,14 +36,15 @@ export async function GET(request: NextRequest) {
       db.prepare("SELECT user_id, plan_json, schema_version, revision, created_at, updated_at FROM finance_plans ORDER BY user_id"),
       db.prepare("SELECT user_id, email_mask, first_seen_at, last_seen_at, access_count, source FROM user_activity ORDER BY user_id"),
       db.prepare("SELECT user_id, email_mask, email_address, email_verified_at, password_salt, password_hash, password_iterations, created_at, updated_at FROM auth_credentials ORDER BY user_id"),
+      db.prepare("SELECT user_id, plan_json, schema_version, revision, created_at, updated_at FROM business_plans ORDER BY user_id"),
       ...(hasSubscriptions ? [db.prepare("SELECT user_id, account_token, stripe_customer, apple_original, apple_environment FROM njora_subscribers ORDER BY user_id")] : []),
     ]);
-    const [users, financePlans, userActivity, authCredentials, subscribers] = results.map((result) => result.results);
+    const [users, financePlans, userActivity, authCredentials, businessPlans, subscribers] = results.map((result) => result.results);
     const exportedAt = new Date().toISOString();
     const filename = `njora-datenbank-${exportedAt.slice(0, 10)}.json`;
     const body = JSON.stringify({
       format: "njora-database-backup",
-      version: subscribers ? 2 : 1,
+      version: businessPlans.length ? 3 : subscribers ? 2 : 1,
       exportedAt,
       excludes: ["auth_sessions", "auth_action_tokens", "auth_attempts", "njora_plugin_grants", "njora_plugin_proposals", "njora_cancellation_limits"],
       tables: {
@@ -51,6 +52,7 @@ export async function GET(request: NextRequest) {
         finance_plans: financePlans,
         user_activity: userActivity,
         auth_credentials: authCredentials,
+        ...(businessPlans.length ? { business_plans: businessPlans, njora_subscribers: subscribers ?? [] } : {}),
         ...(subscribers ? { njora_subscribers: subscribers } : {}),
       },
     }, null, 2);

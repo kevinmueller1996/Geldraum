@@ -122,6 +122,20 @@ test("verification, recovery, plan revisions and dependent records across one ac
   assert.equal((await put(1,"edited")).status,200);
   assert.equal((await put(1,"stale")).status,409);
 
+  const businessPath = "/api/account/business";
+  const getBusiness = c => account.GET(request(businessPath,"GET",null,c));
+  const putBusiness = (revision,name) => account.PUT(request(businessPath,"PUT",{revision,plan:{...example,name}},cookie));
+  assert.equal((await getBusiness(null)).status,401);
+  const fresh = await (await getBusiness(cookie)).json();
+  assert.equal(fresh.workspace,"business");
+  assert.equal(fresh.plan,null);
+  assert.equal((await putBusiness(null,"Unternehmen")).status,200);
+  assert.equal((await putBusiness(null,"Duplikat")).status,409);
+  assert.equal((await putBusiness(1,"Firmenplan")).status,200);
+  assert.equal((await putBusiness(1,"Veraltete Firmenrevision")).status,409);
+  assert.equal((await (await getBusiness(cookie)).json()).plan.name,"Firmenplan");
+  assert.equal((await (await account.GET(request("/api/account","GET",null,cookie))).json()).plan.name,"edited");
+
   await storage.ensureTables();
   const token = config.randomToken();
   const now = Date.now(), version = db.sql.prepare("SELECT updated_at FROM auth_credentials").get().updated_at;
@@ -167,7 +181,7 @@ test("verification, recovery, plan revisions and dependent records across one ac
   assert.equal(await admin.isAdminAuthenticated(),false);
 
   assert.equal((await account.DELETE(request("/api/account","DELETE",undefined,newCookie))).status,200);
-  for (const table of ["users","auth_credentials","auth_sessions","auth_action_tokens","finance_plans","user_activity","njora_plugin_grants","njora_plugin_proposals","njora_subscribers"]) {
+  for (const table of ["users","auth_credentials","auth_sessions","auth_action_tokens","finance_plans","business_plans","user_activity","njora_plugin_grants","njora_plugin_proposals","njora_subscribers"]) {
     assert.equal(db.sql.prepare("SELECT count(*) AS n FROM "+table).get().n,0,table);
   }
   assert.equal((await account.GET(request("/api/account","GET",null,newCookie))).status,401);
