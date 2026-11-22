@@ -12,25 +12,38 @@ private enum DashboardLayout {
     }
 }
 
-enum DashboardTab: Hashable { case today, month, loans, goals, more }
+enum DashboardTab: Hashable { case today, revenue, month, loans, goals, more }
 
 struct Dashboard: View {
     @Environment(\.njoraAppearance) private var theme
     @ObservedObject var store: NjoraStore
     @Binding var tab: DashboardTab
+    @State private var businessTab = DashboardTab.today
 
     var body: some View {
-        if let plan = store.plan, store.workspace == .business {
-            BusinessDashboard(store: store, plan: plan)
-        } else if let plan = store.plan {
-            let navigation = TabView(selection: $tab) {
+        if let plan = store.plan {
+            let business = store.workspace == .business
+            let navigation = TabView(selection: business ? $businessTab : $tab) {
                 NavigationStack {
-                    Overview(plan: plan, store: store)
-                        .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
+                    Group {
+                        if business {
+                            BusinessOverview(store: store, plan: plan, tab: $businessTab)
+                        } else {
+                            Overview(plan: plan, store: store)
+                                .navigationTitle("Heute").navigationBarTitleDisplayMode(.inline)
+                                .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
+                        }
+                    }
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                         .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Heute", systemImage: "sun.max") }.tag(DashboardTab.today)
+                if business {
+                    NavigationStack {
+                        BusinessRevenueView(store: store)
+                            .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
+                            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
+                    }.tabItem { Label("Umsatz", systemImage: "chart.bar") }.tag(DashboardTab.revenue)
+                }
                 NavigationStack {
                     MonthlyPlan(plan: plan, store: store)
                         .financialTitle("Monatsplan", width: DashboardLayout.maxWidth, amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
@@ -41,14 +54,16 @@ struct Dashboard: View {
                     PlanSectionView(section: .loans, store: store)
                         .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Kredite", systemImage: "banknote") }.tag(DashboardTab.loans)
-                NavigationStack {
-                    PlanSectionView(section: .goals, store: store)
-                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
-                }.tabItem { Label("Ziele", systemImage: "target") }.tag(DashboardTab.goals)
+                if !business {
+                    NavigationStack {
+                        PlanSectionView(section: .goals, store: store)
+                            .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
+                    }.tabItem { Label("Ziele", systemImage: "target") }.tag(DashboardTab.goals)
+                }
                 NavigationStack {
                     List {
-                        NavigationLink("Konten & Karten") { PlanSectionView(section: .accounts, store: store) }
-                        NavigationLink("Ersparnisse & Depot") { PlanSectionView(section: .savings, store: store) }
+                        NavigationLink(business ? "Geschäftskonten" : "Konten & Karten") { PlanSectionView(section: .accounts, store: store) }
+                        NavigationLink(business ? "Vermögenswerte" : "Ersparnisse & Depot") { PlanSectionView(section: .savings, store: store) }
                         NavigationLink("Verlauf der Kontostände") { PlanSectionView(section: .history, store: store) }
                     }
                     .navigationTitle("Mehr")
@@ -90,61 +105,54 @@ struct WorkspacePicker: View {
     }
 }
 
-private struct BusinessDashboard: View {
+private struct BusinessOverview: View {
     @ObservedObject var store: NjoraStore
     let plan: Plan
+    @Binding var tab: DashboardTab
     @State private var checkIn = false
 
     var body: some View {
         let month = PlanDate.previousRevenueMonth(for: .now)
         let metrics = PlanMetrics(plan: plan)
-        NavigationStack {
-            List {
-                Section("Liquidität") {
-                    NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
-                        LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
-                    }
+        List {
+            Section("Liquidität") {
+                NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
+                    LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
                 }
-                Section("Umsatz") {
-                    NavigationLink {
-                        BusinessRevenueView(store: store)
-                    } label: {
-                        LabeledContent("Umsatzübersicht", value: "12 Monate")
-                    }
-                }
-                Section("Check-in") {
-                    Button { checkIn = true } label: {
-                        LabeledContent("Nettoumsatz " + month.title, value: plan.monthlyRevenue[month.key]?.number.map { euros($0) } ?? "Erfassen")
-                    }.accessibilityHint("Öffnet den Check-in für Umsatz und Kontostände.")
-                }
-                Section("Monatsplanung") {
-                    NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                        LabeledAmount(label: "Regelmäßige Betriebseinnahmen", amount: metrics.income)
-                    }
-                    NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                        LabeledAmount(label: "Betriebskosten inkl. Kreditraten", amount: metrics.fixedCosts)
-                    }
-                    LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
-                }
-                Section("Vermögen") {
-                    NavigationLink { PlanSectionView(section: .savings, store: store) } label: {
-                        LabeledAmount(label: "Vermögenswerte", amount: plan[.savings].reduce(0) { $0 + $1.savingValue })
-                    }
-                }
-                Section("Finanzierung") {
-                    NavigationLink("Geschäftskredite") { PlanSectionView(section: .loans, store: store) }
-                }
-                if store.conflict || store.needsSync { Notice(text: store.syncStatus) }
             }
-            .planFormStyle()
-            .navigationTitle(plan.name)
-            .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
-            .refreshable { await store.refresh(in: .overview) }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) }
-                ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) }
+            Section("Umsatz") {
+                Button { tab = .revenue } label: {
+                    LabeledContent("Umsatzübersicht", value: "12 Monate")
+                }
             }
+            Section("Check-in") {
+                Button { checkIn = true } label: {
+                    LabeledContent("Nettoumsatz " + month.title, value: plan.monthlyRevenue[month.key]?.number.map { euros($0) } ?? "Erfassen")
+                }.accessibilityHint("Öffnet den Check-in für Umsatz und Kontostände.")
+            }
+            Section("Monatsplanung") {
+                NavigationLink { PlanSectionView(section: .income, store: store) } label: {
+                    LabeledAmount(label: "Regelmäßige Betriebseinnahmen", amount: metrics.income)
+                }
+                NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
+                    LabeledAmount(label: "Betriebskosten inkl. Kreditraten", amount: metrics.fixedCosts)
+                }
+                LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
+            }
+            Section("Vermögen") {
+                NavigationLink { PlanSectionView(section: .savings, store: store) } label: {
+                    LabeledAmount(label: "Vermögenswerte", amount: plan[.savings].reduce(0) { $0 + $1.savingValue })
+                }
+            }
+            Section("Finanzierung") {
+                Button("Geschäftskredite") { tab = .loans }
+            }
+            if store.conflict || store.needsSync { Notice(text: store.syncStatus) }
         }
+        .planFormStyle()
+        .navigationTitle(plan.name)
+        .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
+        .refreshable { await store.refresh(in: .overview) }
     }
 }
 
@@ -404,11 +412,11 @@ struct MonthlyPlan: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Monatsdurchschnitt").font(.headline).accessibilityAddTraits(.isHeader)
                             monthRow(section: .income) {
-                                LabeledAmount(label: "Regelmäßiges Einkommen", amount: metrics.income)
+                                LabeledAmount(label: store.workspace == .business ? "Regelmäßige Betriebseinnahmen" : "Regelmäßiges Einkommen", amount: metrics.income)
                             }
                             Divider()
                             monthRow(section: .expenses) {
-                                LabeledAmount(label: "Fixkosten", amount: -metrics.fixedCosts)
+                                LabeledAmount(label: store.workspace == .business ? "Betriebskosten inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts)
                             }
                         }
                         .njoraCard(theme.card)
