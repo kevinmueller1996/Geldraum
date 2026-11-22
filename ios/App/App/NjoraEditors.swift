@@ -239,7 +239,16 @@ struct PlanEditor: View {
             monthPicker()
         case .loans:
             categoryPicker(default: "Kreditraten")
-            amount("Restschuld", key: "balance")
+            amount("Restschuld am Stichtag", key: "balance")
+            if item.fields.text("balanceDate").isEmpty {
+                Button("Heutigen Stand übernehmen") { item.fields["balanceDate"] = .string(PlanDate.string(.now)) }
+            } else {
+                DatePicker("Stand der Restschuld", selection: Binding(
+                    get: { PlanDate.parse(item.fields.text("balanceDate")) ?? .now },
+                    set: { item.fields["balanceDate"] = .string(PlanDate.string($0)) }
+                ), in: ...Date.now, displayedComponents: .date)
+            }
+            amount("Bis zum Stichtag gezahlt (optional)", key: "paidBefore")
             amount("Monatsrate", key: "payment")
             bookingDayPicker()
             amount("Jahreszins", key: "interestRate", unit: "%")

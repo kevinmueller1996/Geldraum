@@ -172,7 +172,7 @@ struct Overview: View {
                 metric("Monatlicher Spielraum", value: euros(metrics.available))
             }
             NavigationLink { PlanSectionView(section: .loans, store: store) } label: {
-                metric("Offene Kreditschuld", value: euros(plan[.loans].sum("balance")))
+                metric("Offene Kreditschuld", value: euros(plan[.loans].reduce(0) { $0 + $1.loanSchedule().balance }))
             }
         }.buttonStyle(.plain)
     }
@@ -511,7 +511,7 @@ private extension PlanMetrics {
         case .income: (incomeThisMonth, "im " + monthNames[month])
         case .annual: (plan[.annual].sum("amount"), "pro Jahr")
         case .accounts: (net, "Nettostand")
-        case .loans: (plan[.loans].sum("balance"), "Restschuld")
+        case .loans: (plan[.loans].reduce(0) { $0 + $1.loanSchedule().balance }, "Restschuld")
         case .goals: (plan[.goals].sum("saved"), "bereits gespart")
         case .savings: (plan[.savings].reduce(0) { $0 + $1.savingValue }, "Gesamtwert")
         case .history: (plan[.history].max { $0.fields.text("date") < $1.fields.text("date") }.map { net(for: $0) }, "letzter Check-in")
@@ -669,6 +669,15 @@ private struct PlanItemRow: View {
             if let detail {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
+            if section == .loans {
+                let total = item.loanSchedule().total
+                LabeledContent(fields["paidBefore"] == nil ? "Rückzahlung ab Stichtag inkl. Zinsen" : "Gesamt inkl. Zinsen",
+                               value: total.map { euros($0) } ?? "Nicht berechenbar")
+                    .font(.footnote)
+                if fields.text("balanceDate").isEmpty || (fields.integer("bookingDay") ?? 0) == 0 {
+                    Text("Für die automatische Tilgung Stichtag und Buchungstag ergänzen.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             if section == .goals, fields.amount("target") > 0 {
                 ProgressView(value: max(0, min(1, fields.amount("saved") / fields.amount("target"))))
                     .accessibilityLabel("Fortschritt des Sparziels")
@@ -678,7 +687,7 @@ private struct PlanItemRow: View {
     private var amount: Double {
         switch section {
         case .accounts: item.netBalance
-        case .loans: fields.amount("balance")
+        case .loans: item.loanSchedule().balance
         case .goals: fields.amount("saved")
         case .savings: item.savingValue
         case .expenses: item.expenseAmount()
@@ -697,7 +706,7 @@ private struct PlanItemRow: View {
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? ["Kreditkarte", item.bookingDayLabel.map { "Ausgleich " + $0 } ?? "Abbuchungstag offen"].joined(separator: " · ") : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
-        case .loans: [item.loanCategory, euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
+        case .loans: [item.loanCategory, fields.amount("interestRate").formatted() + " % p. a.", euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"

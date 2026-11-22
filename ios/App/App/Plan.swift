@@ -201,7 +201,7 @@ struct Plan: Codable, Equatable {
             }
         case .loans:
             return items.sorted {
-                let left = $0.fields.amount("balance"), right = $1.fields.amount("balance")
+                let left = $0.loanSchedule().balance, right = $1.loanSchedule().balance
                 return left == right ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : left > right
             }
         case .history:
@@ -301,12 +301,49 @@ struct PlanItem: Identifiable, Equatable {
         guard let day = fields.integer("bookingDay"), day > 0 else { return nil }
         return "am \(day)."
     }
-    var monthlyLoanPayment: Double {
-        let instalment = max(0, fields.amount("payment") + fields.amount("extraPayment"))
-        guard let balance = fields["balance"]?.number else { return instalment }
-        let outstanding = max(0, balance) * (1 + max(0, fields.amount("interestRate")) / 1200)
-        return min(instalment, (outstanding * 100).rounded() / 100)
+    func loanSchedule(on today: Date = .now) -> (balance: Double, total: Double?) {
+        let calendar = Calendar(identifier: .gregorian)
+        let booking = fields.integer("bookingDay") ?? 0
+        func dueIndex(_ date: Date) -> Int {
+            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            let last = calendar.range(of: .day, in: .month, for: date)?.count ?? 31
+            return (parts.year ?? 0) * 12 + (parts.month ?? 1) - ((parts.day ?? 1) < min(booking, last) ? 1 : 0)
+        }
+        let months = PlanDate.parse(fields.text("balanceDate")).map { booking > 0 ? max(0, dueIndex(today) - dueIndex($0)) : 0 } ?? 0
+        let rate = max(0, fields.amount("interestRate")) / 1200
+        let instalment = (max(0, fields.amount("payment") + fields.amount("extraPayment")) * 100).rounded()
+        var balance = (max(0, fields.amount("balance")) * 100).rounded()
+        var paid = (fields.amount("paidBefore") * 100).rounded()
+        let amortizes = balance == 0 || instalment > (balance * rate).rounded()
+        func advance() {
+            let outstanding = balance + (balance * rate).rounded()
+            let payment = min(instalment, outstanding)
+            balance = outstanding - payment
+            paid += payment
+        }
+        if amortizes {
+            for _ in 0..<months {
+                if balance == 0 { break }
+                advance()
+            }
+        }
+        let current = balance / 100
+        if amortizes && rate == 0 { paid += balance; balance = 0 }
+        if amortizes {
+            for _ in 0..<1200 {
+                if balance == 0 { break }
+                advance()
+            }
+        }
+        return (current, balance == 0 ? paid / 100 : nil)
     }
+    func loanPayment(on date: Date) -> Double {
+        let instalment = max(0, fields.amount("payment") + fields.amount("extraPayment"))
+        let balance = loanSchedule(on: date).balance
+        let interest = (balance * 100 * max(0, fields.amount("interestRate")) / 1200).rounded() / 100
+        return min(instalment, balance + interest)
+    }
+    var monthlyLoanPayment: Double { loanPayment(on: .now) }
     var rates: [Record] { fields["rateChanges"]?.array?.compactMap(\.object) ?? [] }
     func expenseAmount(on date: Date = .now) -> Double {
         let changes = rates
@@ -384,6 +421,8 @@ private extension PlanItem {
         case .annual: return dayOK && f.hasMoney("amount") && hasMonth && f.optionalText("category", 80)
         case .loans:
             return dayOK && f.hasMoney("balance") && f.hasMoney("payment") && f.optionalText("category", 80)
+                && (f["balanceDate"] == nil || PlanDate.parse(f.text("balanceDate")) != nil)
+                && f.optionalMoney("paidBefore") && f.amount("paidBefore") >= 0
                 && f.optionalMoney("interestRate") && f.optionalMoney("extraPayment")
                 && (f["termMonths"] == nil || (f.integer("termMonths") ?? -1) >= 0)
         case .goals:
@@ -464,7 +503,7 @@ enum PlanSection: String, CaseIterable, Identifiable {
         case .income: values.merge(["name": .string("Nettoeinkommen"), "amount": .number(0), "annual": .boolean(false)]) { _, new in new }
         case .expenses: values.merge(["amount": .number(0), "category": .string("Wohnen"), "bookingDay": .number(0)]) { _, new in new }
         case .annual: values.merge(["amount": .number(0), "month": .number(0)]) { _, new in new }
-        case .loans: values.merge(["balance": .number(0), "payment": .number(0)]) { _, new in new }
+        case .loans: values.merge(["balanceDate": .string(PlanDate.string(.now)), "balance": .number(0), "payment": .number(0)]) { _, new in new }
         case .goals: values.merge(["target": .number(0), "saved": .number(0), "monthly": .number(0)]) { _, new in new }
         case .savings: values.merge(["kind": .string("dayMoney"), "balance": .number(0)]) { _, new in new }
         case .history: break
@@ -507,7 +546,7 @@ struct PlanMetrics {
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
     var fixedCosts: Double {
-        let loanCents = plan[.loans].reduce(0.0) { $0 + 12 * budgetCents($1.monthlyLoanPayment) }
+        let loanCents = plan[.loans].reduce(0.0) { $0 + 12 * budgetCents($1.loanPayment(on: today)) }
         return plan[.expenses].reduce(loanCents) { $0 + $1.annualExpenseCents(on: today) } / 1200
     }
     var rankedCategories: [(name: String, amount: Double)] {
@@ -521,19 +560,19 @@ struct PlanMetrics {
             totals[key, default: 0] += amount
         }
         for item in plan[.expenses] where item.frequency != .once { add(item.expenseCategory, amount: item.annualExpenseCents(on: today)) }
-        for loan in loansWithPayments { add(loan.loanCategory, amount: 12 * budgetCents(loan.monthlyLoanPayment)) }
+        for loan in loansWithPayments { add(loan.loanCategory, amount: 12 * budgetCents(loan.loanPayment(on: today))) }
         return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value / 1200) }.sorted {
             if $0.amount != $1.amount { return $0.amount > $1.amount }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
     var loansWithPayments: [PlanItem] {
-        plan[.loans].filter { $0.monthlyLoanPayment > 0 }.sorted {
-            if $0.monthlyLoanPayment != $1.monthlyLoanPayment { return $0.monthlyLoanPayment > $1.monthlyLoanPayment }
+        plan[.loans].filter { $0.loanPayment(on: today) > 0 }.sorted {
+            if $0.loanPayment(on: today) != $1.loanPayment(on: today) { return $0.loanPayment(on: today) > $1.loanPayment(on: today) }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
-    var payments: Double { plan[.loans].reduce(0) { $0 + $1.monthlyLoanPayment } }
+    var payments: Double { plan[.loans].reduce(0) { $0 + $1.loanPayment(on: today) } }
     var available: Double { income - fixedCosts }
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
     var specialCosts: [PlanItem] {
@@ -598,7 +637,13 @@ struct PlanMetrics {
                 include(item, section: .expenses, amount: -item.expenseAmount(on: date))
             }
         }
-        for loan in loansWithPayments { include(loan, section: .loans, amount: -loan.monthlyLoanPayment) }
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        for loan in plan[.loans] {
+            let day = min(loan.fields.integer("bookingDay") ?? 0, calendar.range(of: .day, in: .month, for: today)?.count ?? 31)
+            let due = String(PlanDate.string(today).prefix(8)) + String(format: "%02d", day)
+            if day > 0 && loan.fields.text("balanceDate") >= due { continue }
+            include(loan, section: .loans, amount: -loan.loanPayment(on: yesterday))
+        }
         let transfers = cardSettlements.map { card in
             ForecastEntry(section: .accounts, item: card.account, amount: -card.account.fields.amount("balance"),
                           day: card.date.map { calendar.component(.day, from: $0) } ?? 0,

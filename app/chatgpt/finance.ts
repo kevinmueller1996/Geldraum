@@ -1,3 +1,4 @@
+import { currentLoan, forecastLoans } from "../loan-schedule";
 import type { Plan } from "../page";
 import { isPlan, validCalendarDay } from "../plan-validation";
 import { averageMonthlyCosts, expenseAmount, localISO, monthEndForecast, unifiedExpenses } from "../recurring-costs";
@@ -41,7 +42,7 @@ export function readFinance(value: unknown, query: "month" | "due" | "scenario",
   const date = localISO(today);
   const expenses = unifiedExpenses(plan.expenses, plan.annualCosts);
   const currentIncome = plan.incomes.filter(i => !i.annual).reduce((total, i) => total + i.amount, 0);
-  const costs = averageMonthlyCosts(expenses, plan.commitments, date);
+  const costs = averageMonthlyCosts(expenses, plan.commitments.map(loan => currentLoan(loan, date)), date);
   const available = currentIncome - costs;
   if (query === "scenario") {
     const extra = money(args.monthlyDelta);
@@ -49,7 +50,7 @@ export function readFinance(value: unknown, query: "month" | "due" | "scenario",
       simulatedMonthlyAvailable: rounded(available - extra)};
   }
   const balance = netBalance(plan);
-  const forecast = monthEndForecast(balance, today, {...plan, expenses});
+  const forecast = monthEndForecast(balance, today, {...plan, expenses, commitments: forecastLoans(plan.commitments, today)});
   const summary = {date, currency: "EUR", balance: rounded(balance), lastCheckIn: plan.snapshots.map(s => s.date).sort().at(-1) ?? null,
     regularMonthlyIncome: rounded(currentIncome), averageMonthlyFixedCosts: rounded(costs), monthlyAvailable: rounded(available),
     datedMonthEndBalance: rounded(forecast.datedBalance), monthEndLow: rounded(forecast.low), monthEndHigh: rounded(forecast.high)};
