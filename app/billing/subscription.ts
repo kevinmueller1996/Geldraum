@@ -28,7 +28,7 @@ async function stripe<T>(path: string, fields?: Record<string, string>, key?: st
   if (key) headers["Idempotency-Key"] = key;
   const res = await fetch("https://api.stripe.com/v1/" + path, {
     method: fields ? "POST" : "GET", headers, body: fields ? new URLSearchParams(fields) : undefined,
-    signal: AbortSignal.timeout(8000), redirect: "error", cache: "no-store"
+    signal: AbortSignal.timeout(8000), redirect: "manual", cache: "no-store"
   });
   if (!res.ok) throw new Error("Stripe ist gerade nicht verfügbar.");
   return await res.json() as T;
@@ -55,7 +55,7 @@ type AppleTransaction = { originalTransactionId: string; bundleId: string; produ
 async function appleStatus(id: string, environment: string, token: string) {
   if (!/^\d{1,30}$/.test(id) || !["Production","Sandbox"].includes(environment)) throw new Error("Ungültige Transaktion.");
   const host = environment === "Sandbox" ? "api.storekit-sandbox.apple.com" : "api.storekit.apple.com";
-  const res = await fetch("https://"+host+"/inApps/v1/subscriptions/"+id,{headers:{Authorization:"Bearer "+await appleAuthorization()},redirect:"error",cache:"no-store",signal:AbortSignal.timeout(8000)});
+  const res = await fetch("https://"+host+"/inApps/v1/subscriptions/"+id,{headers:{Authorization:"Bearer "+await appleAuthorization()},redirect:"manual",cache:"no-store",signal:AbortSignal.timeout(8000)});
   if (!res.ok) throw new Error("Apple konnte den Kauf nicht bestätigen.");
   // Read the status directly from Apple's authenticated TLS endpoint. No client-supplied JWS is accepted.
   const obj = await res.json() as {bundleId:string; environment:string; data:{lastTransactions:{status:number; signedTransactionInfo:string}[]}[]};

@@ -13,6 +13,7 @@ const row = {user_id:"test",account_token:"test-token",stripe_customer:"cus_test
 function provider(t, {history=[], amount=99, open=false}={}) {
   let params;
   t.mock.method(globalThis,"fetch",async (url, options) => {
+    assert.equal(options.redirect, "manual");
     const path = new URL(url).pathname;
     let response;
     if (path.endsWith("/prices/price_njora")) response = {active:true,currency:"eur",unit_amount:amount,recurring:{interval:"month",interval_count:1},tax_behavior:"inclusive"};
@@ -47,4 +48,27 @@ test("retry resumes existing checkout",async t=>{
 });
 test("production rejects a sandbox purchase outside the review account",async()=>{
   await assert.rejects(api.confirmApple(row,"12345","Sandbox"),/Kaufumgebung/);
+});
+
+test("Apple verification uses Worker-compatible redirects and rejects a redirect", async t => {
+  const env = globalThis.njoraBillingTestEnv;
+  const keys = await crypto.subtle.generateKey({name:"ECDSA", namedCurve:"P-256"}, true, ["sign", "verify"]);
+  const keyBytes = await crypto.subtle.exportKey("pkcs8", keys.privateKey);
+  Object.assign(env, {
+    NJORA_APPLE_ISSUER: "test-issuer", NJORA_APPLE_KEY_ID: "test-key",
+    NJORA_APPLE_PRIVATE_KEY: Buffer.from(keyBytes).toString("base64"),
+    NJORA_APPLE_SANDBOX_REVIEW_USER_ID: row.user_id
+  });
+  t.after(() => {
+    for (const key of Object.keys(env).filter(key => key.startsWith("NJORA_APPLE_"))) delete env[key];
+  });
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls++;
+    assert.equal(new URL(url).hostname, "api.storekit-sandbox.apple.com");
+    assert.equal(options.redirect, "manual");
+    return new Response(null, {status:302, headers:{Location:"https://example.invalid/"}});
+  });
+  await assert.rejects(api.confirmApple(row, "12345", "Sandbox"), /Apple konnte den Kauf nicht bestätigen/);
+  assert.equal(calls, 1);
 });
