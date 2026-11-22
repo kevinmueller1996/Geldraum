@@ -1430,3 +1430,7 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .bottom-nav .ui-icon { display:block; width:21px; height:21px; }
 .bottom-nav button > span { position:relative; }
 .bottom-nav button.active > span::after { position:absolute; top:100%; left:50%; width:3px; height:3px; margin:0; transform:translateX(-50%) rotate(45deg); }
+.depreciation-fields { margin:12px 0; padding:12px; border:1px solid var(--line); border-radius:var(--radius-control); }
+.depreciation-fields > label { display:flex; align-items:center; gap:8px; }
+.depreciation-fields input[type="checkbox"] { min-height:0; width:1.1rem; height:1.1rem; }
+.depreciation-inputs { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr)); gap:12px; margin-top:12px; }

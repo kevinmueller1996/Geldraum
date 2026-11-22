@@ -51,6 +51,7 @@ export function isPlan(value: unknown): value is Record<string, unknown> {
     && validList(value.commitments, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.balance) && isMoney(item.payment) && (item.originalPrincipal === undefined || (isMoney(item.originalPrincipal) && Number(item.originalPrincipal) > 0)) && (item.balanceDate === undefined || validCalendarDay(item.balanceDate)) && (item.paidBefore === undefined || (isMoney(item.paidBefore) && Number(item.paidBefore) >= 0)) && validBookingDay(item.bookingDay) && (item.category === undefined || isText(item.category, 80)) && (item.interestRate === undefined || isMoney(item.interestRate)) && (item.extraPayment === undefined || isMoney(item.extraPayment)) && (item.termMonths === undefined || (Number.isInteger(item.termMonths) && Number(item.termMonths) >= 0)))
     && validList(value.goals, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.target) && isMoney(item.saved) && (item.monthly === undefined || isMoney(item.monthly)) && (item.targetDate === undefined || item.targetDate === "" || validCalendarDay(item.targetDate)))
     && validList(value.savings, 100, (item) => isText(item.id, 100) && isText(item.name, 120) && ["security", "dayMoney", "fixedDeposit", "buildingSavings", "cash", "other"].includes(String(item.kind)) && isMoney(item.balance)
+      && validDepreciation(item)
       && (item.kind !== "security" || (isText(item.symbol, 30) && isMoney(item.quantity) && isMoney(item.price) && isMoney(item.priceEur) && isText(item.currency, 10)
         && (item.quoteUpdatedAt === undefined || isText(item.quoteUpdatedAt, 40))
         && (item.quoteVenue === undefined || isText(item.quoteVenue, 80)))))
@@ -65,4 +66,13 @@ export function backupPlan(value: unknown) {
   // Savings was introduced after the original plan export format.
   const candidate = { ...value, savings: value.savings === undefined ? [] : value.savings };
   return isPlan(candidate) ? candidate : null;
+}
+
+export function validDepreciation(item: Record<string, unknown>) {
+  if (item.depreciationStart === undefined) return item.usefulLifeMonths === undefined && item.residualValue === undefined;
+  return item.kind === "other" && typeof item.depreciationStart === "string"
+    && /^\d{4}-(0[1-9]|1[0-2])$/.test(item.depreciationStart) && !item.depreciationStart.startsWith("0000")
+    && isMoney(item.balance) && Number(item.balance) > 0 && Number.isInteger(item.usefulLifeMonths)
+    && Number(item.usefulLifeMonths) >= 1 && Number(item.usefulLifeMonths) <= 1200
+    && isMoney(item.residualValue) && Number(item.residualValue) >= 0 && Number(item.residualValue) <= Number(item.balance);
 }

@@ -377,7 +377,28 @@ struct PlanItem: Identifiable, Equatable {
     }
 
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
+    var hasDepreciation: Bool { fields["depreciationStart"] != nil }
+    var validDepreciation: Bool {
+        guard hasDepreciation else { return fields["usefulLifeMonths"] == nil && fields["residualValue"] == nil }
+        return fields.text("kind") == "other" && PlanDate.parse(fields.text("depreciationStart") + "-01") != nil
+            && fields.hasMoney("balance") && fields.amount("balance") > 0
+            && (1...1200).contains(fields.integer("usefulLifeMonths") ?? 0)
+            && fields.hasMoney("residualValue") && (0...max(0, fields.amount("balance"))).contains(fields.amount("residualValue"))
+    }
+    func depreciation(on date: Date) -> (book: Double, monthly: Double)? {
+        guard hasDepreciation, validDepreciation, let start = PlanDate.parse(fields.text("depreciationStart") + "-01"),
+              let duration = fields.integer("usefulLifeMonths") else { return nil }
+        let cal = Calendar(identifier: .gregorian)
+        let valuationMonth = cal.dateInterval(of: .month, for: date)!.start
+        let age = (cal.dateComponents([.month], from: start, to: valuationMonth).month ?? 0) + 1
+        let cost = (fields.amount("balance") * 100).rounded()
+        let residual = (fields.amount("residualValue") * 100).rounded()
+        let charge = ((cost - residual) * Double(min(duration, max(0, age))) / Double(duration)).rounded()
+        return (age < 1 ? 0 : (cost - charge) / 100, (cost - residual) / Double(duration) / 100)
+    }
+
     var savingValue: Double {
+        if let projection = depreciation(on: .now) { return projection.book }
         if fields.text("kind") == "security" {
             return max(0, fields.amount("quantity")) * max(0, fields["priceEur"]?.number ?? fields.amount("price"))
         }
@@ -450,7 +471,7 @@ private extension PlanItem {
                 && (f["targetDate"] == nil || f["targetDate"]?.string == "" || PlanDate.parse(f.text("targetDate")) != nil)
         case .savings:
             guard ["security", "cash", "dayMoney", "fixedDeposit", "buildingSavings", "other"].contains(f.text("kind")),
-                  f.hasMoney("balance") else { return false }
+                  f.hasMoney("balance"), validDepreciation else { return false }
             return f.text("kind") != "security" || (f.hasText("symbol", 30) && f.hasMoney("quantity")
                 && f.hasMoney("priceEur") && f.hasMoney("price") && f.hasText("currency", 10)
                 && f.optionalText("quoteVenue", 80) && f.optionalText("quoteUpdatedAt", 40))

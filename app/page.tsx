@@ -12,9 +12,11 @@ import { currentLoan, forecastLoans, loanSchedule } from "./loan-schedule";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { acceptsAmountEdit, parseAmount } from "./amount";
 import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "./check-in";
-import { backupPlan, isPlan, validCalendarDay } from "./plan-validation";
+import { backupPlan, isPlan, validCalendarDay, validDepreciation } from "./plan-validation";
 import RevenueHistory from "./revenue-history";
 import BalanceHistory from "./balance-history";
+import DepreciationFields from "./depreciation-fields";
+import { depreciation, type AssetBasis } from "./depreciation";
 import DecimalInput from "./decimal-input";
 import InstallAppCard from "./install-app-card";
 import { AppearancePicker, useAppearance } from "./appearance-picker";
@@ -29,7 +31,7 @@ import { byDueDate, byTargetDate, standardExpenseCategories as categories, expen
 type Commitment = { originalPrincipal?: number; balanceDate?: string; paidBefore?: number; bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
 type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" | "cash" | "other";
-type SavingAsset = { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
+type SavingAsset = AssetBasis & { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
 type Account = { bookingDay?: number; id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
 type View = "revenue" | "home" | "expenses" | "month" | "loans" | "goals" | "more";
@@ -255,6 +257,9 @@ export default function Home() {
 
 function FinanceDashboard({ business }: { business: boolean }) {
   const onboardingSteps = business ? businessSteps : privateSteps;
+  const assetKinds = business ? { ...savingKindLabels, other: "Sonstiger Vermögenswert" } : savingKindLabels;
+  const savingsTitle = business ? "Vermögenswerte" : "Deine Ersparnisse";
+  const newSavingKind = business ? "other" : "dayMoney";
   const accountEndpoint = business ? "/api/account/business" : "/api/account";
   const workspacePicker = <select className="workspace-picker" aria-label="Finanzbereich" value={business ? "business" : "private"}
     onChange={event => location.assign(event.target.value === "business" ? "/?bereich=business" : "/")}>
@@ -558,13 +563,13 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }, [active.expenses, active.commitments, active.categoryColors, today]);
 
   const savingsMetrics = useMemo(() => {
-    const items = active.savings.map((item) => ({ ...item, value: savingValue(item) })).sort((a, b) => b.value - a.value);
+    const items = active.savings.map((item) => ({ ...item, value: (business ? depreciation(item, today)?.book : undefined) ?? savingValue(item) })).sort((a, b) => b.value - a.value);
     const total = items.reduce((sum, item) => sum + item.value, 0);
     const securities = items.filter((item) => item.kind === "security").reduce((sum, item) => sum + item.value, 0);
     const reserves = total - securities;
     const latestQuote = items.filter((item) => item.quoteUpdatedAt).sort((a, b) => (b.quoteUpdatedAt ?? "").localeCompare(a.quoteUpdatedAt ?? ""))[0]?.quoteUpdatedAt;
     return { items, total, securities, reserves, latestQuote };
-  }, [active.savings]);
+  }, [active.savings, business, today]);
 
   function originalPrincipalField(item: Commitment, index: number) {
     return <label>Ursprüngliche Kreditsumme (€ · optional)
@@ -602,7 +607,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
     if (add === "loan") { const id = uid(); next.commitments.push({ id, name: "", balanceDate: today, balance: 0, payment: 0, interestRate: 0, termMonths: 0, extraPayment: 0 }); nextTarget = id; }
     if (add === "goal") { const id = uid(); next.goals.push({ id, name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }); nextTarget = id; }
     if (add === "security") { const id = uid(); next.savings.push({ id, name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }); nextTarget = id; }
-    if (add === "saving") { const id = uid(); next.savings.push({ id, name: "", kind: "dayMoney", balance: 0 }); nextTarget = id; }
+    if (add === "saving") { const id = uid(); next.savings.push({ id, name: "", kind: newSavingKind, balance: 0 }); nextTarget = id; }
     setSavingsOpen(false);
     setDraft(next);
     setEditorScope(section);
@@ -678,6 +683,11 @@ function FinanceDashboard({ business }: { business: boolean }) {
   async function savePlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.name.trim()) { setProblem("Bitte gib deinem Finanzplan einen Namen."); setSyncStatus("error"); return; }
+    if (draft.savings.some(asset => !validDepreciation(asset))) {
+      setProblem("Bitte prüfe Anschaffungskosten, Startmonat und Nutzungsdauer. Der Restwert darf die Anschaffungskosten nicht übersteigen.");
+      setSyncStatus("error");
+      return;
+    }
     const clean = normalizePlan({ ...draft, name: draft.name.trim(), savings: draft.savings.map((item) => ({ ...item, name: item.name.trim(), symbol: item.kind === "security" ? item.symbol?.trim().toUpperCase() : undefined })) });
     if (await persistPlan(clean, baseline.current)) {
       setEditing(false);
@@ -932,7 +942,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
     specials: { eyebrow: "Sonderposten", title: "Unregelmäßig, aber planbar", intro: "Pflege jährliche Einnahmen und Ausgaben mit ihrem jeweiligen Monat. So weißt du frühzeitig, was besonders wird." },
     loans: { eyebrow: "Verbindlichkeiten", title: "Kredite bearbeiten", intro: "Passe Restschuld und Rate an oder ergänze optionale Vertragsdetails für eine genauere Prognose." },
     goals: { eyebrow: "Ziele", title: "Ziele bearbeiten", intro: "Lege Zielbetrag, aktuellen Stand und optional ein Zieldatum fest. Eine notwendige Sparrate wird nur für Terminziele berechnet." },
-    savings: { eyebrow: "Vermögen & Depot", title: "Ersparnisse bearbeiten", intro: "Führe Wertpapiere mit Stückzahl und Börsensymbol oder andere Sparformen mit ihrem aktuellen Stand." },
+    savings: { eyebrow: business ? "Unternehmen" : "Vermögen & Depot", title: business ? "Vermögenswerte bearbeiten" : "Ersparnisse bearbeiten", intro: "Führe Wertpapiere mit Stückzahl und Börsensymbol oder andere Sparformen mit ihrem aktuellen Stand." },
   };
   let currentEditorCopy = editorScope ? editorCopy[editorScope] : null;
   if (editorScope === "income" && editorTarget) {
@@ -957,7 +967,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }
   if (editorScope === "savings" && editorTarget) {
     const saving = draft.savings.find((item) => item.id === editorTarget);
-    currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Mit der ISIN übernimmt Njora den verfügbaren Euro-Schlusskurs von Cboe Europe. Ohne ISIN kannst du den Kurs selbst eintragen." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
+    currentEditorCopy = { eyebrow: saving?.kind === "security" ? "Wertpapier" : business ? "Vermögenswert" : "Ersparnis", title: saving?.name || (saving?.kind === "security" ? "Wertpapier hinzufügen" : business ? "Vermögenswert hinzufügen" : "Sparform hinzufügen"), intro: saving?.kind === "security" ? "Mit der ISIN übernimmt Njora den verfügbaren Euro-Schlusskurs von Cboe Europe. Ohne ISIN kannst du den Kurs selbst eintragen." : business ? "Erfasse den Wert und plane bei Bedarf eine lineare Abschreibung." : "Trage den aktuellen Stand dieser Sparform ein. Sie bleibt getrennt von deinem laufenden Kontostand." };
   }
 
   function showCosts(from: "home" | "month", category?: string) {
@@ -992,10 +1002,10 @@ function FinanceDashboard({ business }: { business: boolean }) {
     </article></main>
   );
   const savingsOverview = (
-    <button className="savings-overview-card" type="button" onClick={openSavings} aria-label="Depot und Ersparnisse öffnen">
-      <div className="savings-overview-head"><div><p className="eyebrow">Vermögen & Depot</p><h2>Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
-      {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label="Aufteilung der Ersparnisse"><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />Weitere Rücklagen {euro(savingsMetrics.reserves)}</span></div></> : <p>Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen</p>}
-      <small>{savingsMetrics.latestQuote ? `Letzter Datenstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : "Aktien und ETFs per ISIN mit Schlusskurs bewerten"}</small>
+    <button className="savings-overview-card" type="button" onClick={openSavings} aria-label={business ? "Vermögenswerte öffnen" : "Depot und Ersparnisse öffnen"}>
+      <div className="savings-overview-head"><div>{!business && <p className="eyebrow">Vermögen & Depot</p>}<h2>{savingsTitle}</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /></div>
+      {savingsMetrics.total > 0 ? <><div className="savings-split" aria-label={"Aufteilung · " + savingsTitle}><i style={{ width: `${(savingsMetrics.securities / savingsMetrics.total) * 100}%` }} /><i style={{ width: `${(savingsMetrics.reserves / savingsMetrics.total) * 100}%` }} /></div><div className="savings-overview-meta"><span><i />Wertpapiere {euro(savingsMetrics.securities)}</span><span><i />{business ? "Weitere Vermögenswerte" : "Weitere Rücklagen"} {euro(savingsMetrics.reserves)}</span></div></> : <p>{business ? "Ersten Vermögenswert hinzufügen" : "Noch keine Ersparnisse hinterlegt · jetzt Depot oder Sparform hinzufügen"}</p>}
+      <small>{savingsMetrics.latestQuote ? `Letzter Datenstand ${dateTimeLabel(savingsMetrics.latestQuote)}` : business ? "Buchwerte zum Monatsende" : "Aktien und ETFs per ISIN mit Schlusskurs bewerten"}</small>
     </button>
   );
   return (
@@ -1144,7 +1154,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             return <div className={`month-cell ${sum ? "has-cost" : ""} ${index === currentMonth ? "current" : ""}`} key={month}><span>{month}</span><strong>{sum ? euro(sum) : "–"}</strong></div>;
           })}</div><button className="edit-chip annual-edit" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button></article>
           {business && savingsOverview}
-          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, {business ? "" : "Ziele, "}Ersparnisse und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
+          <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, {business ? "Vermögenswerte" : "Ziele, Ersparnisse"} und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
           </>}
           <AppearancePicker {...appearance} />
           <InstallAppCard />
@@ -1266,21 +1276,22 @@ function FinanceDashboard({ business }: { business: boolean }) {
             {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, goals: [...draft.goals, { id: uid(), name: "", target: 0, saved: 0, monthly: 0, targetDate: "" }] })}>Ziel</AddButton>}
           </EditorSection>}
 
-          {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title="Depot & Ersparnisse" subtitle="ISIN und Stückzahl für automatische Schlusskurse oder einen manuellen Kurs eintragen">
+          {(!editorScope || editorScope === "savings") && <EditorSection id="editor-savings" title={business ? "Vermögenswerte" : "Depot & Ersparnisse"} subtitle={business ? "Sachwerte und Geldanlagen des Unternehmens" : "ISIN und Stückzahl für automatische Schlusskurse oder einen manuellen Kurs eintragen"}>
             {draft.savings.map((item, index) => ({ item, index })).filter(({ item }) => !editorTarget || item.id === editorTarget).map(({ item, index }) => <div className="saving-editor-item" key={item.id}>
               <div className={`editor-row ${item.kind === "security" ? "saving-security-edit" : "saving-balance-edit"}`}>
-                <label>Bezeichnung<input maxLength={120} aria-label="Bezeichnung der Ersparnis" value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder={item.kind === "security" ? "Wertpapiername" : "z. B. Notgroschen"} /></label>
-                <label>Art der Ersparnis<select aria-label="Art der Ersparnis" value={item.kind} onChange={(e) => updateList("savings", index, { kind: e.target.value as SavingKind })}>{Object.entries(savingKindLabels).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}</select></label>
+                <label>Bezeichnung<input maxLength={120} aria-label={business ? "Bezeichnung des Vermögenswerts" : "Bezeichnung der Ersparnis"} value={item.name} onChange={(e) => updateList("savings", index, { name: e.target.value })} placeholder={item.kind === "security" ? "Wertpapiername" : business ? "z. B. Firmenlaptop" : "z. B. Notgroschen"} /></label>
+                <label>{business ? "Art des Vermögenswerts" : "Art der Ersparnis"}<select aria-label={business ? "Art des Vermögenswerts" : "Art der Ersparnis"} value={item.kind} onChange={(e) => updateList("savings", index, { kind: e.target.value as SavingKind, ...(item.depreciationStart !== undefined ? { balance: depreciation(item, today)?.book ?? item.balance, depreciationStart: undefined, usefulLifeMonths: undefined, residualValue: undefined } : {}) })}>{Object.entries(assetKinds).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}</select></label>
                 {item.kind === "security" ? <>
                   <label>ISIN oder Börsensymbol<input aria-label="ISIN für automatische Schlusskurse oder Börsensymbol" value={item.symbol ?? ""} onChange={(e) => updateList("savings", index, { symbol: e.target.value.trim().toUpperCase(), price: 0, priceEur: 0, quoteVenue: undefined, quoteUpdatedAt: undefined })} placeholder="ISIN, z. B. DE0007164600" autoCapitalize="characters" /></label>
                   <label>Stückzahl<DecimalInput signed={false} aria-label="Stückzahl" value={item.quantity} onValueChange={(value) => updateList("savings", index, { quantity: Math.max(value, 0) })} placeholder="Stückzahl" /></label>
                   <label>Kurs in Euro<span className="currency-input"><DecimalInput signed={false} aria-label="Kurs in Euro" value={item.priceEur} onValueChange={(value) => updateList("savings", index, { priceEur: Math.max(value, 0), price: Math.max(value, 0), currency: "EUR", quoteUpdatedAt: new Date().toISOString(), quoteVenue: "Manuell" })} placeholder="Kurs in EUR" /><b>€</b></span></label>
-                </> : <label>Aktueller Sparstand<span className="currency-input"><DecimalInput signed={false} aria-label="Aktueller Sparstand" value={item.balance} onValueChange={(value) => updateList("savings", index, { balance: Math.max(value, 0) })} placeholder="Aktueller Stand" /><b>€</b></span></label>}
+                </> : <label>{business ? item.depreciationStart !== undefined ? "Anschaffungskosten" : "Wert" : "Aktueller Sparstand"}<span className="currency-input"><DecimalInput signed={false} aria-label={business ? item.depreciationStart !== undefined ? "Anschaffungskosten" : "Wert" : "Aktueller Sparstand"} value={item.balance} onValueChange={(value) => updateList("savings", index, { balance: Math.max(value, 0) })} placeholder="Aktueller Stand" /><b>€</b></span></label>}
                 <RemoveButton onClick={() => removeListItem("savings", index)} />
               </div>
+              {business && item.kind === "other" && <DepreciationFields asset={item} today={today} update={patch => updateList("savings", index, patch)} />}
               {item.kind === "security" && <div className="saving-quote-hint"><span>Aktueller Wert <b>{exactEuros.format(savingValue(item))}</b></span><small>{item.quoteUpdatedAt ? [marketPrice(item.price ?? 0, item.currency), savingPriceLabel(item)].filter(Boolean).join(" · ") : securityISIN(item.symbol) ? "Noch kein Cboe-Schlusskurs gespeichert" : "Kurs je Stück in Euro eintragen"}</small></div>}
             </div>)}
-            {!editorTarget && <div className="saving-add-actions"><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }] })}>Wertpapier</AddButton><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "dayMoney", balance: 0 }] })}>Sparform</AddButton></div>}
+            {!editorTarget && <div className="saving-add-actions"><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: "security", balance: 0, symbol: "", quantity: 0, price: 0, priceEur: 0, currency: "EUR" }] })}>Wertpapier</AddButton><AddButton onClick={() => setDraft({ ...draft, savings: [...draft.savings, { id: uid(), name: "", kind: newSavingKind, balance: 0 }] })}>{business ? "Vermögenswert" : "Sparform"}</AddButton></div>}
           </EditorSection>}
 
           {!editorScope && <details className="data-import">
@@ -1307,16 +1318,16 @@ function FinanceDashboard({ business }: { business: boolean }) {
       </section></div>}
 
       {billing?.active !== false && savingsOpen && <div className="modal-backdrop"><section className="savings-card" role="dialog" aria-modal="true" aria-labelledby="savings-title">
-        <div className="editor-header"><div><p className="eyebrow">Vermögen & Depot</p><h2 id="savings-title">Deine Ersparnisse</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /><button type="button" className="close-button" onClick={() => setSavingsOpen(false)} aria-label="Schließen">×</button></div>
+        <div className="editor-header"><div>{!business && <p className="eyebrow">Vermögen & Depot</p>}<h2 id="savings-title">{savingsTitle}</h2></div><TitleAmount value={savingsMetrics.total} label="Gesamtwert" /><button type="button" className="close-button" onClick={() => setSavingsOpen(false)} aria-label="Schließen">×</button></div>
         <p>Getrennt vom Kontostand und der Monatsprognose.</p>
-        <div className="savings-toolbar"><div><button type="button" onClick={() => openFocusedEditor("savings", "security")}>+ Wertpapier</button><button type="button" onClick={() => openFocusedEditor("savings", "saving")}>+ Sparform</button></div></div>
+        <div className="savings-toolbar"><div><button type="button" onClick={() => openFocusedEditor("savings", "security")}>+ Wertpapier</button><button type="button" onClick={() => openFocusedEditor("savings", "saving")}>+ {business ? "Vermögenswert" : "Sparform"}</button></div></div>
         {saveNotice}
         <div className="savings-list">{savingsMetrics.items.length ? savingsMetrics.items.map((item) => <article key={item.id}>
           <i style={{ backgroundColor: savingKindColors[item.kind] }} />
-          <div><strong>{item.name || savingKindLabels[item.kind]}</strong><small>{item.kind === "security" ? `${item.symbol ? item.symbol + " · " : ""}${item.quantity || 0} Stück${item.quoteUpdatedAt ? ` · ${marketPrice(item.price ?? 0, item.currency)} · ${savingPriceLabel(item)}` : securityISIN(item.symbol) ? " · Noch kein Schlusskurs gespeichert" : ""}` : savingKindLabels[item.kind]}</small></div>
+          <div><strong>{item.name || assetKinds[item.kind]}</strong><small>{item.kind === "security" ? `${item.symbol ? item.symbol + " · " : ""}${item.quantity || 0} Stück${item.quoteUpdatedAt ? ` · ${marketPrice(item.price ?? 0, item.currency)} · ${savingPriceLabel(item)}` : securityISIN(item.symbol) ? " · Noch kein Schlusskurs gespeichert" : ""}` : business && item.depreciationStart ? "Lineare Abschreibung · " + item.usefulLifeMonths + " Monate" : assetKinds[item.kind]}</small></div>
           <span><b>{exactEuros.format(item.value)}</b><small>{savingsMetrics.total ? `${Math.round((item.value / savingsMetrics.total) * 100)}%` : "0%"}</small></span>
           <button className="edit-chip" type="button" onClick={() => openFocusedEditor("savings", undefined, item.id)}>Ändern</button>
-        </article>) : <div className="savings-empty"><span>◇</span><strong>Noch keine Ersparnisse erfasst</strong><p>Füge dein erstes Wertpapier, Tagesgeldkonto oder eine andere Rücklage hinzu.</p></div>}</div>
+        </article>) : <div className="savings-empty"><span>◇</span><strong>{business ? "Noch keine Vermögenswerte erfasst" : "Noch keine Ersparnisse erfasst"}</strong><p>{business ? "Erfasse zum Beispiel einen Firmenlaptop oder ein Wertpapier." : "Füge dein erstes Wertpapier, Tagesgeldkonto oder eine andere Rücklage hinzu."}</p></div>}</div>
         <p className="market-note">Bei unterstützten ISINs bewertet Njora deine Stückzahl mit dem letzten verfügbaren Euro-Schlusskurs von Cboe Europe. Der Datenstand bezeichnet die Kursdatei. Bei selten gehandelten Titeln kann der Kurs älter sein.</p>
       </section></div>}
 

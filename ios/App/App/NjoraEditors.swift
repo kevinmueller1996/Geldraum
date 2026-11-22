@@ -137,6 +137,7 @@ struct PlanEditor: View {
     @ObservedObject var store: NjoraStore
     @Environment(\.dismiss) private var dismiss
     @State private var item: PlanItem
+    @State private var valuationDate = Date()
     @State private var amounts: [String: String] = [:]
     @State private var validation = ""
 
@@ -147,17 +148,20 @@ struct PlanEditor: View {
         _item = State(initialValue: item)
     }
 
+    private var businessAssets: Bool { section == .savings && store.workspace == .business }
+    private var assetTitle: String { businessAssets ? "Vermögenswert" : section.itemTitle }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    PlanField(title: "Bezeichnung", text: string("name"), prompt: section.itemTitle)
+                    PlanField(title: "Bezeichnung", text: string("name"), prompt: assetTitle)
                 }
                 Section { fields }
                 Notice(text: validation.isEmpty ? store.notice(in: .editor) : validation)
             }
             .planFormStyle()
-            .navigationTitle(plan[section].contains(where: { $0.id == item.id }) ? "\(section.itemTitle) bearbeiten" : section.addTitle)
+            .navigationTitle(plan[section].contains(where: { $0.id == item.id }) ? "\(assetTitle) bearbeiten" : (businessAssets ? "Vermögenswert hinzufügen" : section.addTitle))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -269,8 +273,11 @@ struct PlanEditor: View {
                 ), displayedComponents: .date)
             }
         case .savings:
-            Picker("Sparform", selection: string("kind", fallback: "dayMoney")) {
-                ForEach(savingNames.keys.sorted(), id: \.self) { key in Text(savingNames[key] ?? key).tag(key) }
+            Picker(businessAssets ? "Art des Vermögenswerts" : "Sparform", selection: Binding(get: { item.fields.text("kind", default: "dayMoney") }, set: { kind in
+                if item.hasDepreciation { toggleDepreciation(false) }
+                item.fields["kind"] = .string(kind)
+            })) {
+                ForEach(savingNames.keys.sorted(), id: \.self) { key in Text(businessAssets && key == "other" ? "Sonstiger Vermögenswert" : savingNames[key] ?? key).tag(key) }
             }
             if item.fields.text("kind") == "security" {
                 PlanField(title: "ISIN oder Börsensymbol", text: Binding(get: { item.fields.text("symbol") }, set: {
@@ -282,9 +289,47 @@ struct PlanEditor: View {
                 amount("Stückzahl", key: "quantity", unit: "Stück")
                 amount("Kurs je Stück in Euro", key: "priceEur")
             } else {
-                amount("Aktueller Stand", key: "balance")
+                amount(item.hasDepreciation ? "Anschaffungskosten" : "Aktueller Stand", key: "balance")
+                if businessAssets && item.fields.text("kind") == "other" {
+                    Toggle("Lineare Abschreibung planen", isOn: Binding(get: { item.hasDepreciation }, set: toggleDepreciation))
+                    if item.hasDepreciation {
+                        DatePicker("Erster Abschreibungsmonat", selection: Binding(
+                            get: { PlanDate.parse(item.fields.text("depreciationStart") + "-01") ?? .now },
+                            set: { item.fields["depreciationStart"] = .string(String(PlanDate.string($0).prefix(7))) }
+                        ), displayedComponents: .date)
+                        amount("Nutzungsdauer", key: "usefulLifeMonths", unit: "Monate", integer: true)
+                        amount("Restwert am Ende", key: "residualValue")
+                        DatePicker("Buchwert berechnen für", selection: $valuationDate, displayedComponents: .date)
+                        if let schedule = assetPreview.depreciation(on: valuationDate) {
+                            LabeledContent("Abschreibung · Ø pro Monat", value: euros(schedule.monthly))
+                            LabeledContent("Buchwert zum Monatsende", value: euros(schedule.book))
+                        }
+                    }
+                }
             }
         case .history: EmptyView()
+        }
+    }
+
+    private var assetPreview: PlanItem {
+        var edited = item
+        for key in ["balance", "usefulLifeMonths", "residualValue"] {
+            if let text = amounts[key] { edited.fields[key] = germanAmount(text).map(JSONValue.number) }
+        }
+        return edited
+    }
+
+    private func toggleDepreciation(_ enabled: Bool) {
+        if enabled {
+            item.fields["depreciationStart"] = .string(String(PlanDate.string(.now).prefix(7)))
+            item.fields["usefulLifeMonths"] = .number(36)
+            item.fields["residualValue"] = .number(0)
+        } else {
+            if let value = assetPreview.depreciation(on: .now)?.book { amounts["balance"] = editableAmount(value) }
+            for key in ["depreciationStart", "usefulLifeMonths", "residualValue"] {
+                item.fields.removeValue(forKey: key)
+                amounts.removeValue(forKey: key)
+            }
         }
     }
 
@@ -370,6 +415,10 @@ struct PlanEditor: View {
         }
         if (section == .expenses || section == .loans) && changed.fields.text("category").utf16.count > 80 {
             validation = "Die Kategorie darf höchstens 80 Zeichen lang sein."; return
+        }
+        if section == .savings && !changed.validDepreciation {
+            validation = "Bitte prüfe die Anschaffungskosten, die Nutzungsdauer (1–1200 Monate) und den Restwert. Er darf die Anschaffungskosten nicht übersteigen."
+            return
         }
         if section == .savings && changed.fields.text("kind") == "security" {
             let symbol = changed.fields.text("symbol").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -126,6 +126,11 @@ private struct BusinessDashboard: View {
                     }
                     LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
                 }
+                Section("Vermögen") {
+                    NavigationLink { PlanSectionView(section: .savings, store: store) } label: {
+                        LabeledAmount(label: "Vermögenswerte", amount: plan[.savings].reduce(0) { $0 + $1.savingValue })
+                    }
+                }
                 Section("Finanzierung") {
                     NavigationLink("Geschäftskredite") { PlanSectionView(section: .loans, store: store) }
                 }
@@ -609,11 +614,14 @@ struct PlanSectionView: View {
     private func matches(_ name: String) -> Bool {
         category.map { $0.caseInsensitiveCompare(name) == .orderedSame } ?? true
     }
+    private var businessAssets: Bool { section == .savings && store.workspace == .business }
+    private var addTitle: String { businessAssets ? "Vermögenswert hinzufügen" : section.addTitle }
     private var newItem: PlanItem {
         var item = section.newItem
         if store.workspace == .business {
             switch section {
             case .accounts: item.fields["name"] = .string("Geschäftskonto")
+            case .savings: item.fields["kind"] = .string("other")
             case .income: item.fields["name"] = .string("Betriebseinnahme")
             case .expenses: item.fields["category"] = .string("Betriebskosten")
             default: break
@@ -671,7 +679,7 @@ struct PlanSectionView: View {
                     Section {
                         if items.isEmpty && loans.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
-                                Text(section.emptyMessage).font(.headline)
+                                Text(businessAssets ? "Noch keine Vermögenswerte" : section.emptyMessage).font(.headline)
                                 if section == .history {
                                     if plan[.accounts].isEmpty {
                                         NavigationLink("Konten verwalten") { PlanSectionView(section: .accounts, store: store) }
@@ -679,7 +687,7 @@ struct PlanSectionView: View {
                                         Button("Ersten Check-in erfassen") { checkIn = true }
                                     }
                                 } else {
-                                    Button(section.addTitle) { selection = newItem }
+                                    Button(addTitle) { selection = newItem }
                                         .disabled(store.busy)
                                 }
                             }
@@ -708,11 +716,11 @@ struct PlanSectionView: View {
             .frame(maxWidth: DashboardLayout.readingWidth).frame(maxWidth: .infinity)
             .background(theme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
-            .financialTitle(category ?? section.title, amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
+            .financialTitle(category ?? (businessAssets ? "Vermögenswerte" : section.title), amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     if section != .history {
-                        Button { selection = newItem } label: { Label(section.addTitle, systemImage: "plus") }
+                        Button { selection = newItem } label: { Label(addTitle, systemImage: "plus") }
                             .disabled(store.busy || plan[section].count >= (section == .expenses ? section.limit + PlanSection.annual.limit : section.limit))
                             .accessibilityIdentifier("njora.add")
                     }
@@ -742,7 +750,7 @@ struct PlanSectionView: View {
     }
     private func editableRow(_ item: PlanItem) -> some View {
         Button { selection = item } label: {
-            PlanItemRow(item: item, section: section).contentShape(Rectangle())
+            PlanItemRow(item: item, section: section, businessAssets: businessAssets).contentShape(Rectangle())
         }.buttonStyle(.plain)
         .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
     }
@@ -752,6 +760,7 @@ struct PlanSectionView: View {
 private struct PlanItemRow: View {
     let item: PlanItem
     let section: PlanSection
+    var businessAssets = false
     private var fields: Record { item.fields }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -804,7 +813,11 @@ private struct PlanItemRow: View {
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"
-        case .savings: fields.text("kind") == "security" ? securityDetail : savingNames[fields.text("kind")]
+        case .savings:
+            if let schedule = item.depreciation(on: .now) {
+                "Lineare Abschreibung · Ø " + euros(schedule.monthly) + " pro Monat"
+            } else if businessAssets && fields.text("kind") == "other" { "Sonstiger Vermögenswert" }
+            else { fields.text("kind") == "security" ? securityDetail : savingNames[fields.text("kind")] }
         default: nil
         }
     }
