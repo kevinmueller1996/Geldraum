@@ -418,6 +418,18 @@ struct CheckInView: View {
     @State private var note: String
     @State private var drafts: [String: (balances: [String: String], note: String)] = [:]
 
+    @State private var revenueDrafts: [String: String] = [:]
+    private var revenueMonth: (key: String, title: String) { PlanDate.previousRevenueMonth(for: day) }
+    private var revenueText: Binding<String> {
+        let key = revenueMonth.key
+        return Binding(get: { revenueDrafts[key] ?? plan.monthlyRevenue[key]?.number.map(editableAmount) ?? "" },
+                       set: { revenueDrafts[key] = $0 })
+    }
+    private var revenueAmount: Double? {
+        let text = revenueText.wrappedValue
+        return text.isEmpty ? nil : germanAmount(text)
+    }
+
     private var checkInDate: Binding<Date> {
         Binding(get: { day }, set: { selected in
             let oldDate = PlanDate.string(day), selectedDate = PlanDate.string(selected)
@@ -450,6 +462,11 @@ struct CheckInView: View {
                          : "Für diesen Tag fehlt ein Check-in. Trage die damaligen Beträge ein. Als Ausgangswerte siehst du deine heutigen Kontostände.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                if store.workspace == .business {
+                    Section("Umsatz des Vormonats") {
+                        PlanField(title: "Nettoumsatz " + revenueMonth.title, text: revenueText, prompt: "0,00", unit: "€", keyboard: .numbersAndPunctuation)
+                    }
+                }
                 Section("Kontostände") {
                     ForEach(plan[.accounts]) { item in
                         PlanField(title: item.name, text: Binding(
@@ -469,7 +486,7 @@ struct CheckInView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() }.disabled(store.busy) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern", action: save).disabled(store.busy || plan[.accounts].isEmpty)
+                    Button("Speichern", action: save).disabled(store.busy || (store.workspace == .business ? revenueAmount == nil : plan[.accounts].isEmpty))
                 }
             }
         }
@@ -489,6 +506,10 @@ struct CheckInView: View {
         }
         validation = ""
         var changed = plan
+        if store.workspace == .business {
+            guard let amount = revenueAmount else { validation = "Bitte gib den Umsatz des Vormonats ein."; return }
+            changed.setRevenue(amount, forMonth: revenueMonth.key)
+        }
         changed.recordCheckIn(accounts: accounts, date: date, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
         let result = changed
         Task { if await store.save(result, basedOn: plan) { dismiss() } }

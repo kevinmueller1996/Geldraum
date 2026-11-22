@@ -29,7 +29,7 @@ function merge(base: unknown, local: unknown, cloud: unknown, choice?: Choice, k
   if (equal(base, local)) return cloud;
   if (object(base) && object(local) && object(cloud)) {
     const pairs = [...new Set([...Object.keys(local), ...Object.keys(cloud)])].map(k =>
-      [k, merge(base[k], local[k], cloud[k], choice, k === "snapshots" ? "date" : "id")] as const);
+      [k, merge(k === "monthlyRevenue" && base[k] === undefined && object(local[k]) && object(cloud[k]) ? {} : base[k], local[k], cloud[k], choice, k === "snapshots" ? "date" : "id")] as const);
     return Object.fromEntries(pairs.filter(([,v]) => v !== undefined));
   }
   if (Array.isArray(base) && Array.isArray(local) && Array.isArray(cloud)) {

@@ -41,6 +41,7 @@ function validList(value: unknown, max: number, validator: (item: Record<string,
 export function isPlan(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value) || !isText(value.name, 80)) return false;
   if (value.scenario !== undefined && (!isRecord(value.scenario) || !isText(value.scenario.name) || !isMoney(value.scenario.cost) || !isMoney(value.scenario.equity))) return false;
+  if (value.monthlyRevenue !== undefined && (!isRecord(value.monthlyRevenue) || !Object.entries(value.monthlyRevenue).every(([month, amount]) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && isMoney(amount)))) return false;
   if (value.liquidity !== undefined && !isMoney(value.liquidity)) return false;
   if (value.categoryColors !== undefined && (!isRecord(value.categoryColors) || !Object.values(value.categoryColors).every((color) => isText(color, 80)))) return false;
   if (value.checkInCadence !== undefined && !["weekly", "daily"].includes(String(value.checkInCadence))) return false;

@@ -44,3 +44,10 @@ test("a new account at the same email starts from its own cloud plan", () => {
   assert.deepEqual(bindBrowserCopy(legacy, { ...reply, revision: 10 }, "after").draft, legacy.draft);
   assert.deepEqual(bindBrowserCopy(old, { ...reply, user: old.user, revision: 9 }, "after").draft, old.draft);
 });
+
+test("first offline revenue entries merge by month and conflicting corrections require a choice", () => {
+  const january = {...base, monthlyRevenue: {"2026-01": 0}};
+  const february = {...base, monthlyRevenue: {"2026-02": 1320.57}};
+  assert.deepEqual(mergeDraft(base, january, february).monthlyRevenue, {"2026-01":0, "2026-02":1320.57});
+  assert.throws(() => mergeDraft(base, january, {...base, monthlyRevenue: {"2026-01": 50}}), Conflict);
+});

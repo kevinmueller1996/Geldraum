@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { checkInFields, checkInRecord } from "../app/check-in.ts";
+import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "../app/check-in.ts";
 
 const today = "2026-11-21";
 const plan = {
@@ -36,4 +36,12 @@ test("new dates start with editable copies of today's accounts", () => {
   assert.equal(record.netBalance, 745);
   assert.equal(record.note, "Stand");
   assert.equal(record.id, "new-id");
+});
+
+test("business check-ins address a single previous calendar month, including January and leap years", () => {
+  assert.equal(previousRevenueMonth("2026-01-01"), "2025-12");
+  assert.equal(previousRevenueMonth("2026-01-31"), "2025-12");
+  assert.equal(previousRevenueMonth("2024-03-31"), "2024-02");
+  assert.equal(previousRevenueMonth(""), "");
+  assert.equal(revenueMonthLabel("2025-12"), "Dezember 2025");
 });

@@ -243,7 +243,7 @@ struct SetupView: View {
                 Section {
                     Text(business ? "Lege den Finanzplan für dein Unternehmen an." : "Gib deinem Finanzplan einen Namen. Weitere Konten, Ausgaben und Sparziele kannst du jederzeit ergänzen.")
                     PlanField(title: business ? "Unternehmen" : "Dein Name", text: $name, prompt: business ? "Firmenname" : "Vorname")
-                    PlanField(title: business ? "Betriebseinnahmen pro Monat" : "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
+                    PlanField(title: business ? "Feste Betriebseinnahmen (optional)" : "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
                     PlanField(title: business ? "Stand des Geschäftskontos" : "Aktueller Kontostand", text: $balance, prompt: "0", unit: "€", keyboard: .numbersAndPunctuation)
                     Picker("Check-in", selection: $cadence) {
                         Text("Wöchentlich").tag("weekly")
@@ -261,7 +261,8 @@ struct SetupView: View {
                         plan[.accounts][0].fields["name"] = .string("Geschäftskonto")
                     }
                     plan.fields["checkInCadence"] = .string(cadence)
-                    plan[.income][0].fields["amount"] = .number(earnings)
+                    if business && earnings == 0 { plan[.income] = [] }
+                    else { plan[.income][0].fields["amount"] = .number(earnings) }
                     plan[.accounts][0].fields["balance"] = .number(current)
                     let newPlan = plan
                     Task { _ = await store.save(newPlan, in: .account) }

@@ -93,8 +93,10 @@ struct WorkspacePicker: View {
 private struct BusinessDashboard: View {
     @ObservedObject var store: NjoraStore
     let plan: Plan
+    @State private var checkIn = false
 
     var body: some View {
+        let month = PlanDate.previousRevenueMonth(for: .now)
         let metrics = PlanMetrics(plan: plan)
         NavigationStack {
             List {
@@ -102,6 +104,11 @@ private struct BusinessDashboard: View {
                     NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
                         LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
                     }
+                }
+                Section("Check-in") {
+                    Button { checkIn = true } label: {
+                        LabeledContent("Nettoumsatz " + month.title, value: plan.monthlyRevenue[month.key]?.number.map { euros($0) } ?? "Erfassen")
+                    }.accessibilityHint("Öffnet den Check-in für Umsatz und Kontostände.")
                 }
                 Section("Monatsplanung") {
                     NavigationLink { PlanSectionView(section: .income, store: store) } label: {
@@ -120,6 +127,7 @@ private struct BusinessDashboard: View {
             }
             .planFormStyle()
             .navigationTitle(plan.name)
+            .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
             .refreshable { await store.refresh(in: .overview) }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) }

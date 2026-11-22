@@ -128,6 +128,9 @@ struct Plan: Codable, Equatable {
         guard fields.optionalMoney("liquidity"),
               fields["checkInCadence"].map({ ["weekly", "daily"].contains($0.string ?? "") }) ?? true,
               fields["categoryColors"].map({ $0.object?.values.allSatisfy { $0.string.map { $0.utf16.count <= 80 } == true } == true }) ?? true else { return false }
+        if let revenue = fields["monthlyRevenue"] {
+            guard let entries = revenue.object, entries.keys.allSatisfy({ PlanDate.parse($0 + "-01") != nil && entries.hasMoney($0) }) else { return false }
+        }
         if let scenario = fields["scenario"] {
             guard let data = scenario.object, data.hasText("name", 160), data.hasMoney("cost"), data.hasMoney("equity") else { return false }
         }
@@ -139,6 +142,14 @@ struct Plan: Codable, Equatable {
     subscript(section: PlanSection) -> [PlanItem] {
         get { fields[section.rawValue]?.array?.compactMap { $0.object.map(PlanItem.init) } ?? [] }
         set { fields[section.rawValue] = .array(newValue.map { .object($0.fields) }) }
+    }
+
+    var monthlyRevenue: Record { fields["monthlyRevenue"]?.object ?? [:] }
+
+    mutating func setRevenue(_ amount: Double, forMonth month: String) {
+        var revenue = monthlyRevenue
+        revenue[month] = .number(amount)
+        fields["monthlyRevenue"] = .object(revenue)
     }
 
     var unifiedCosts: Plan {
@@ -692,6 +703,13 @@ enum PlanDate {
         guard let date = formatter.date(from: value), formatter.string(from: date) == value else { return nil }
         return date
     }
+    static func previousRevenueMonth(for date: Date) -> (key: String, title: String) {
+        let calendar = Calendar(identifier: .gregorian)
+        let start = calendar.dateInterval(of: .month, for: date)!.start
+        let month = calendar.date(byAdding: .month, value: -1, to: start)!
+        return (String(string(month).prefix(7)), month.formatted(.dateTime.month(.wide).year().locale(Locale(identifier: "de_DE"))))
+    }
+
     static func parseTradeTime(_ value: String) -> Date? {
         (try? Date(value, strategy: .iso8601))
             ?? (try? Date(value, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)))

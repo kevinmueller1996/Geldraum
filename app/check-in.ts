@@ -3,6 +3,17 @@ import type { Plan } from "./page";
 type Account = Plan["accounts"][number];
 type Snapshot = Plan["snapshots"][number];
 
+/** Check-in dates are local ISO calendar dates, independent of the browser's timezone. */
+export function previousRevenueMonth(date: string) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])-\d{2}$/.test(date)) return "";
+  const year = Number(date.slice(0, 4)), month = Number(date.slice(5, 7));
+  return month === 1 ? String(year - 1).padStart(4, "0") + "-12" : date.slice(0, 5) + String(month - 1).padStart(2, "0");
+}
+
+export function revenueMonthLabel(month: string) {
+  return new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(month + "-01T12:00:00Z"));
+}
+
 function net(accounts: Account[]) {
   return accounts.reduce((sum, account) => sum + (account.type === "credit" ? -account.balance : account.balance), 0);
 }

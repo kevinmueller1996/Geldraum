@@ -9,7 +9,8 @@ import { Capacitor } from "@capacitor/core";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { currentLoan, forecastLoans, loanSchedule } from "./loan-schedule";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
-import { checkInFields, checkInRecord } from "./check-in";
+import { acceptsAmountEdit, parseAmount } from "./amount";
+import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "./check-in";
 import { backupPlan, isPlan, validCalendarDay } from "./plan-validation";
 import BalanceHistory from "./balance-history";
 import DecimalInput from "./decimal-input";
@@ -32,6 +33,7 @@ type Snapshot = { id: string; date: string; balances: Record<string, number>; no
 type View = "home" | "expenses" | "month" | "loans" | "goals" | "more";
 type EditorScope = "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
 export type Plan = {
+  monthlyRevenue?: Record<string, number>;
   name: string;
   liquidity: number;
   categoryColors: Record<string, string>;
@@ -268,6 +270,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   const [activeView, setActiveView] = useState<View>("home");
   const [checkInAccounts, setCheckInAccounts] = useState<Account[]>([]);
   const [checkInDate, setCheckInDate] = useState("");
+  const [revenueDrafts, setRevenueDrafts] = useState<Record<string, string>>({});
   const [checkInNote, setCheckInNote] = useState("");
   const [importPreview, setImportPreview] = useState<Plan | null>(null);
   const [importError, setImportError] = useState("");
@@ -682,7 +685,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   function onboardingIssue(step: number) {
     if (step === 0 && !draft.name.trim()) return "Bitte gib deinem Finanzplan einen Namen.";
     if (step === 1 && !draft.accounts.some((item) => item.name.trim())) return "Bitte lege mindestens ein Konto oder eine Karte an.";
-    if (step === 2 && !draft.incomes.some((item) => !item.annual && item.name.trim() && item.amount > 0)) return "Bitte trage mindestens ein monatliches Einkommen mit Betrag ein.";
+    if (step === 2 && !business && !draft.incomes.some((item) => !item.annual && item.name.trim() && item.amount > 0)) return "Bitte trage mindestens ein monatliches Einkommen mit Betrag ein.";
     if (step === 3 && draft.expenses.some((item) => item.amount > 0 && !item.name.trim())) return "Bitte ergänze zu jedem eingetragenen Betrag eine Bezeichnung.";
     if (step === 4 && draft.commitments.some((item) => !item.name.trim() || item.balance <= 0 || item.payment <= 0)) return "Bitte vervollständige angelegte Kredite mit Name, Restschuld und Monatsrate.";
     if (step === 5 && draft.goals.some((item) => !item.name.trim() || item.target <= 0)) return "Bitte vervollständige angelegte Ziele mit Name und Zielbetrag.";
@@ -740,9 +743,16 @@ function FinanceDashboard({ business }: { business: boolean }) {
     setCheckInNote(fields.note);
   }
 
+  const revenueMonth = previousRevenueMonth(checkInDate);
+  const savedRevenue = baseline.current?.monthlyRevenue?.[revenueMonth];
+  const revenueText = revenueDrafts[revenueMonth] ?? (savedRevenue === undefined ? "" : String(savedRevenue).replace(".", ","));
+  const revenueAmount = revenueText.trim() ? parseAmount(revenueText) : null;
+  const dashboardRevenueMonth = previousRevenueMonth(today);
+
   function openCheckIn() {
     if (!plan) return;
     baseline.current = plan;
+    setRevenueDrafts({});
     selectCheckInDate(localDay(), plan);
     setCheckingIn(true);
   }
@@ -751,10 +761,12 @@ function FinanceDashboard({ business }: { business: boolean }) {
     event.preventDefault();
     const initial = baseline.current;
     if (!initial || !checkInDate || checkInDate > localDay()) return;
+    if (business && (!revenueMonth || revenueAmount === null)) return;
     const accounts = checkInAccounts.map(account => ({ ...account, name: account.name.trim() || "Unbenanntes Konto" }));
     const snapshot = checkInRecord(initial, checkInDate, localDay(), accounts, checkInNote, uid());
     const updated: Plan = {
       ...initial,
+      ...(business && revenueAmount !== null ? { monthlyRevenue: { ...initial.monthlyRevenue, [revenueMonth]: revenueAmount } } : {}),
       accounts: checkInDate === localDay() ? accounts : initial.accounts,
       snapshots: [...initial.snapshots.filter((item) => item.date !== snapshot.date), snapshot].sort((a, b) => a.date.localeCompare(b.date)),
     };
@@ -1001,6 +1013,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             <span>Mit datierten Zahlungen{metrics.forecast.uncertain.length > 0 ? ` · ${metrics.forecast.uncertain.length} ${metrics.forecast.uncertain.length === 1 ? "Buchung" : "Buchungen"} offen` : ""}</span>
           </button>
           <div className="dashboard-metrics">
+            {business && <button type="button" onClick={openCheckIn}><span>Umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : exactEuros.format(active.monthlyRevenue[dashboardRevenueMonth])}</strong></button>}
             <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen" : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
             <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten" : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
             <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(metrics.available)}</strong></button>
@@ -1169,8 +1182,8 @@ function FinanceDashboard({ business }: { business: boolean }) {
             </>}
 
             {onboardingStep === 2 && <>
-              <p className="eyebrow">Monatliches Einkommen</p><h2 id="onboarding-title">Was kommt regelmäßig rein?</h2><p className="onboarding-intro">Ein monatlicher Betrag reicht für den Start. Weitere oder jährliche Einnahmen kannst du später ergänzen.</p>
-              <div className="onboarding-list">{draft.incomes.filter((item) => !item.annual).map((item) => ({ item, index: draft.incomes.findIndex((entry) => entry.id === item.id) })).map(({ item, index }) => <div className="onboarding-row income" key={item.id}><label><FieldTitle required>Quelle</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder="z. B. Gehalt" /></label><label><FieldTitle required>Monatlicher Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="0" /><b>€</b></span></label><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}</div>
+              <p className="eyebrow">{business ? "Betriebseinnahmen" : "Monatliches Einkommen"}</p><h2 id="onboarding-title">Was kommt regelmäßig rein?</h2><p className="onboarding-intro">{business ? "Feste Einnahmen sind optional. Den tatsächlichen Monatsumsatz trägst du beim Check-in ein." : "Ein monatlicher Betrag reicht für den Start. Weitere oder jährliche Einnahmen kannst du später ergänzen."}</p>
+              <div className="onboarding-list">{draft.incomes.filter((item) => !item.annual).map((item) => ({ item, index: draft.incomes.findIndex((entry) => entry.id === item.id) })).map(({ item, index }) => <div className="onboarding-row income" key={item.id}><label><FieldTitle required={!business}>Quelle</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("incomes", index, { name: e.target.value })} placeholder={business ? "z. B. Servicevertrag" : "z. B. Gehalt"} /></label><label><FieldTitle required={!business}>Monatlicher Betrag</FieldTitle><span className="currency-input"><DecimalInput value={item.amount} onValueChange={(value) => updateList("incomes", index, { amount: value })} placeholder="0" /><b>€</b></span></label><BookingDayField day={item.bookingDay} update={bookingDay => updateList("incomes", index, { bookingDay })} /><RemoveButton onClick={() => removeListItem("incomes", index)} /></div>)}</div>
               {!editorTarget && <AddButton onClick={() => setDraft({ ...draft, incomes: [...draft.incomes, { id: uid(), name: "", amount: 0, annual: false }] })}>Einkommensquelle</AddButton>}
             </>}
 
@@ -1304,11 +1317,17 @@ function FinanceDashboard({ business }: { business: boolean }) {
           {pastCheckIn && <p className="editor-intro">{previousCheckIn
             ? "Du bearbeitest den gespeicherten Stand dieses Tages. Frühere Konten bleiben im Verlauf erhalten."
             : "Für diesen Tag gibt es noch keinen Check-in. Die heutigen Beträge sind vorausgefüllt. Trage die damaligen Stände ein."}</p>}
+          {business && revenueMonth && <label>Nettoumsatz {revenueMonthLabel(revenueMonth)} (€)
+            <input type="text" inputMode="decimal" required placeholder="0,00" value={revenueText} onChange={event => {
+              const text = event.target.value;
+              if (acceptsAmountEdit(text)) setRevenueDrafts(current => ({ ...current, [revenueMonth]: text }));
+            }} />
+          </label>}
           <div className="checkin-accounts" key={checkInDate}>{checkInAccounts.map((account, index) => <div className="checkin-account-edit" key={account.id}><label>Kontoname<input disabled={pastCheckIn} maxLength={120} aria-label="Kontoname" value={account.name} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Kontoname" /></label><label>Kontotyp<select disabled={pastCheckIn} aria-label={`Typ von ${account.name || "Konto"}`} value={account.type} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: e.target.value as Account["type"] } : item))}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><label>Kontostand<span className="currency-input"><DecimalInput aria-label={`Stand von ${account.name || "Konto"}`} fixedMinus={account.type === "credit"} value={account.balance} onValueChange={(value) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, balance: value } : item))} placeholder="Stand" /><b>€</b></span></label>{!pastCheckIn && checkInAccounts.length > 1 && <RemoveButton onClick={() => setCheckInAccounts((current) => current.filter((_, itemIndex) => itemIndex !== index))} />}</div>)}{!pastCheckIn && <button className="account-add-line" type="button" onClick={() => setCheckInAccounts((current) => [...current, { id: uid(), name: "", type: "bank", balance: 0 }])}><span>+</span> Konto oder Karte hinzufügen</button>}</div>
           <label>Notiz (optional)<input maxLength={500} value={checkInNote} onChange={(e) => setCheckInNote(e.target.value)} placeholder="z. B. Kreditkarte bereits ausgeglichen" /></label>
           <div className="checkin-preview"><span>Netto-Stand am gewählten Datum</span><strong>{exactEuros.format(checkInTotal)}</strong></div>
           {saveNotice}
-          <button className="primary-button wide" type="submit" disabled={syncStatus === "saving"}>Stand speichern <b>→</b></button>
+          <button className="primary-button wide" type="submit" disabled={syncStatus === "saving" || (business && revenueAmount === null)}>Stand speichern <b>→</b></button>
         </form>
       </section></div>}
     </main>
