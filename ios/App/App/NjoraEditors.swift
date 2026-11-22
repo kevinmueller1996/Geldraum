@@ -239,6 +239,7 @@ struct PlanEditor: View {
             monthPicker()
         case .loans:
             categoryPicker(default: "Kreditraten")
+            amount("Ursprüngliche Kreditsumme (optional)", key: "originalPrincipal")
             amount("Restschuld am Stichtag", key: "balance")
             if item.fields.text("balanceDate").isEmpty {
                 Button("Heutigen Stand übernehmen") { item.fields["balanceDate"] = .string(PlanDate.string(.now)) }
@@ -352,6 +353,10 @@ struct PlanEditor: View {
         changed.fields["name"] = .string(name)
         if section == .accounts && changed.fields.text("type") != "credit" { changed.fields.removeValue(forKey: "bookingDay") }
         for (key, value) in amounts {
+            if section == .loans && key == "originalPrincipal" && (value.isEmpty || germanAmount(value) == 0) {
+                changed.fields.removeValue(forKey: key)
+                continue
+            }
             guard let number = germanAmount(value),
                   key != "termMonths" || (number >= 0 && number.rounded() == number),
                   !([PlanSection.loans, .goals, .savings].contains(section)) || number >= 0 else {

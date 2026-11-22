@@ -301,7 +301,7 @@ struct PlanItem: Identifiable, Equatable {
         guard let day = fields.integer("bookingDay"), day > 0 else { return nil }
         return "am \(day)."
     }
-    func loanSchedule(on today: Date = .now) -> (balance: Double, total: Double?) {
+    func loanSchedule(on today: Date = .now) -> (balance: Double, total: Double?, repaidPrincipal: Double?, lifetimeInterest: Double?) {
         let calendar = Calendar(identifier: .gregorian)
         let booking = fields.integer("bookingDay") ?? 0
         func dueIndex(_ date: Date) -> Int {
@@ -335,7 +335,15 @@ struct PlanItem: Identifiable, Equatable {
                 advance()
             }
         }
-        return (current, balance == 0 ? paid / 100 : nil)
+        let principalCents = fields["originalPrincipal"]?.number.map { ($0 * 100).rounded() }
+        let repaid = principalCents.map { max(0, $0 - (current * 100).rounded()) / 100 }
+        var interest: Double?
+        if let principalCents, let earlier = fields["paidBefore"]?.number,
+           (earlier * 100).rounded() >= principalCents - (fields.amount("balance") * 100).rounded(),
+           balance == 0, paid >= principalCents {
+            interest = (paid - principalCents) / 100
+        }
+        return (current, balance == 0 ? paid / 100 : nil, repaid, interest)
     }
     func loanPayment(on date: Date) -> Double {
         let instalment = max(0, fields.amount("payment") + fields.amount("extraPayment"))
@@ -422,6 +430,7 @@ private extension PlanItem {
         case .loans:
             return dayOK && f.hasMoney("balance") && f.hasMoney("payment") && f.optionalText("category", 80)
                 && (f["balanceDate"] == nil || PlanDate.parse(f.text("balanceDate")) != nil)
+                && (f["originalPrincipal"] == nil || (f.hasMoney("originalPrincipal") && f.amount("originalPrincipal") > 0))
                 && f.optionalMoney("paidBefore") && f.amount("paidBefore") >= 0
                 && f.optionalMoney("interestRate") && f.optionalMoney("extraPayment")
                 && (f["termMonths"] == nil || (f.integer("termMonths") ?? -1) >= 0)

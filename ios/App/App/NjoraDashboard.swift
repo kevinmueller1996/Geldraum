@@ -670,7 +670,14 @@ private struct PlanItemRow: View {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
             if section == .loans {
-                let total = item.loanSchedule().total
+                let schedule = item.loanSchedule()
+                let total = schedule.total
+                if let repaid = schedule.repaidPrincipal, let principal = fields["originalPrincipal"]?.number {
+                    LabeledContent("Schon getilgt", value: euros(repaid) + " von " + euros(principal)).font(.footnote)
+                }
+                if let interest = schedule.lifetimeInterest {
+                    LabeledContent("Zinsen und ggf. Gebühren gesamt · geschätzt", value: euros(interest)).font(.footnote)
+                }
                 LabeledContent(fields["paidBefore"] == nil ? "Rückzahlung ab Stichtag inkl. Zinsen" : "Gesamt inkl. Zinsen",
                                value: total.map { euros($0) } ?? "Nicht berechenbar")
                     .font(.footnote)

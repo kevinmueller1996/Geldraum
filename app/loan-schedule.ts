@@ -1,5 +1,5 @@
 // The stored balance already includes payments on its reference date.
-export type ScheduledLoan = { balance: number; payment: number; extraPayment?: number; interestRate?: number; bookingDay?: number; balanceDate?: string; paidBefore?: number; termMonths?: number };
+export type ScheduledLoan = { originalPrincipal?: number; balance: number; payment: number; extraPayment?: number; interestRate?: number; bookingDay?: number; balanceDate?: string; paidBefore?: number; termMonths?: number };
 
 function dueIndex(date: string, bookingDay: number) {
   const [year, month, day] = date.split("-").map(Number);
@@ -29,7 +29,18 @@ export function loanSchedule(loan: ScheduledLoan, today: string) {
   if (amortizes && rate === 0 && balance > 0) { remainingMonths = Math.ceil(balance / instalment); paid += balance; balance = 0; }
   // A 100-year horizon bounds the estimate for unusual rates or terms.
   if (amortizes) for (let i = 0; i < 1200 && balance > 0; i++) { advance(); remainingMonths++; }
-  return { currentBalance, remainingInterest: balance === 0 ? (paid - paidAtDate) / 100 - currentBalance : null, remainingMonths: balance === 0 ? remainingMonths : null, elapsedMonths: months, total: balance === 0 ? (paid + Math.round((loan.paidBefore ?? 0) * 100)) / 100 : null };
+  const totalCents = balance === 0 ? paid + Math.round((loan.paidBefore ?? 0) * 100) : null;
+  const principalCents = loan.originalPrincipal === undefined ? null : Math.round(loan.originalPrincipal * 100);
+  const repaidPrincipal = principalCents === null ? null : Math.max(0, principalCents - Math.round(currentBalance * 100)) / 100;
+  const knownHistory = principalCents !== null && loan.paidBefore !== undefined &&
+    Math.round(loan.paidBefore * 100) >= principalCents - Math.round(loan.balance * 100);
+  return {
+    currentBalance, repaidPrincipal,
+    lifetimeInterest: knownHistory && totalCents !== null && totalCents >= principalCents ? (totalCents - principalCents) / 100 : null,
+    remainingInterest: balance === 0 ? (paid - paidAtDate) / 100 - currentBalance : null,
+    remainingMonths: balance === 0 ? remainingMonths : null, elapsedMonths: months,
+    total: totalCents === null ? null : totalCents / 100,
+  };
 }
 
 export function currentLoan<T extends ScheduledLoan>(loan: T, day: string) {
