@@ -282,6 +282,8 @@ struct Overview: View {
     let plan: Plan
     @ObservedObject var store: NjoraStore
     @State private var checkIn = false
+    @State private var showCosts = false
+    @State private var selectedCost: PlanMetrics.MonthCost?
     @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
@@ -292,7 +294,7 @@ struct Overview: View {
                 VStack(alignment: .leading, spacing: 18) {
                     DashboardLayout.columns(wide && hasDetails) {
                         VStack(alignment: .leading, spacing: 14) {
-                            primaryCards(metrics, columns: typeSize.isAccessibilitySize ? 1 : (wide && !hasDetails ? 4 : 2))
+                            primaryCards(metrics, columns: typeSize.isAccessibilitySize ? 1 : 2)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                         if hasDetails {
                             VStack(alignment: .leading, spacing: 14) {
@@ -332,30 +334,62 @@ struct Overview: View {
             .background(theme.paper)
         }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
+        .sheet(item: $selectedCost) { row in PlanEditor(section: row.section, item: row.item, plan: store.plan ?? plan, store: store) }
     }
     @ScaledMetric(relativeTo: .body) private var columnThreshold: CGFloat = 820
 
     @ViewBuilder private func primaryCards(_ metrics: PlanMetrics, columns: Int) -> some View {
         ForecastCard(metrics: metrics, store: store)
 
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: columns), spacing: 12) {
+        let costs = metrics.monthBudgetCosts
+        let fixed = costs.reduce(0) { $0 + ($1.amount * 100).rounded() } / 100
+        let monthName = monthNames[metrics.month]
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Monatsbudget im " + monthName).font(.headline).accessibilityAddTraits(.isHeader)
             NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                metric("Einkommen im " + monthNames[metrics.month], value: euros(metrics.incomeThisMonth))
+                LabeledAmount(label: "Einkommen", amount: metrics.incomeThisMonth)
+                    .frame(minHeight: 44).contentShape(Rectangle())
             }
-            NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                metric("Fixkosten · Ø pro Monat", value: euros(metrics.fixedCosts))
+            Button { showCosts.toggle() } label: {
+                HStack {
+                    Text("Fixkosten")
+                    Image(systemName: showCosts ? "chevron.down" : "chevron.right")
+                        .font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
+                    Spacer()
+                    Text(euros(fixed == 0 ? 0 : -fixed)).monospacedDigit()
+                        .foregroundStyle(fixed > 0 ? Color.red : .primary)
+                }.frame(minHeight: 44).contentShape(Rectangle())
+            }.accessibilityHint(showCosts ? "Einzelposten ausblenden" : "Einzelposten anzeigen")
+            if showCosts {
+                ForEach(costs) { row in
+                    Button { selectedCost = row } label: {
+                        LabeledAmount(label: row.item.name, amount: row.amount)
+                            .font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                }
+                NavigationLink("Fixkosten bearbeiten") { PlanSectionView(section: .expenses, store: store) }
+                    .font(.subheadline).frame(minHeight: 44)
             }
             NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
-                metric("Flexible Kosten · pro Monat", value: euros(metrics.flexibleBudget))
+                LabeledAmount(label: "Flexible Kosten", amount: metrics.flexibleBudget == 0 ? 0 : -metrics.flexibleBudget)
+                    .frame(minHeight: 44).contentShape(Rectangle())
             }
+            Divider()
             NavigationLink {
                 MonthlyPlan(plan: store.plan ?? plan, store: store)
                     .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
             } label: {
-                metric("Monatlicher Spielraum", value: euros(metrics.available))
-            }
+                LabeledAmount(label: "Spielraum im " + monthName, amount: metrics.incomeThisMonth - fixed - metrics.flexibleBudget, emphasis: true)
+                    .font(.headline).frame(minHeight: 44).contentShape(Rectangle())
+            }.accessibilityHint("Öffnet den durchschnittlichen Monatsplan.")
+        }.buttonStyle(.plain).njoraCard(theme.card)
+
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: columns), spacing: 12) {
             NavigationLink { PlanSectionView(section: .loans, store: store) } label: {
                 metric("Offene Kreditschuld", value: euros(plan[.loans].reduce(0) { $0 + $1.loanSchedule().balance }))
+            }
+            NavigationLink { PlanSectionView(section: .savings, store: store) } label: {
+                metric("Ersparnisse & Depot", value: euros(plan[.savings].reduce(0) { $0 + $1.savingValue }))
             }
         }.buttonStyle(.plain)
     }
@@ -365,7 +399,9 @@ struct Overview: View {
             VStack(alignment: .leading, spacing: 11) {
                 Text("Sonderposten in diesem Monat").font(.headline)
                 ForEach(metrics.annualIncome) { LabeledAmount(label: $0.name, amount: $0.fields.amount("amount")) }
-                ForEach(metrics.specialCosts) { LabeledAmount(label: $0.name, amount: -$0.fields.amount("amount")) }
+                ForEach(metrics.monthBudgetCosts.filter { $0.section == .expenses && $0.item.frequency != .monthly }) { row in
+                    LabeledAmount(label: row.item.name, amount: -row.amount)
+                }
             }.njoraCard(theme.card)
         }
         if !plan[.history].isEmpty {

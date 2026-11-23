@@ -10,6 +10,7 @@ import { useBrowserReady } from "./browser-runtime";
 import { Capacitor } from "@capacitor/core";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { currentLoan, forecastLoans, loanSchedule } from "./loan-schedule";
+import { monthBudgetCosts } from "./month-budget";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
 import { revenueDraft, revenueAmounts, revenueValue, withRevenue, type RevenueDraft, type RevenueVAT } from "./revenue-vat";
 import { RevenueFields } from "./revenue-fields";
@@ -1024,12 +1025,13 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   if (authStatus === "anonymous") return <main className="loading" aria-label="Weiterleitung zur Anmeldung" />;
   if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b><UiIcon name="retry" /></b></button></section></main>;
 
-  const currentMonth = new Date().getMonth();
+  const calendarDate = new Date(today + "T12:00:00");
+  const currentMonth = calendarDate.getMonth();
   const lastSnapshot = active.snapshots.filter(item => validCalendarDay(item.date)).sort((a, b) => b.date.localeCompare(a.date))[0];
   const daysSinceUpdate = lastSnapshot ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(lastSnapshot.date)) / 86400000)) : null;
   const lastUpdateLabel = lastSnapshot ? new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${lastSnapshot.date}T12:00:00`)) : "Noch kein Update";
   const updateDue = daysSinceUpdate === null || daysSinceUpdate >= (active.checkInCadence === "daily" ? 1 : 7);
-  const currentMonthName = new Intl.DateTimeFormat("de-DE", { month: "long" }).format(new Date());
+  const currentMonthName = new Intl.DateTimeFormat("de-DE", { month: "long" }).format(calendarDate);
   const useNet = business && comparison === "net";
   const basisLabel = useNet ? "Netto" : "Brutto";
   const compareAmount = (gross: number, rate = 0) => useNet ? netFromGross(gross, rate) : gross;
@@ -1042,6 +1044,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   const planForecast = business ? confirmedForMonth(active.revenueForecast, planMonth, comparison) : 0;
   const planIncome = income + planForecast;
   const incomeThisMonth = income + currentForecast + active.incomes.filter(row => row.annual && row.month === currentMonth).reduce((total, row) => total + compareAmount(row.amount, row.vatRate), 0);
+  const monthCosts = business ? null : monthBudgetCosts(active.expenses, source.commitments, calendarDate);
   const netFixed = business ? averageMonthlyCosts(active.expenses, active.commitments, today, "net") : metrics.fixedCosts;
   const netFlexible = business ? flexibleMonthlyBudget(active.flexibleCosts, "net") : metrics.flexible;
   const fixed = useNet ? netFixed : metrics.fixedCosts;
@@ -1052,7 +1055,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   const basisPicker = business && <label className="comparison-basis">Vergleichswerte<select value={comparison} onChange={e => setComparison(e.target.value === "net" ? "net" : "gross")}><option value="gross">Brutto</option><option value="net">Netto</option></select></label>;
   const currentSpecials = [
     ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: compareAmount(item.amount, item.vatRate), type: "income" as const })),
-    ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: compareAmount(expenseAmount(item, today), item.vatRate), type: "cost" as const })),
+    ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: monthCosts?.rows.find(row => row.section === "expenses" && row.id === item.id)?.amount ?? compareAmount(expenseAmount(item, today), item.vatRate), type: "cost" as const })),
   ];
   const monthOutflows = groupedExpenses.map(({ category: label, value, color, expenses, loans }) => ({ label, value: useNet ? averageMonthlyCosts(expenses, loans, today, "net") : value, color, alternate: business ? (useNet ? value : averageMonthlyCosts(expenses, loans, today, "net")) : undefined }));
   monthOutflows.sort((a, b) => b.value - a.value);
@@ -1171,14 +1174,29 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
             <span>{metrics.flexible ? "Mit Zahlungen und anteiligem Monatsbudget" : "Mit datierten Zahlungen"}{metrics.forecast.uncertain.length > 0 ? ` · ${metrics.forecast.uncertain.length} ${metrics.forecast.uncertain.length === 1 ? "Buchung" : "Buchungen"} offen` : ""}</span>
           </button>
           {basisPicker}
-          <div className="dashboard-metrics">
-            {business && <button type="button" onClick={() => navigate("revenue")}><span>{basisLabel}umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{dashboardRevenue !== undefined ? exactEuros.format(dashboardRevenue) : active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : "Steuerangabe fehlt"}</strong></button>}
-            <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen " + basisLabel.toLowerCase() : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(incomeThisMonth)}</strong></button>
-            <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten " + basisLabel.toLowerCase() : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(fixed)}</strong></button>
+          {business ? <div className="dashboard-metrics">
+            <button type="button" onClick={() => navigate("revenue")}><span>{basisLabel}umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{dashboardRevenue !== undefined ? exactEuros.format(dashboardRevenue) : active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : "Steuerangabe fehlt"}</strong></button>
+            <button type="button" onClick={() => openFocusedEditor("income")}><span>Betriebseinnahmen {basisLabel.toLowerCase()} im {currentMonthName}</span><strong>{exactEuros.format(incomeThisMonth)}</strong></button>
+            <button type="button" onClick={() => showCosts("home")}><span>Betriebskosten {basisLabel.toLowerCase()} · Ø pro Monat</span><strong>{exactEuros.format(fixed)}</strong></button>
             <button type="button" onClick={() => openFocusedEditor("flexible")}><span>Flexible Kosten · pro Monat</span><strong>{exactEuros.format(flexible)}</strong></button>
-            <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(surplus)}</strong></button>
+            <button type="button" onClick={() => navigate("month")}><span>Monatlicher Überschuss</span><strong>{exactEuros.format(surplus)}</strong></button>
             <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
-          </div>
+          </div> : monthCosts && <>
+            <section className="detail-card month-equation" aria-label={"Monatsbudget " + currentMonthName}>
+              <h2>Monatsbudget im {currentMonthName}</h2>
+              <button className="budget-line" type="button" onClick={() => openFocusedEditor("income")}><span>Einkommen</span><strong>{exactEuros.format(incomeThisMonth)}</strong></button>
+              <details className="budget-breakdown"><summary className="budget-line"><span>Fixkosten <UiIcon name="next" /></span><strong>{exactEuros.format(-monthCosts.total || 0)}</strong></summary>
+                {monthCosts.rows.map(row => <button className="budget-item" type="button" key={row.section + row.id} onClick={() => openFocusedEditor(row.section, undefined, row.section === "expenses" ? "item:" + row.id : row.id)}><span>{row.name}</span><span>{exactEuros.format(row.amount)}</span></button>)}
+                <button className="edit-chip" type="button" onClick={() => openFocusedEditor("expenses")}>Fixkosten bearbeiten</button>
+              </details>
+              <button className="budget-line" type="button" onClick={() => openFocusedEditor("flexible")}><span>Flexible Kosten</span><strong>{exactEuros.format(-flexible || 0)}</strong></button>
+              <button className="budget-line budget-result" title="Durchschnittlichen Monatsplan öffnen" type="button" onClick={() => navigate("month")}><span>Spielraum im {currentMonthName}</span><strong>{exactEuros.format(incomeThisMonth - monthCosts.total - flexible)}</strong></button>
+            </section>
+            <div className="dashboard-metrics household-assets">
+              <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
+              <button type="button" onClick={openSavings}><span>Ersparnisse &amp; Depot</span><strong>{exactEuros.format(savingsMetrics.total)}</strong></button>
+            </div>
+          </>}
           {showForecast && <section id="forecast-detail" className="detail-card">
             <h2>Monatsendprognose</h2>
             <h3>{business ? "Zahlungsbeträge ab heute · brutto" : "Rechnung ab heute"}</h3>

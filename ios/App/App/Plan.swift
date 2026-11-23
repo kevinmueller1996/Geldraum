@@ -748,6 +748,42 @@ struct PlanMetrics {
     }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
+    struct MonthCost: Identifiable {
+        let section: PlanSection
+        let item: PlanItem
+        let amount: Double
+        var id: String { section.rawValue + ":" + item.id }
+    }
+
+    var monthBudgetCosts: [MonthCost] {
+        let monthKey = PlanDate.string(today).prefix(7)
+        let start = calendar.dateInterval(of: .month, for: today)!.start
+        let last = calendar.range(of: .day, in: .month, for: today)!.count
+        func booking(_ item: PlanItem) -> Date {
+            let day = item.fields.integer("bookingDay") ?? 0
+            let due = day > 0 ? min(day, last) : calendar.component(.day, from: today)
+            return calendar.date(byAdding: .day, value: due - 1, to: start)!
+        }
+        var rows: [MonthCost] = []
+        for item in plan.entriesByDueDate(in: .expenses) {
+            let amount: Double
+            if item.frequency == .once {
+                guard item.fields.text("dueDate").prefix(7) == monthKey else { continue }
+                amount = item.fields.amount("amount")
+            } else {
+                guard item.frequency.isDue(in: month, anchor: item.fields.integer("month") ?? 0) else { continue }
+                amount = item.expenseAmount(on: booking(item))
+            }
+            if amount != 0 { rows.append(MonthCost(section: .expenses, item: item, amount: amount)) }
+        }
+        for loan in plan[.loans] {
+            let beforePayment = calendar.date(byAdding: .day, value: -1, to: booking(loan))!
+            let amount = loan.loanPayment(on: beforePayment)
+            if amount > 0 { rows.append(MonthCost(section: .loans, item: loan, amount: amount)) }
+        }
+        return rows
+    }
+
     var fixedCosts: Double { monthlyFixedCosts(net: false) }
     func monthlyFixedCosts(net: Bool) -> Double {
         let loanCents = plan[.loans].reduce(0.0) { $0 + 12 * budgetCents($1.loanPayment(on: today)) }

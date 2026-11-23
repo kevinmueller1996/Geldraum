@@ -1463,3 +1463,14 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .forecast-switch { display: inline-flex; gap: .25rem; padding: .25rem; border: 1px solid var(--line); border-radius: 2rem; }
 .forecast-switch button { min-height: 44px; padding: .45rem 1rem; border: 0; border-radius: inherit; background: transparent; color: var(--ink); }
 .forecast-switch button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+
+.month-equation h2 { margin:0 0 .65rem; font-size:1.2rem; }
+.month-equation .budget-line, .month-equation .budget-item { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; width:100%; min-height:44px; padding:.65rem 0; text-align:left; font:inherit; color:inherit; background:transparent; border:0; cursor:pointer; }
+.month-equation .budget-line strong, .month-equation .budget-item span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+.budget-breakdown summary { list-style:none; }
+.budget-breakdown summary::-webkit-details-marker { display:none; }
+.budget-breakdown summary svg { width:.8em; height:.8em; vertical-align:middle; }
+.budget-breakdown[open] summary svg { transform:rotate(90deg); }
+.month-equation .budget-item { padding-inline:.75rem; font-size:.9rem; }
+.month-equation .budget-result { border-top:2px solid var(--line); margin-top:.35rem; padding-top:1rem; font-weight:650; }
+.month-equation button:hover, .month-equation summary:hover { color:var(--brand); }
