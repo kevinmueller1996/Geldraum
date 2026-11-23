@@ -19,7 +19,7 @@ export default function DepreciationFields({ asset, today, update }: {
     {enabled && <>
       <div className="depreciation-inputs">
         <label>Erster Abschreibungsmonat<input type="month" required value={asset.depreciationStart} onChange={e => update({ depreciationStart: e.target.value })} /></label>
-        <label>Nutzungsdauer in Monaten<input type="number" min="1" max="1200" step="1" required value={asset.usefulLifeMonths || ""} onChange={e => update({ usefulLifeMonths: Number(e.target.value) })} /></label>
+        <label>Nutzungsdauer in Monaten<input type="number" inputMode="numeric" min="1" max="1200" step="1" required value={asset.usefulLifeMonths || ""} onChange={e => update({ usefulLifeMonths: Number(e.target.value) })} /></label>
         <label>Restwert am Ende (€)<DecimalInput value={asset.residualValue} signed={false} placeholder="0,00" onValueChange={residualValue => update({ residualValue })} /></label>
       </div>
       <label>Buchwert berechnen für<input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} /></label>

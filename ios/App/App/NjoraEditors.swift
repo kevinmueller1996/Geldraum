@@ -9,6 +9,7 @@ struct PlanField: View {
     var prompt = ""
     var unit = ""
     var keyboard: UIKeyboardType = .default
+    var signed = false
     var cardBalance = false
 
     var body: some View {
@@ -18,7 +19,7 @@ struct PlanField: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if unit == "€" {
                     EuroInput(title: title, text: $text, prompt: prompt,
-                              signed: keyboard == .numbersAndPunctuation, cardBalance: cardBalance)
+                              signed: signed, cardBalance: cardBalance)
                 } else {
                     TextField(title, text: $text, prompt: Text(prompt))
                         .keyboardType(keyboard)
@@ -61,11 +62,6 @@ private struct EuroInput: UIViewRepresentable {
         let isCredit = cardBalance && text.hasPrefix("-")
         let visible = isCredit ? String(text.dropFirst()) : text
         if field.text != visible { field.text = visible }
-        let keyboard: UIKeyboardType = signed && !cardBalance ? .numbersAndPunctuation : .decimalPad
-        if field.keyboardType != keyboard {
-            field.keyboardType = keyboard
-            if field.isFirstResponder { field.reloadInputViews() }
-        }
         if cardBalance {
             let prefix = field.leftView as? UILabel ?? UILabel()
             prefix.font = field.font
@@ -92,6 +88,28 @@ private struct EuroInput: UIViewRepresentable {
             return acceptsAmountEdit(candidate, signed: input.signed && !input.cardBalance)
         }
 
+        var allowsSignChange: Bool { input.signed && !input.cardBalance }
+
+        func toggleSign(in field: UITextField) {
+            guard allowsSignChange, field.isFirstResponder else { return }
+            let previous = field.text ?? ""
+            let selection = field.selectedTextRange.map {
+                (field.offset(from: field.beginningOfDocument, to: $0.start),
+                 field.offset(from: field.beginningOfDocument, to: $0.end))
+            }
+            let next = previous.hasPrefix("-") ? String(previous.dropFirst())
+                : "-" + (previous.hasPrefix("+") ? String(previous.dropFirst()) : previous)
+            field.text = next
+            field.sendActions(for: .editingChanged)
+            if let (start, end) = selection {
+                let shift = next.count - previous.count
+                if let from = field.position(from: field.beginningOfDocument, offset: max(0, start + shift)),
+                   let to = field.position(from: field.beginningOfDocument, offset: max(0, end + shift)) {
+                    field.selectedTextRange = field.textRange(from: from, to: to)
+                }
+            }
+        }
+
         @objc func changed(_ field: UITextField) {
             let magnitude = field.text ?? ""
             // A carried-over card credit keeps its positive net sign while editing.
@@ -102,7 +120,7 @@ private struct EuroInput: UIViewRepresentable {
 }
 
 private struct PlanFormStyle: ViewModifier {
-    @State private var editingField = false
+    @State private var editingField: UITextField?
 
     func body(content: Content) -> some View {
         content
@@ -111,8 +129,14 @@ private struct PlanFormStyle: ViewModifier {
             .njoraNavigationBackground()
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if editingField {
+                if let editingField {
                     HStack {
+                        if let coordinator = editingField.delegate as? EuroInput.Coordinator, coordinator.allowsSignChange {
+                            Button { coordinator.toggleSign(in: editingField) } label: {
+                                Image(systemName: "plus.forwardslash.minus").frame(width: 44, height: 44)
+                            }
+                            .accessibilityLabel("Vorzeichen wechseln")
+                        }
                         Spacer()
                         Button("Tastatur schließen") {
                             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -122,8 +146,10 @@ private struct PlanFormStyle: ViewModifier {
                     .background(.bar)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidBeginEditingNotification)) { _ in editingField = true }
-            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidEndEditingNotification)) { _ in editingField = false }
+            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidBeginEditingNotification)) { editingField = $0.object as? UITextField }
+            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidEndEditingNotification)) { event in
+                if let ended = event.object as? UITextField, ended === editingField { editingField = nil }
+            }
     }
 }
 
@@ -167,7 +193,7 @@ struct BusinessAmountFields: View {
             if let value = germanAmount(text) {
                 updateGrossExpense(entersNet ? ExpenseVAT.convert(value, rate: vatRate, toGross: true) : value)
             }
-        }), prompt: "0,00", unit: "€", keyboard: signed ? .numbersAndPunctuation : .decimalPad)
+        }), prompt: "0,00", unit: "€", signed: signed)
         PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? ((editingVatRate && vatRate == 0) ? "" : item.fields["vatRate"]?.number.map(editableAmount) ?? "") }, set: { text in
             guard text.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) != nil,
                   let rate = germanAmount(text), rate <= 100 else { return }
@@ -420,7 +446,7 @@ struct PlanEditor: View {
             },
             set: { amounts[key] = $0 }
         ), prompt: "0", unit: unit,
-           keyboard: signed ? .numbersAndPunctuation : integer ? .numberPad : .decimalPad, cardBalance: cardBalance)
+           keyboard: integer ? .numberPad : .decimalPad, signed: signed, cardBalance: cardBalance)
     }
 
     private func categoryPicker(default fallback: String) -> some View {
@@ -605,7 +631,7 @@ struct CheckInView: View {
                 }
                 if store.workspace == .business {
                     Section("Umsatz des Vormonats") {
-                        PlanField(title: "Nettoumsatz " + revenueMonth.title, text: revenueText, prompt: "0,00", unit: "€", keyboard: .numbersAndPunctuation)
+                        PlanField(title: "Nettoumsatz " + revenueMonth.title, text: revenueText, prompt: "0,00", unit: "€", signed: true)
                     }
                 }
                 Section("Kontostände") {
@@ -613,7 +639,7 @@ struct CheckInView: View {
                         PlanField(title: item.name, text: Binding(
                             get: { balances[item.id] ?? editableAmount(item.fields.amount("balance")) },
                             set: { balances[item.id] = $0 }
-                        ), unit: "€", keyboard: .numbersAndPunctuation, cardBalance: item.fields.text("type") == "credit")
+                        ), unit: "€", signed: true, cardBalance: item.fields.text("type") == "credit")
                     }
                 }
                 PlanField(title: "Notiz", text: $note, prompt: "Optional")

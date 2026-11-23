@@ -1078,7 +1078,7 @@ private struct RevenueMonthEditor: View {
                         Text(Locale(identifier: "de_DE").calendar.monthSymbols[index - 1]).tag(index)
                     }
                 }
-                PlanField(title: "Nettoumsatz", text: $draft, prompt: "0,00", unit: "€", keyboard: .numbersAndPunctuation)
+                PlanField(title: "Nettoumsatz", text: $draft, prompt: "0,00", unit: "€", signed: true)
                 Notice(text: store.notice(in: .editor))
             }
             .planFormStyle()

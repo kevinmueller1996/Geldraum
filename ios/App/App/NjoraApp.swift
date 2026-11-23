@@ -251,7 +251,7 @@ struct SetupView: View {
                     } else {
                         PlanField(title: "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
                     }
-                    PlanField(title: business ? "Stand des Geschäftskontos" : "Aktueller Kontostand", text: $balance, prompt: "0", unit: "€", keyboard: .numbersAndPunctuation)
+                    PlanField(title: business ? "Stand des Geschäftskontos" : "Aktueller Kontostand", text: $balance, prompt: "0", unit: "€", signed: true)
                     Picker("Check-in", selection: $cadence) {
                         Text("Wöchentlich").tag("weekly")
                         Text("Täglich").tag("daily")
