@@ -1232,6 +1232,14 @@ button.dashboard-balance { display:block; width:100%; text-align:left; border:0;
 .dashboard-account-link { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
 #forecast-detail { margin:16px 0; }
 
+.forecast-results { display: grid; gap: 8px; margin: 20px 0; }
+.forecast-result { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; }
+.forecast-result > span { flex: 1 1 9rem; }
+.forecast-result small { display: block; }
+.forecast-result strong { white-space: nowrap; font-variant-numeric: tabular-nums; }
+button.forecast-result { cursor: pointer; }
+button.forecast-result:hover, button.forecast-result:focus-visible, .forecast-total { background: color-mix(in srgb, currentColor 7%, transparent); }
+.forecast-total { font-weight: 700; }
 button.forecast-entry { width: 100%; text-align: left; font: inherit; color: inherit; background: transparent; cursor: pointer; }
 .forecast-entry > b { margin-left: auto; white-space: nowrap; }
 .forecast-entry > span:last-child { opacity: .65; }

@@ -414,16 +414,23 @@ private struct ForecastDetail: View {
                     ForEach(forecast.rowsFromToday) { row in
                         entryButton(row, dated: true)
                     }
-                    LabeledAmount(label: forecast.rowsFromToday.contains(where: { $0.cardReserve }) ? "Nach Zahlungen und Kartenrücklagen" : "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: metrics.flexibleBudget == 0)
-                    if metrics.flexibleBudget > 0 {
+                }
+                if metrics.flexibleBudget > 0 {
+                    Section("Zwischenstand") {
+                        LabeledAmount(label: forecast.rowsFromToday.contains(where: { $0.cardReserve }) ? "Nach Zahlungen und Kartenrücklagen" : "Nach datierten Zahlungen", amount: forecast.datedBalance)
+                    }
+                    Section("Budget bis Monatsende") {
                         NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
-                            LabeledAmount(label: "Flexible Kosten · anteilig ab heute", amount: -forecast.remainingBudget)
+                            LabeledAmount(label: "Flexible Kosten ab heute", amount: -forecast.remainingBudget)
                         }
-                        LabeledAmount(label: "Prognose inkl. flexibler Kosten", amount: forecast.projectedBalance, emphasis: true)
                     }
                 }
+                Section("Ergebnis") {
+                    LabeledAmount(label: "Prognose zum Monatsende", amount: forecast.projectedBalance, emphasis: true)
+                        .font(.headline)
+                }
                 if !forecast.uncertain.isEmpty {
-                    Section("Buchung offen") {
+                    Section("Buchungsstatus unklar") {
                         ForEach(forecast.uncertain) { row in
                             entryButton(row, dated: false)
                         }
@@ -469,7 +476,7 @@ private struct ForecastDetail: View {
                         LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
                     }
                     if !dated && row.section != .accounts {
-                        Text(row.item.frequency == .once ? "Offen · fällig am " + row.item.fields.text("dueDate") : row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig")
+                        Text(row.item.frequency == .once ? "Offen · fällig am " + row.item.fields.text("dueDate") : row.monthUnknown ? "Monat offen" : row.day == 0 ? "Ohne Buchungstag" : "Heute fällig · im Kontostand eventuell schon enthalten")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
