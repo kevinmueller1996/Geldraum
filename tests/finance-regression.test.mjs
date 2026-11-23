@@ -244,3 +244,14 @@ test("business expenses use the same payable cents for either input basis", asyn
     assert.equal(backupPlan({...plan, expenses: [{...item, ...bad}]}), null);
   }
 });
+
+test("loan priority is optional, round-trips and uses amortized balances", async () => {
+  const { currentLoan } = await import("../app/loan-schedule.ts");
+  const loan = { id: "a", name: "Test", balance: 200, payment: 20, balanceDate: "2026-01-01", bookingDay: 1 };
+  const plan = { name: "Test", expenses: [], annualCosts: [], incomes: [], accounts: [], savings: [], goals: [], snapshots: [],
+    commitments: [loan, {...loan, id: "b", highPriority: true}, {...loan, id: "c", highPriority: false}] };
+  assert.deepEqual(backupPlan(plan), plan);
+  const active = plan.commitments.map(item => currentLoan(item, "2026-02-01"));
+  assert.equal(active.filter(item => item.highPriority).reduce((sum, item) => sum + item.balance, 0), 180);
+  assert.equal(backupPlan({...plan, commitments: [{...loan, highPriority: "true"}]}), null);
+});

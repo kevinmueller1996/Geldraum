@@ -656,6 +656,11 @@ struct PlanSectionView: View {
                         LabeledAmount(label: "Pro Jahr", amount: metrics.incomePerYear)
                     }
                 }
+                if section == .loans, items.contains(where: { $0.fields.flag("highPriority") }) {
+                    Section {
+                        LabeledAmount(label: "Restschuld · Hohe Priorität", amount: items.filter { $0.fields.flag("highPriority") }.reduce(0) { $0 + $1.loanSchedule().balance })
+                    }
+                }
                 if section == .history, !items.isEmpty {
                     Section("Kontostände im Verlauf") { BalanceChart(plan: plan) }
                 }
@@ -761,7 +766,7 @@ struct PlanSectionView: View {
     }
     private func editableRow(_ item: PlanItem) -> some View {
         Button { selection = item } label: {
-            PlanItemRow(item: item, section: section, businessAssets: businessAssets).contentShape(Rectangle())
+            PlanItemRow(item: item, section: section, businessAssets: businessAssets, compactLoans: store.workspace == .business).contentShape(Rectangle())
         }.buttonStyle(.plain)
         .swipeActions { Button("Löschen") { pendingRemoval = item }.tint(.red) }
     }
@@ -772,14 +777,21 @@ private struct PlanItemRow: View {
     let item: PlanItem
     let section: PlanSection
     var businessAssets = false
+    var compactLoans = false
     private var fields: Record { item.fields }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if section == .loans && fields.flag("highPriority") {
+                Label("Hohe Priorität", systemImage: "flag.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.orange.opacity(0.18), in: Capsule())
+            }
             LabeledAmount(label: item.name.isEmpty ? section.title : item.name, amount: amount)
             if let detail {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
-            if section == .loans {
+            if section == .loans && !compactLoans {
                 let schedule = item.loanSchedule()
                 let total = schedule.total
                 if let repaid = schedule.repaidPrincipal, let principal = fields["originalPrincipal"]?.number {
@@ -820,7 +832,7 @@ private struct PlanItemRow: View {
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? ["Kreditkarte", item.bookingDayLabel.map { "Ausgleich " + $0 } ?? "Abbuchungstag offen"].joined(separator: " · ") : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
-        case .loans: [item.loanCategory, fields.amount("interestRate").formatted() + " % p. a.", euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
+        case .loans: [compactLoans ? nil : item.loanCategory, compactLoans ? nil : fields.amount("interestRate").formatted() + " % p. a.", euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"

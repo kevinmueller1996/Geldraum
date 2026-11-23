@@ -246,6 +246,9 @@ struct PlanEditor: View {
             if businessExpense { businessAmountFields } else { amount("Jahresbetrag", key: "amount", signed: true) }
             monthPicker()
         case .loans:
+            Toggle("Hohe Priorität", isOn: Binding(get: { item.fields.flag("highPriority") }, set: {
+                item.fields["highPriority"] = .boolean($0)
+            }))
             categoryPicker(default: "Kreditraten")
             amount("Ursprüngliche Kreditsumme (optional)", key: "originalPrincipal")
             amount("Restschuld am Stichtag", key: "balance")
