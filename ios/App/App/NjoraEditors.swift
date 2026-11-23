@@ -150,7 +150,7 @@ struct PlanEditor: View {
 
     @State private var vatEntry: String?
     @State private var vatRateEntry: String?
-    private var businessExpense: Bool { store.workspace == .business && (section == .expenses || section == .annual) }
+    private var businessExpense: Bool { store.workspace == .business && ([PlanSection.expenses, .annual, .flexible].contains(section)) }
     private var businessAssets: Bool { section == .savings && store.workspace == .business }
     private var assetTitle: String { businessAssets ? "Vermögenswert" : section.itemTitle }
 
@@ -242,6 +242,10 @@ struct PlanEditor: View {
                     }
                 }
             }
+        case .flexible:
+            if businessExpense { businessAmountFields } else { amount("Monatsbudget", key: "amount") }
+            Text("Der Monatsplan berücksichtigt das ganze Budget. Die Prognose rechnet anteilig ab heute bis Monatsende.")
+                .font(.footnote).foregroundStyle(.secondary)
         case .annual:
             if businessExpense { businessAmountFields } else { amount("Jahresbetrag", key: "amount", signed: true) }
             monthPicker()
@@ -347,7 +351,7 @@ struct PlanEditor: View {
             if let value = germanAmount(text) {
                 updateGrossExpense(entersNet ? ExpenseVAT.convert(value, rate: vatRate, toGross: true) : value)
             }
-        }), prompt: "0,00", unit: "€", keyboard: .numbersAndPunctuation)
+        }), prompt: "0,00", unit: "€", keyboard: section == .flexible ? .decimalPad : .numbersAndPunctuation)
         PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? editableAmount(vatRate) }, set: { text in
             guard text.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) != nil,
                   let rate = germanAmount(text), rate <= 100 else { return }
@@ -464,6 +468,12 @@ struct PlanEditor: View {
             changed.fields[key] = .number(number)
             if section == .expenses && key == "amount" && !changed.rates.isEmpty {
                 changed.fields["rateChanges"] = .array(changed.rates.filter { $0.text("date") > PlanDate.string(.now) }.map(JSONValue.object))
+            }
+        }
+        if section == .flexible {
+            let value = changed.fields.amount("amount")
+            guard value >= 0, (value * 100).rounded() / 100 == value else {
+                validation = "Bitte gib ein Monatsbudget ab 0 € mit höchstens zwei Nachkommastellen ein."; return
             }
         }
         if (section == .expenses || section == .loans) && changed.fields.text("category").utf16.count > 80 {

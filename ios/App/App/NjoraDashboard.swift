@@ -119,6 +119,9 @@ private struct BusinessOverview: View {
                 NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
                     LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
                 }
+                NavigationLink { ForecastDetail(store: store) } label: {
+                    LabeledContent("Prognose zum Monatsende", value: "≈ " + euros(metrics.forecast.projectedBalance))
+                }
             }
             Section("Umsatz") {
                 Button { tab = .revenue } label: {
@@ -136,6 +139,9 @@ private struct BusinessOverview: View {
                 }
                 NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
                     LabeledAmount(label: "Betriebskosten brutto inkl. Kreditraten", amount: metrics.fixedCosts)
+                }
+                NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
+                    LabeledAmount(label: "Flexible Kosten", amount: metrics.flexibleBudget)
                 }
                 LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
             }
@@ -238,12 +244,12 @@ struct Overview: View {
                         Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
                     }
                 }
-                Text("≈ " + euros(forecast.datedBalance))
+                Text("≈ " + euros(forecast.projectedBalance))
                     .font(.system(.largeTitle, design: .rounded, weight: .semibold))
                     .monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
-                    .accessibilityLabel("Ungefähr " + euros(forecast.datedBalance))
-                Text(forecast.uncertain.isEmpty ? "Mit datierten Zahlungen" :
-                        "Mit datierten Zahlungen · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
+                    .accessibilityLabel("Ungefähr " + euros(forecast.projectedBalance))
+                let basis = metrics.flexibleBudget > 0 ? "Mit Zahlungen und anteiligem Monatsbudget" : "Mit datierten Zahlungen"
+                Text(forecast.uncertain.isEmpty ? basis : basis + " · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
                     .font(.footnote)
             }
             .foregroundStyle(theme.paper)
@@ -258,6 +264,9 @@ struct Overview: View {
             }
             NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
                 metric("Fixkosten · Ø pro Monat", value: euros(metrics.fixedCosts))
+            }
+            NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
+                metric("Flexible Kosten · pro Monat", value: euros(metrics.flexibleBudget))
             }
             NavigationLink {
                 MonthlyPlan(plan: store.plan ?? plan, store: store)
@@ -334,7 +343,13 @@ private struct ForecastDetail: View {
                     ForEach(forecast.rowsFromToday) { row in
                         entryButton(row, dated: true)
                     }
-                    LabeledAmount(label: "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: true)
+                    LabeledAmount(label: "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: metrics.flexibleBudget == 0)
+                    if metrics.flexibleBudget > 0 {
+                        NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
+                            LabeledAmount(label: "Flexible Kosten · anteilig ab heute", amount: -forecast.remainingBudget)
+                        }
+                        LabeledAmount(label: "Prognose inkl. flexibler Kosten", amount: forecast.projectedBalance, emphasis: true)
+                    }
                 }
                 if !forecast.uncertain.isEmpty {
                     Section("Buchung offen") {
@@ -418,6 +433,8 @@ struct MonthlyPlan: View {
                             monthRow(section: .expenses) {
                                 LabeledAmount(label: store.workspace == .business ? "Betriebskosten brutto inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts)
                             }
+                            Divider()
+                            monthRow(section: .flexible) { LabeledAmount(label: "Flexible Kosten", amount: -metrics.flexibleBudget) }
                         }
                         .njoraCard(theme.card)
                         if !categories.isEmpty {
@@ -602,6 +619,7 @@ private struct FinancialTitle: View {
 private extension PlanMetrics {
     func titleTotal(for section: PlanSection) -> (amount: Double?, caption: String) {
         switch section {
+        case .flexible: (flexibleBudget, "pro Monat")
         case .expenses: (fixedCosts, "Ø pro Monat")
         case .income: (incomeThisMonth, "im " + monthNames[month])
         case .annual: (plan[.annual].sum("amount"), "pro Jahr")

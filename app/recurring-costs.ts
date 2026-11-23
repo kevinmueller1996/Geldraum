@@ -86,6 +86,12 @@ export function isExpenseDue(item: ExpenseSchedule, month: number, year = new Da
 }
 
 export type Expense = ExpenseSchedule & { id: string; name: string; category: string; bookingDay?: number };
+export type FlexibleCost = Pick<Expense, "id" | "name" | "amount" | "vatRate" | "vatBasis">;
+
+export function flexibleMonthlyBudget(items: FlexibleCost[] = []) {
+  return items.reduce((cents, item) => cents + Math.round(item.amount * 100), 0) / 100;
+}
+
 export type AnnualCost = Omit<Expense, "category" | "month"> & { category?: string; month: number };
 
 export function unifiedExpenses(expenses: Expense[], annualCosts: AnnualCost[]): Expense[] {
@@ -183,6 +189,7 @@ export function averageMonthlyCosts(expenses: ExpenseSchedule[], loans: LoanPaym
 
 export function monthEndForecast(balance: number, today: Date, plan: {
   accounts?: CardAccount[];
+  flexibleCosts?: FlexibleCost[];
   incomes: (ForecastItem & { amount: number; annual: boolean; month?: number })[];
   expenses: Expense[];
   commitments: (ForecastItem & LoanPayment)[];
@@ -218,8 +225,11 @@ export function monthEndForecast(balance: number, today: Date, plan: {
   for (const loan of plan.commitments) include("loans", loan, -monthlyLoanPayment(loan));
   scheduled.sort((a, b) => a.day - b.day);
   const datedBalance = scheduled.reduce((sum, row) => sum + row.amount, balance);
-  const low = uncertain.reduce((sum, row) => sum + Math.min(0, row.amount), datedBalance);
-  const high = uncertain.reduce((sum, row) => sum + Math.max(0, row.amount), datedBalance);
+  const monthlyBudget = flexibleMonthlyBudget(plan.flexibleCosts);
+  const remainingBudget = Math.round(Math.round(monthlyBudget * 100) * (lastDay - day + 1) / lastDay) / 100;
+  const projectedBalance = datedBalance - remainingBudget;
+  const low = uncertain.reduce((sum, row) => sum + Math.min(0, row.amount), projectedBalance);
+  const high = uncertain.reduce((sum, row) => sum + Math.max(0, row.amount), projectedBalance);
   const transfers = upcomingCardSettlements(plan.accounts ?? [], today).map(({ account, date }) => ({
     kind: "transfer" as const, account, date
   }));
@@ -229,5 +239,5 @@ export function monthEndForecast(balance: number, today: Date, plan: {
   const rowsFromToday = [...payments, ...transfers].sort((a, b) =>
     (a.date?.getTime() ?? Infinity) - (b.date?.getTime() ?? Infinity)
   );
-  return { scheduled, rowsFromToday, uncertain, datedBalance, low, high };
+  return { scheduled, rowsFromToday, uncertain, datedBalance, remainingBudget, projectedBalance, low, high };
 }

@@ -75,7 +75,7 @@ struct Plan: Codable, Equatable {
         guard data.count <= maximumBackupBytes else { throw CocoaError(.fileReadTooLarge) }
         let decoded = try JSONDecoder().decode(Plan.self, from: data)
         guard let name = decoded.fields["name"]?.string, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, name.utf16.count <= 80,
-              PlanSection.allCases.allSatisfy({ decoded.fields[$0.rawValue]?.array != nil || ($0 == .savings && decoded.fields[$0.rawValue] == nil) }) else {
+              PlanSection.allCases.allSatisfy({ decoded.fields[$0.rawValue]?.array != nil || ([.savings, .flexible].contains($0) && decoded.fields[$0.rawValue] == nil) }) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         var plan = decoded
@@ -468,6 +468,13 @@ private extension PlanItem {
             case .monthly: return f["month"] == nil
             case .annual, .quarterly: return hasMonth
             }
+        case .flexible:
+            let amount = f.amount("amount")
+            let rate = f.amount("vatRate")
+            return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && f.hasMoney("amount") &&
+                amount >= 0 && (amount * 100).rounded() / 100 == amount &&
+                (f["vatBasis"] == nil || ["gross", "net"].contains(f.text("vatBasis"))) &&
+                f.optionalMoney("vatRate") && (0...100).contains(rate) && (rate * 100).rounded() / 100 == rate
         case .annual: return dayOK && f.hasMoney("amount") && hasMonth && f.optionalText("category", 80)
         case .loans:
             return dayOK && f.hasMoney("balance") && f.hasMoney("payment") && f.optionalText("category", 80)
@@ -496,12 +503,13 @@ private extension PlanItem {
 }
 
 enum PlanSection: String, CaseIterable, Identifiable {
-    case accounts, income = "incomes", expenses, annual = "annualCosts", loans = "commitments", goals, savings, history = "snapshots"
+    case accounts, income = "incomes", expenses, flexible = "flexibleCosts", annual = "annualCosts", loans = "commitments", goals, savings, history = "snapshots"
     var id: String { rawValue }
     var title: String {
         switch self {
         case .accounts: "Konten & Karten"
         case .income: "Einkommen"
+        case .flexible: "Flexible Kosten"
         case .expenses: "Fixkosten"
         case .annual: "Jahreskosten"
         case .loans: "Kredite"
@@ -514,6 +522,7 @@ enum PlanSection: String, CaseIterable, Identifiable {
         switch self {
         case .accounts: "Konto"
         case .income: "Einnahme"
+        case .flexible: "Monatsbudget"
         case .expenses: "Fixkostenposten"
         case .annual: "Jahreskostenposten"
         case .loans: "Kredit"
@@ -529,6 +538,7 @@ enum PlanSection: String, CaseIterable, Identifiable {
         switch self {
         case .accounts: "Noch keine Konten"
         case .income: "Noch keine Einnahmen"
+        case .flexible: "Noch keine flexiblen Kosten"
         case .expenses: "Noch keine Fixkosten"
         case .annual: "Noch keine Jahreskosten"
         case .loans: "Noch keine Kredite"
@@ -552,6 +562,7 @@ enum PlanSection: String, CaseIterable, Identifiable {
         switch self {
         case .accounts: values.merge(["name": .string("Girokonto"), "type": .string("bank"), "balance": .number(0)]) { _, new in new }
         case .income: values.merge(["name": .string("Nettoeinkommen"), "amount": .number(0), "annual": .boolean(false)]) { _, new in new }
+        case .flexible: values["amount"] = .number(0)
         case .expenses: values.merge(["amount": .number(0), "category": .string("Wohnen"), "bookingDay": .number(0)]) { _, new in new }
         case .annual: values.merge(["amount": .number(0), "month": .number(0)]) { _, new in new }
         case .loans: values.merge(["balanceDate": .string(PlanDate.string(.now)), "balance": .number(0), "payment": .number(0)]) { _, new in new }
@@ -579,8 +590,10 @@ struct MonthForecast {
     var scheduled: [ForecastEntry] = []
     var uncertain: [ForecastEntry] = []
     var datedBalance: Double { scheduled.reduce(balance) { $0 + $1.amount } }
-    var low: Double { uncertain.reduce(datedBalance) { $0 + min(0, $1.amount) } }
-    var high: Double { uncertain.reduce(datedBalance) { $0 + max(0, $1.amount) } }
+    var remainingBudget: Double = 0
+    var projectedBalance: Double { datedBalance - remainingBudget }
+    var low: Double { uncertain.reduce(projectedBalance) { $0 + min(0, $1.amount) } }
+    var high: Double { uncertain.reduce(projectedBalance) { $0 + max(0, $1.amount) } }
 }
 
 struct PlanMetrics {
@@ -624,7 +637,8 @@ struct PlanMetrics {
         }
     }
     var payments: Double { plan[.loans].reduce(0) { $0 + $1.loanPayment(on: today) } }
-    var available: Double { income - fixedCosts }
+    var flexibleBudget: Double { plan[.flexible].reduce(0) { $0 + ($1.fields.amount("amount") * 100).rounded() } / 100 }
+    var available: Double { income - fixedCosts - flexibleBudget }
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
     var specialCosts: [PlanItem] {
         plan.entriesByDueDate(in: .expenses).filter {
@@ -658,6 +672,7 @@ struct PlanMetrics {
         let day = calendar.component(.day, from: start)
         let lastDay = calendar.range(of: .day, in: .month, for: today)?.count ?? 31
         var result = MonthForecast(balance: net)
+        result.remainingBudget = ((flexibleBudget * 100).rounded() * Double(lastDay - day + 1) / Double(lastDay)).rounded() / 100
         func include(_ item: PlanItem, section: PlanSection, amount: Double, monthUnknown: Bool = false) {
             guard amount != 0 else { return }
             let due = min(lastDay, item.fields.integer("bookingDay") ?? 0)

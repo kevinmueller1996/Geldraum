@@ -1,7 +1,7 @@
 import { currentLoan, forecastLoans } from "../loan-schedule";
 import type { Plan } from "../page";
 import { isPlan, validCalendarDay } from "../plan-validation";
-import { averageMonthlyCosts, expenseAmount, localISO, monthEndForecast, unifiedExpenses } from "../recurring-costs";
+import { flexibleMonthlyBudget, averageMonthlyCosts, expenseAmount, localISO, monthEndForecast, unifiedExpenses } from "../recurring-costs";
 
 type Invoice = { type: "invoice"; name: string; amount: number; dueDate: string; category?: string };
 type Rate = { type: "rate"; name: string; amount: number; effectiveDate: string };
@@ -43,7 +43,8 @@ export function readFinance(value: unknown, query: "month" | "due" | "scenario",
   const expenses = unifiedExpenses(plan.expenses, plan.annualCosts);
   const currentIncome = plan.incomes.filter(i => !i.annual).reduce((total, i) => total + i.amount, 0);
   const costs = averageMonthlyCosts(expenses, plan.commitments.map(loan => currentLoan(loan, date)), date);
-  const available = currentIncome - costs;
+  const flexible = flexibleMonthlyBudget(plan.flexibleCosts);
+  const available = currentIncome - costs - flexible;
   if (query === "scenario") {
     const extra = money(args.monthlyDelta);
     return {date, currency: "EUR", monthlyAvailable: rounded(available), additionalMonthlyExpense: extra,
@@ -53,6 +54,7 @@ export function readFinance(value: unknown, query: "month" | "due" | "scenario",
   const forecast = monthEndForecast(balance, today, {...plan, expenses, commitments: forecastLoans(plan.commitments, today)});
   const summary = {date, currency: "EUR", balance: rounded(balance), lastCheckIn: plan.snapshots.map(s => s.date).sort().at(-1) ?? null,
     regularMonthlyIncome: rounded(currentIncome), averageMonthlyFixedCosts: rounded(costs), monthlyAvailable: rounded(available),
+    ...(flexible > 0 && { monthlyFlexibleBudget: flexible, remainingFlexibleBudget: forecast.remainingBudget, projectedMonthEndBalance: rounded(forecast.projectedBalance) }),
     datedMonthEndBalance: rounded(forecast.datedBalance), monthEndLow: rounded(forecast.low), monthEndHigh: rounded(forecast.high)};
   if (query === "month") return summary;
   if (query !== "due") throw new Error("Unbekannte Auswertung.");

@@ -64,7 +64,8 @@ private func mergePlanValue(_ base: JSONValue?, _ local: JSONValue?, _ remote: J
     if let b = base?.object, let l = local?.object, let r = remote?.object {
         var result = Record()
         for key in Set(l.keys).union(r.keys) {
-            let original = key == "monthlyRevenue" && b[key] == nil && l[key]?.object != nil && r[key]?.object != nil ? .object([:]) : b[key]
+            var original = key == "monthlyRevenue" && b[key] == nil && l[key]?.object != nil && r[key]?.object != nil ? .object([:]) : b[key]
+            if key == "flexibleCosts", original == nil, l[key]?.array != nil, r[key]?.array != nil { original = .array([]) }
             result[key] = try mergePlanValue(original, l[key], r[key], prefer,
                                              arrayKey: key == PlanSection.history.rawValue ? "date" : "id")
         }

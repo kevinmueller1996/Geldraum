@@ -255,3 +255,17 @@ test("loan priority is optional, round-trips and uses amortized balances", async
   assert.equal(active.filter(item => item.highPriority).reduce((sum, item) => sum + item.balance, 0), 180);
   assert.equal(backupPlan({...plan, commitments: [{...loan, highPriority: "true"}]}), null);
 });
+
+test("undated flexible costs use a full monthly budget and only the remaining calendar days in the forecast", async () => {
+  const { monthEndForecast, flexibleMonthlyBudget } = await import("../app/recurring-costs.ts");
+  const plan = { name:"Test", expenses:[], annualCosts:[], incomes:[], accounts:[], commitments:[], savings:[], goals:[], snapshots:[],
+    flexibleCosts:[{id:"one", name:"Einkauf", amount:200.01}, {id:"two",name:"Freizeit", amount:89.99}] };
+  assert.equal(flexibleMonthlyBudget(plan.flexibleCosts), 290);
+  assert.deepEqual(backupPlan(plan), plan);
+  for (const [day, remaining] of [[1,290],[15,150],[29,10]]) {
+    const f = monthEndForecast(1000, new Date(2028,1,day), plan);
+    assert.deepEqual([f.remainingBudget,f.datedBalance,f.projectedBalance,f.low,f.high],[remaining,1000,1000-remaining,1000-remaining,1000-remaining]);
+    assert.equal(f.rowsFromToday.length + f.uncertain.length, 0);
+  }
+  for(const patch of [{name:" "},{amount:-1},{amount:1.001}]) assert.equal(backupPlan({...plan, flexibleCosts:[{...plan.flexibleCosts[0],...patch}]}),null);
+});
