@@ -232,6 +232,8 @@ struct SetupView: View {
     @ObservedObject var store: NjoraStore
     @State private var name = ""
     @State private var income = ""
+    @State private var initialIncome = PlanSection.income.newItem
+    @State private var businessAmount: String?
     @State private var balance = ""
     @State private var cadence = "weekly"
     @State private var confirmDelete = false
@@ -243,7 +245,12 @@ struct SetupView: View {
                 Section {
                     Text(business ? "Lege den Finanzplan für dein Unternehmen an." : "Gib deinem Finanzplan einen Namen. Weitere Konten, Ausgaben und Sparziele kannst du jederzeit ergänzen.")
                     PlanField(title: business ? "Unternehmen" : "Dein Name", text: $name, prompt: business ? "Firmenname" : "Vorname")
-                    PlanField(title: business ? "Feste Betriebseinnahmen (optional)" : "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
+                    if business {
+                        Text("Regelmäßige Betriebseinnahme (optional)").font(.headline)
+                        BusinessAmountFields(item: $initialIncome, vatEntry: $businessAmount, signed: false)
+                    } else {
+                        PlanField(title: "Nettoeinkommen pro Monat", text: $income, prompt: "0", unit: "€", keyboard: .decimalPad)
+                    }
                     PlanField(title: business ? "Stand des Geschäftskontos" : "Aktueller Kontostand", text: $balance, prompt: "0", unit: "€", keyboard: .numbersAndPunctuation)
                     Picker("Check-in", selection: $cadence) {
                         Text("Wöchentlich").tag("weekly")
@@ -252,17 +259,19 @@ struct SetupView: View {
                 }
                 Notice(text: store.message)
                 Button("Finanzplan erstellen") {
-                    guard let earnings = germanAmount(income), let current = germanAmount(balance) else {
+                    guard let earnings = germanAmount(income), let current = germanAmount(balance),
+                          !business || (abs(initialIncome.fields.amount("amount")) <= 1_000_000_000 && businessAmount.map { germanAmount($0) != nil } != false) else {
                         store.message = "Bitte prüfe deine Beträge."; return
                     }
                     var plan = Plan.blank(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
                     if business {
-                        plan[.income][0].fields["name"] = .string("Betriebseinnahmen")
+                        var source = initialIncome
+                        source.fields["name"] = .string("Betriebseinnahmen")
+                        plan[.income] = source.fields.amount("amount") == 0 ? [] : [source]
                         plan[.accounts][0].fields["name"] = .string("Geschäftskonto")
                     }
                     plan.fields["checkInCadence"] = .string(cadence)
-                    if business && earnings == 0 { plan[.income] = [] }
-                    else { plan[.income][0].fields["amount"] = .number(earnings) }
+                    if !business { plan[.income][0].fields["amount"] = .number(earnings) }
                     plan[.accounts][0].fields["balance"] = .number(current)
                     let newPlan = plan
                     Task { _ = await store.save(newPlan, in: .account) }

@@ -1443,6 +1443,7 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .depreciation-fields input[type="checkbox"] { min-height:0; width:1.1rem; height:1.1rem; }
 .depreciation-inputs { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr)); gap:12px; margin-top:12px; }
 
+.income-fields > .vat-fields, .onboarding-row.income > .vat-fields { grid-column: 1 / -1; }
 .vat-fields .vat-summary { grid-column: 1 / -1; font-size: .875rem; font-variant-numeric: tabular-nums; }
 
 .loan-priority { display:inline-flex; align-items:center; gap:.45rem; padding:.25rem .6rem; border-radius:1rem; background:#f7e3cb; color:#683612; font-size:.8rem; font-weight:650; }

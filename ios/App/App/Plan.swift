@@ -389,6 +389,7 @@ struct PlanItem: Identifiable, Equatable {
         return budgetCents(amount) * Double(12 / frequency.months)
     }
 
+    var netAmount: Double { ExpenseVAT.convert(fields.amount("amount"), rate: fields.amount("vatRate"), toGross: false) }
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
     var hasDepreciation: Bool { fields["depreciationStart"] != nil }
     var validDepreciation: Bool {
@@ -455,6 +456,11 @@ private extension PlanItem {
         guard !id.isEmpty, f.hasText("id", 100), section == .history || f.hasText("name", 120) else { return false }
         let dayOK = f["bookingDay"] == nil || (0...31).contains(f.integer("bookingDay") ?? -1)
         let hasMonth = (0..<12).contains(f.integer("month") ?? -1)
+        if [.income, .expenses, .annual, .flexible].contains(section) {
+            let rate = f.amount("vatRate")
+            guard (f["vatBasis"] == nil || ["gross", "net"].contains(f.text("vatBasis"))),
+                  f.optionalMoney("vatRate"), (0...100).contains(rate), (rate * 100).rounded() / 100 == rate else { return false }
+        }
         switch section {
         case .income:
             return dayOK && f.hasMoney("amount") && f["annual"]?.bool != nil && (f["month"] == nil || hasMonth)
@@ -473,11 +479,8 @@ private extension PlanItem {
             }
         case .flexible:
             let amount = f.amount("amount")
-            let rate = f.amount("vatRate")
             return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && f.hasMoney("amount") &&
-                amount >= 0 && (amount * 100).rounded() / 100 == amount &&
-                (f["vatBasis"] == nil || ["gross", "net"].contains(f.text("vatBasis"))) &&
-                f.optionalMoney("vatRate") && (0...100).contains(rate) && (rate * 100).rounded() / 100 == rate
+                amount >= 0 && (amount * 100).rounded() / 100 == amount
         case .annual: return dayOK && f.hasMoney("amount") && hasMonth && f.optionalText("category", 80)
         case .loans:
             return dayOK && f.hasMoney("balance") && f.hasMoney("payment") && f.optionalText("category", 80)
@@ -613,6 +616,7 @@ struct PlanMetrics {
     var month: Int { calendar.component(.month, from: today) - 1 }
     var net: Double { plan[.accounts].reduce(0) { $0 + $1.netBalance } }
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
+    var netRegularIncome: Double { plan[.income].filter { !$0.fields.flag("annual") }.reduce(0) { $0 + budgetCents($1.netAmount) } / 100 }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
     var fixedCosts: Double { monthlyFixedCosts(net: false) }

@@ -215,7 +215,7 @@ private struct BusinessOverview: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Monatsplanung").font(.headline).accessibilityAddTraits(.isHeader).padding(.bottom, 6)
             NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                row("Regelmäßige Einnahmen", value: euros(metrics.income))
+                row("Regelmäßige Einnahmen brutto", value: euros(metrics.income))
             }
             Divider()
             NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
@@ -508,7 +508,8 @@ struct MonthlyPlan: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Monatsdurchschnitt").font(.headline).accessibilityAddTraits(.isHeader)
                             monthRow(section: .income) {
-                                LabeledAmount(label: store.workspace == .business ? "Regelmäßige Betriebseinnahmen" : "Regelmäßiges Einkommen", amount: metrics.income)
+                                LabeledAmount(label: store.workspace == .business ? "Betriebseinnahmen brutto" : "Regelmäßiges Einkommen", amount: metrics.income,
+                                              detail: store.workspace == .business ? euros(metrics.netRegularIncome) + " netto" : nil)
                             }
                             Divider()
                             monthRow(section: .expenses) {
@@ -525,7 +526,7 @@ struct MonthlyPlan: View {
                         if !categories.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Durchschnittliche Kosten je Kategorie").font(.headline).accessibilityAddTraits(.isHeader)
-                                Text(metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
+                                Text(metrics.income > 0 ? (store.workspace == .business ? "Anteil an den regelmäßigen Bruttoeinnahmen" : "Anteil am regelmäßigen Monatseinkommen") : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
                                     .font(.footnote).foregroundStyle(.secondary)
                                 ForEach(categories, id: \.name) { category in
                                     Divider()
@@ -870,7 +871,7 @@ struct PlanSectionView: View {
     }
     private func editableRow(_ item: PlanItem) -> some View {
         Button { selection = item } label: {
-            PlanItemRow(item: item, section: section, businessAssets: businessAssets, compactLoans: store.workspace == .business).contentShape(Rectangle())
+            PlanItemRow(item: item, section: section, businessAssets: businessAssets, businessWorkspace: store.workspace == .business).contentShape(Rectangle())
         }.buttonStyle(.plain)
         .swipeActions { Button("Löschen") { pendingRemoval = item }.tint(.red) }
     }
@@ -881,7 +882,7 @@ struct PlanItemRow: View {
     let item: PlanItem
     let section: PlanSection
     var businessAssets = false
-    var compactLoans = false
+    var businessWorkspace = false
     private var fields: Record { item.fields }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -891,11 +892,12 @@ struct PlanItemRow: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(.orange.opacity(0.18), in: Capsule())
             }
-            LabeledAmount(label: item.name.isEmpty ? section.title : item.name, amount: amount)
+            LabeledAmount(label: item.name.isEmpty ? section.title : item.name, amount: amount,
+                          detail: businessWorkspace && section == .income ? "brutto · " + euros(item.netAmount) + " netto" : nil)
             if let detail {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
-            if section == .loans && !compactLoans {
+            if section == .loans && !businessWorkspace {
                 let schedule = item.loanSchedule()
                 let total = schedule.total
                 if let repaid = schedule.repaidPrincipal, let principal = fields["originalPrincipal"]?.number {
@@ -936,7 +938,7 @@ struct PlanItemRow: View {
         ].compactMap { $0 }.joined(separator: " · ")
         case .accounts: fields.text("type") == "credit" ? ["Kreditkarte", item.bookingDayLabel.map { "Ausgleich " + $0 } ?? "Abbuchungstag offen"].joined(separator: " · ") : nil
         case .annual: monthNames[safe: fields.integer("month") ?? -1]
-        case .loans: [compactLoans ? nil : item.loanCategory, compactLoans ? nil : fields.amount("interestRate").formatted() + " % p. a.", euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
+        case .loans: [businessWorkspace ? nil : item.loanCategory, businessWorkspace ? nil : fields.amount("interestRate").formatted() + " % p. a.", euros(item.monthlyLoanPayment) + " pro Monat", item.bookingDayLabel].compactMap { $0 }.joined(separator: " · ")
         case .goals:
             item.monthlyGoalNeed().map { "Ziel \(euros(fields.amount("target"))) · Bedarf \(euros($0)) pro Monat" }
                 ?? "Ziel \(euros(fields.amount("target")))"

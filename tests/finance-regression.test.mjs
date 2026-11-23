@@ -260,6 +260,21 @@ test("business expenses use the same payable cents for either input basis", asyn
   }
 });
 
+test("business income retains VAT across restoration and forecasts the gross receipt", async () => {
+  const { grossFromNet, netFromGross, monthEndForecast } = await import("../app/recurring-costs.ts");
+  const income = { id: "service", name: "Vertrag", annual: false, bookingDay: 25, vatBasis: "net", vatRate: 19, amount: grossFromNet(100, 19) };
+  const annual = { ...income, id: "annual", annual: true, month: 10, vatBasis: "gross", vatRate: 7, amount: 107 };
+  const legacy = { id: "legacy", name: "Bestand", annual: false, bookingDay: 26, amount: 80 };
+  const plan = { name: "Test", expenses: [], annualCosts: [], incomes: [income, annual, legacy], accounts: [], savings: [], commitments: [], goals: [], snapshots: [] };
+  const restored = backupPlan(JSON.parse(JSON.stringify(plan)));
+  assert.deepEqual(restored, plan);
+  assert.equal(restored.incomes.reduce((sum, row) => sum + netFromGross(row.amount, row.vatRate ?? 0), 0), 280);
+  assert.equal(monthEndForecast(0, new Date(2026, 10, 1), restored).datedBalance, 306);
+  for (const patch of [{ vatRate: -1 }, { vatRate: 101 }, { vatBasis: "invalid" }]) {
+    assert.equal(backupPlan({ ...plan, incomes: [{ ...income, ...patch }] }), null);
+  }
+});
+
 test("business monthly net totals convert each payable amount before averaging", async () => {
   const { averageMonthlyCosts, flexibleMonthlyBudget } = await import("../app/recurring-costs.ts");
   const expenses = [

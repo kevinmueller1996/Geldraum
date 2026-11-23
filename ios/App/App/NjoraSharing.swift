@@ -170,10 +170,10 @@ private struct SharedFinance: View {
                     LabeledContent(item.fields.text("date"), value: item.fields["netBalance"]?.number.map(euros) ?? item.fields.text("note"))
                 } else if editable {
                     Button { selection = Selection(section: section, item: item, snapshot: snapshot) } label: {
-                        PlanItemRow(item: item, section: section, businessAssets: business, compactLoans: business)
+                        PlanItemRow(item: item, section: section, businessAssets: business, businessWorkspace: business)
                     }.buttonStyle(.plain)
                 } else {
-                    PlanItemRow(item: item, section: section, businessAssets: business, compactLoans: business)
+                    PlanItemRow(item: item, section: section, businessAssets: business, businessWorkspace: business)
                 }
             }
             if editable && section != .annual && plan[section].count < section.limit {

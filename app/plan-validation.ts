@@ -51,7 +51,7 @@ export function isPlan(value: unknown): value is Record<string, unknown> {
   if (value.liquidity !== undefined && !isMoney(value.liquidity)) return false;
   if (value.categoryColors !== undefined && (!isRecord(value.categoryColors) || !Object.values(value.categoryColors).every((color) => isText(color, 80)))) return false;
   if (value.checkInCadence !== undefined && !["weekly", "daily"].includes(String(value.checkInCadence))) return false;
-  return validList(value.incomes, 50, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && typeof item.annual === "boolean" && validBookingDay(item.bookingDay) && (item.month === undefined || (Number.isInteger(item.month) && Number(item.month) >= 0 && Number(item.month) <= 11)))
+  return validList(value.incomes, 50, (item) => isText(item.id, 100) && isText(item.name, 120) && isMoney(item.amount) && validVat(item) && typeof item.annual === "boolean" && validBookingDay(item.bookingDay) && (item.month === undefined || (Number.isInteger(item.month) && Number(item.month) >= 0 && Number(item.month) <= 11)))
     && (value.flexibleCosts === undefined || validList(value.flexibleCosts, 100, item =>
       isText(item.id, 100) && isText(item.name, 120) && String(item.name).trim().length > 0 &&
       isMoney(item.amount) && Number(item.amount) >= 0 && Number(Number(item.amount).toFixed(2)) === item.amount && validVat(item)))

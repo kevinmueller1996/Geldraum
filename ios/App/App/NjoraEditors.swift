@@ -131,6 +131,59 @@ extension View {
     func planFormStyle() -> some View { modifier(PlanFormStyle()) }
 }
 
+struct BusinessAmountFields: View {
+    @Binding var item: PlanItem
+    @Binding var vatEntry: String?
+    var signed = true
+    @State private var vatRateEntry: String?
+    @FocusState private var editingVatRate: Bool
+
+    private var vatRate: Double { item.fields.amount("vatRate") }
+    private var entersNet: Bool { item.fields.text("vatBasis") == "net" }
+    private var grossExpense: Double { item.expenseAmount() }
+    private var netExpense: Double { ExpenseVAT.convert(grossExpense, rate: vatRate, toGross: false) }
+
+    private func updateGrossExpense(_ value: Double) {
+        guard value != grossExpense else { return }
+        item.fields["amount"] = .number(value)
+        if !item.rates.isEmpty {
+            item.fields["rateChanges"] = .array(item.rates.filter { $0.text("date") > PlanDate.string(.now) }.map(JSONValue.object))
+        }
+    }
+
+    var body: some View {
+        Picker("Eingabe als", selection: Binding(get: { entersNet }, set: { net in
+            item.fields["vatBasis"] = .string(net ? "net" : "gross")
+            vatEntry = nil
+        })) {
+            Text("Brutto").tag(false)
+            Text("Netto").tag(true)
+        }.pickerStyle(.segmented)
+        PlanField(title: entersNet ? "Nettobetrag" : "Bruttobetrag", text: Binding(get: {
+            let value = entersNet ? netExpense : grossExpense
+            return vatEntry ?? (value == 0 ? "" : editableAmount(value))
+        }, set: { text in
+            vatEntry = text
+            if let value = germanAmount(text) {
+                updateGrossExpense(entersNet ? ExpenseVAT.convert(value, rate: vatRate, toGross: true) : value)
+            }
+        }), prompt: "0,00", unit: "€", keyboard: signed ? .numbersAndPunctuation : .decimalPad)
+        PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? ((editingVatRate && vatRate == 0) ? "" : item.fields["vatRate"]?.number.map(editableAmount) ?? "") }, set: { text in
+            guard text.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) != nil,
+                  let rate = germanAmount(text), rate <= 100 else { return }
+            vatRateEntry = text
+            let previousRate = vatRate
+            let net = vatEntry.flatMap(germanAmount) ?? netExpense
+            item.fields["vatRate"] = text.isEmpty ? nil : .number(rate)
+            if entersNet && rate != previousRate { updateGrossExpense(ExpenseVAT.convert(net, rate: rate, toGross: true)) }
+        }), unit: "%", keyboard: .decimalPad)
+        .focused($editingVatRate)
+        .onChange(of: editingVatRate) { focused in if !focused { vatRateEntry = nil } }
+        LabeledContent(entersNet ? "Bruttobetrag" : "Nettobetrag", value: euros(entersNet ? grossExpense : netExpense))
+        LabeledContent("Enthaltene Umsatzsteuer", value: euros(grossExpense - netExpense))
+    }
+}
+
 struct PlanEditor: View {
     let section: PlanSection
     @State private var plan: Plan
@@ -156,9 +209,7 @@ struct PlanEditor: View {
     }
 
     @State private var vatEntry: String?
-    @State private var vatRateEntry: String?
-    @FocusState private var editingVatRate: Bool
-    private var businessExpense: Bool { (sharedWorkspace ?? store.workspace) == .business && ([PlanSection.expenses, .annual, .flexible].contains(section)) }
+    private var usesBusinessVAT: Bool { (sharedWorkspace ?? store.workspace) == .business && ([PlanSection.income, .expenses, .annual, .flexible].contains(section)) }
     private var businessAssets: Bool { section == .savings && (sharedWorkspace ?? store.workspace) == .business }
     private var assetTitle: String { businessAssets ? "Vermögenswert" : section.itemTitle }
 
@@ -201,7 +252,7 @@ struct PlanEditor: View {
             amount(card ? "Offener Kartenbetrag" : "Aktueller Stand", key: "balance", signed: true, cardBalance: card)
             if card { bookingDayPicker("Monatlicher Abbuchungstag") }
         case .income:
-            amount("Betrag", key: "amount", signed: true)
+            if usesBusinessVAT { businessAmountFields } else { amount("Betrag", key: "amount", signed: true) }
             Toggle("Jährliche Einnahme", isOn: Binding(get: { item.fields.flag("annual") }, set: { value in
                 item.fields["annual"] = .boolean(value)
                 if value { item.fields["month"] = item.fields["month"] ?? .number(0) }
@@ -231,7 +282,7 @@ struct PlanEditor: View {
             })) {
                 ForEach(ExpenseFrequency.allCases, id: \.self) { Text($0.label).tag($0) }
             }.pickerStyle(.menu)
-            if businessExpense { businessAmountFields }
+            if usesBusinessVAT { businessAmountFields }
             else { amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true) }
             if item.frequency == .quarterly || item.frequency == .annual { monthPicker() }
             categoryPicker(default: "Wohnen")
@@ -244,18 +295,18 @@ struct PlanEditor: View {
             } else { bookingDayPicker() }
             ForEach(item.rates.filter { $0.text("date") > PlanDate.string(.now) }.map { $0.text("date") }, id: \.self) { date in
                 if let rate = item.rates.first(where: { $0.text("date") == date }) {
-                    LabeledContent((businessExpense ? "Brutto ab " : "Ab ") + date, value: euros(rate.amount("amount")))
+                    LabeledContent((usesBusinessVAT ? "Brutto ab " : "Ab ") + date, value: euros(rate.amount("amount")))
                     Button("Änderung am " + date + " entfernen", role: .destructive) {
                         item.fields["rateChanges"] = .array(item.rates.filter { $0.text("date") != date }.map(JSONValue.object))
                     }
                 }
             }
         case .flexible:
-            if businessExpense { businessAmountFields } else { amount("Monatsbudget", key: "amount") }
+            if usesBusinessVAT { businessAmountFields } else { amount("Monatsbudget", key: "amount") }
             Text("Der Monatsplan berücksichtigt das ganze Budget. Die Prognose rechnet anteilig ab heute bis Monatsende.")
                 .font(.footnote).foregroundStyle(.secondary)
         case .annual:
-            if businessExpense { businessAmountFields } else { amount("Jahresbetrag", key: "amount", signed: true) }
+            if usesBusinessVAT { businessAmountFields } else { amount("Jahresbetrag", key: "amount", signed: true) }
             monthPicker()
         case .loans:
             Toggle("Hohe Priorität", isOn: Binding(get: { item.fields.flag("highPriority") }, set: {
@@ -330,49 +381,8 @@ struct PlanEditor: View {
         }
     }
 
-    private var vatRate: Double { item.fields.amount("vatRate") }
-    private var entersNet: Bool { item.fields.text("vatBasis") == "net" }
-    private var grossExpense: Double { item.expenseAmount() }
-    private var netExpense: Double { ExpenseVAT.convert(grossExpense, rate: vatRate, toGross: false) }
-
-    private func updateGrossExpense(_ value: Double) {
-        guard value != grossExpense else { return }
-        item.fields["amount"] = .number(value)
-        if !item.rates.isEmpty {
-            item.fields["rateChanges"] = .array(item.rates.filter { $0.text("date") > PlanDate.string(.now) }.map(JSONValue.object))
-        }
-    }
-
-    @ViewBuilder private var businessAmountFields: some View {
-        Picker("Eingabe als", selection: Binding(get: { entersNet }, set: { net in
-            item.fields["vatBasis"] = .string(net ? "net" : "gross")
-            vatEntry = nil
-        })) {
-            Text("Brutto").tag(false)
-            Text("Netto").tag(true)
-        }.pickerStyle(.segmented)
-        PlanField(title: entersNet ? "Nettobetrag" : "Bruttobetrag", text: Binding(get: {
-            let value = entersNet ? netExpense : grossExpense
-            return vatEntry ?? (value == 0 ? "" : editableAmount(value))
-        }, set: { text in
-            vatEntry = text
-            if let value = germanAmount(text) {
-                updateGrossExpense(entersNet ? ExpenseVAT.convert(value, rate: vatRate, toGross: true) : value)
-            }
-        }), prompt: "0,00", unit: "€", keyboard: section == .flexible ? .decimalPad : .numbersAndPunctuation)
-        PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? ((editingVatRate && vatRate == 0) ? "" : item.fields["vatRate"]?.number.map(editableAmount) ?? "") }, set: { text in
-            guard text.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) != nil,
-                  let rate = germanAmount(text), rate <= 100 else { return }
-            vatRateEntry = text
-            let previousRate = vatRate
-            let net = vatEntry.flatMap(germanAmount) ?? netExpense
-            item.fields["vatRate"] = text.isEmpty ? nil : .number(rate)
-            if entersNet && rate != previousRate { updateGrossExpense(ExpenseVAT.convert(net, rate: rate, toGross: true)) }
-        }), unit: "%", keyboard: .decimalPad)
-        .focused($editingVatRate)
-        .onChange(of: editingVatRate) { focused in if !focused { vatRateEntry = nil } }
-        LabeledContent(entersNet ? "Bruttobetrag" : "Nettobetrag", value: euros(entersNet ? grossExpense : netExpense))
-        LabeledContent("Enthaltene Umsatzsteuer", value: euros(grossExpense - netExpense))
+    private var businessAmountFields: some View {
+        BusinessAmountFields(item: $item, vatEntry: $vatEntry, signed: section != .flexible)
     }
 
     private var assetPreview: PlanItem {
@@ -460,7 +470,7 @@ struct PlanEditor: View {
         guard !name.isEmpty, name.utf16.count <= 120 else {
             validation = "Bitte gib eine Bezeichnung mit höchstens 120 Zeichen ein."; return
         }
-        if businessExpense && (vatEntry.map { germanAmount($0) == nil } == true || abs(grossExpense) > 1_000_000_000) {
+        if usesBusinessVAT && (vatEntry.map { germanAmount($0) == nil } == true || abs(item.expenseAmount()) > 1_000_000_000) {
             validation = "Bitte prüfe den eingegebenen Betrag."; return
         }
         changed.fields["name"] = .string(name)
