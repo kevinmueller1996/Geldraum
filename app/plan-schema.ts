@@ -32,6 +32,11 @@ const USER_ACTIVITY_TABLE_SQL = `CREATE TABLE IF NOT EXISTS user_activity (
 
 const USER_ACTIVITY_LAST_SEEN_INDEX_SQL = "CREATE INDEX IF NOT EXISTS user_activity_last_seen_at_idx ON user_activity(last_seen_at)";
 
+const DASHBOARD_PREFERENCES_SQL = `CREATE TABLE IF NOT EXISTS dashboard_preferences (
+  user_id TEXT PRIMARY KEY NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  basis TEXT NOT NULL CHECK (basis IN ('gross', 'net'))
+)`;
+
 const SHARE_SCHEMA = [`CREATE TABLE IF NOT EXISTS workspace_shares (
   id TEXT PRIMARY KEY NOT NULL,
   owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -62,7 +67,7 @@ export function ensurePlanSchema() {
 async function initializeSchema() {
   const db = env.DB;
   if (!db) throw new Error("D1 binding DB is unavailable");
-  for (const statement of [USER_TABLE_SQL, PLAN_TABLE_SQL, BUSINESS_PLAN_SQL, PLAN_UPDATED_INDEX_SQL, USER_ACTIVITY_TABLE_SQL, USER_ACTIVITY_LAST_SEEN_INDEX_SQL, ...SHARE_SCHEMA]) {
+  for (const statement of [USER_TABLE_SQL, PLAN_TABLE_SQL, BUSINESS_PLAN_SQL, PLAN_UPDATED_INDEX_SQL, USER_ACTIVITY_TABLE_SQL, USER_ACTIVITY_LAST_SEEN_INDEX_SQL, DASHBOARD_PREFERENCES_SQL, ...SHARE_SCHEMA]) {
     await db.prepare(statement).run();
   }
   return db;

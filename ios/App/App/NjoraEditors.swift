@@ -734,6 +734,8 @@ struct SettingsView: View {
     @State private var notice = ""
     @State private var reminderActive = false
     @State private var resolveConflict = false
+    @State private var savingDashboardBasis = false
+    @State private var dashboardError = ""
     @State private var profileBaseline: Plan?
 
     var body: some View {
@@ -750,6 +752,22 @@ struct SettingsView: View {
             }
             Section("Freigaben") {
                 NavigationLink("Finanzbereich teilen") { SharingView(store: store, initial: store.workspace) }
+            }
+            Section("Business-Dashboards") {
+                Picker("Standardansicht", selection: Binding(get: { store.defaultComparisonNet }, set: { net in
+                    guard !savingDashboardBasis else { return }
+                    savingDashboardBasis = true
+                    dashboardError = ""
+                    Task {
+                        defer { savingDashboardBasis = false }
+                        do { try await store.setDashboardDefault(net: net) }
+                        catch { dashboardError = "Die Standardansicht konnte nicht gespeichert werden. Bitte versuche es erneut." }
+                    }
+                })) {
+                    Text("Brutto").tag(false)
+                    Text("Netto").tag(true)
+                }.disabled(savingDashboardBasis)
+                if !dashboardError.isEmpty { Text(dashboardError).font(.footnote).foregroundStyle(.secondary) }
             }
             Section("Erscheinungsbild") {
                 ForEach(NjoraAppearance.allCases, id: \.self) { option in

@@ -74,6 +74,7 @@ struct AccountPayload: Decodable {
         let displayName: String
         let email: String
         var accountCreatedAt: String? = nil
+        var dashboardBasis: String? = nil
     }
     let authenticated: Bool
     let user: User
@@ -236,6 +237,12 @@ actor NjoraAPI {
         }
         try SessionKeychain.write(cookie.value)
         token = cookie.value
+    }
+
+    func setDashboardBasis(_ basis: String, session: String) async throws {
+        struct Preference: Decodable { let dashboardBasis: String }
+        let saved: Preference = try await request("/api/account", method: "PATCH", body: ["dashboardBasis": .string(basis)], expectedSession: session)
+        guard saved.dashboardBasis == basis else { throw APIError(0, "Die Standardansicht konnte nicht gespeichert werden.") }
     }
 
     func sharing<T: Decodable>(_ fields: Record, session: String, writePlan: Bool) async throws -> T {

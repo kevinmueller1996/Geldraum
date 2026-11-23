@@ -7,6 +7,11 @@ export const users = sqliteTable("users", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const dashboardPreferences = sqliteTable("dashboard_preferences", {
+  userId: text("user_id").primaryKey().references(() => users.id, {onDelete: "cascade"}),
+  basis: text("basis", {enum: ["gross", "net"]}).notNull(),
+});
+
 export const financePlans = sqliteTable("finance_plans", {
   userId: text("user_id").primaryKey().references(() => users.id),
   planJson: text("plan_json").notNull(),

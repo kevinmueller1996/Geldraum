@@ -117,6 +117,14 @@ test("verification, recovery, plan revisions and dependent records across one ac
   const cookie = "__Host-njora_session=" + login.token;
   const originalProfile = await (await account.GET(request("/api/account","GET",null,cookie))).json();
   assert.ok(Number.isFinite(Date.parse(originalProfile.user.accountCreatedAt)));
+  assert.equal(originalProfile.user.dashboardBasis, "gross");
+  const preference = (dashboardBasis, session) => account.PATCH(request("/api/account", "PATCH", {dashboardBasis}, session));
+  assert.equal((await preference("net", "")).status, 401);
+  assert.equal((await preference("invalid", cookie)).status, 400);
+  assert.equal((await preference("net", cookie)).status, 200);
+  const reloaded = await (await account.GET(request("/api/account/business", "GET", null, cookie))).json();
+  assert.equal(reloaded.user.dashboardBasis, "net");
+  assert.equal(reloaded.revision, null);
   const put = (revision,name,c = cookie) => account.PUT(request("/api/account","PUT",{revision,plan:{...example,name}},c));
   assert.equal((await put(7,"outdated")).status,409);
   assert.equal((await put(null,"initial")).status,200);
@@ -380,6 +388,9 @@ test("sharing binds each grant to one verified recipient, owner, role and worksp
   assert.equal((await call(partner,"private","plan",{id:business})).status,404);
   assert.equal((await call(partner,"private","plan",{id:personal})).status,404);
   assert.equal((await (await call(spouse,"private","plan",{id:personal})).json()).plan.name,"Privat");
+  assert.equal((await account.PATCH(request("/api/account","PATCH",{dashboardBasis:"net"},partner))).status,200);
+  assert.equal((await (await call(partner,"business","plan",{id:business})).json()).dashboardBasis,"net");
+  assert.equal((await (await account.GET(request("/api/account/business","GET",null,owner))).json()).user.dashboardBasis,"gross");
   assert.equal((await write(spouse,"private",personal,1,"Changed")).status,403);
   assert.equal((await write(partner,"business",business,1,"Firma aktualisiert")).status,200);
   assert.equal((await write(partner,"business",business,1,"Veraltet")).status,409);

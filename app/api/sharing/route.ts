@@ -85,9 +85,9 @@ async function handle(req: NextRequest) {
     return error("Für diesen Bereich ist ein aktives Abo des Inhabers erforderlich.",402);
   if (action === "status") return reply({ok:true});
   if (req.method === "POST") {
-    const row = await db.prepare(`SELECT p.plan_json,p.revision,s.role FROM workspace_shares s LEFT JOIN ${table} p ON p.user_id=s.owner_id WHERE ${access}`)
-      .bind(...args).first<{plan_json:string|null;revision:number|null;role:string}>();
-    return row ? reply({plan:row.plan_json ? normalizePlanCategories(JSON.parse(row.plan_json)) : null, revision:row.revision,role:row.role}) : missing();
+    const row = await db.prepare(`SELECT p.plan_json,p.revision,s.role,pref.basis FROM workspace_shares s LEFT JOIN dashboard_preferences pref ON pref.user_id=s.accepted_by LEFT JOIN ${table} p ON p.user_id=s.owner_id WHERE ${access}`)
+      .bind(...args).first<{plan_json:string|null;revision:number|null;role:string;basis:string|null}>();
+    return row ? reply({plan:row.plan_json ? normalizePlanCategories(JSON.parse(row.plan_json)) : null, revision:row.revision,role:row.role,dashboardBasis:row.basis ?? "gross"}) : missing();
   }
   if (!isPlan(data.plan) || !(data.revision === null || Number.isSafeInteger(data.revision) && data.revision>0)) return error("Bitte prüfe den Finanzplan.",400);
   const content = JSON.stringify(normalizePlanCategories(data.plan));

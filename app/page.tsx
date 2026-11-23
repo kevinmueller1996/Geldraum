@@ -56,7 +56,7 @@ export type Plan = {
   checkInCadence: "daily" | "weekly";
   scenario: { name: string; cost: number; equity: number };
 };
-export type CloudUser = { displayName: string; email: string; local?: boolean; accountCreatedAt?: string };
+export type CloudUser = { dashboardBasis?: VatBasis; displayName: string; email: string; local?: boolean; accountCreatedAt?: string };
 type AuthStatus = "loading" | "authenticated" | "anonymous" | "unavailable";
 type SyncStatus = "idle" | "saving" | "saved" | "pending" | "offline" | "error" | "conflict";
 
@@ -298,13 +298,18 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   const [checkInAccounts, setCheckInAccounts] = useState<Account[]>([]);
   const [checkInDate, setCheckInDate] = useState("");
   const [revenueDrafts, setRevenueDrafts] = useState<Record<string, RevenueDraft>>({});
-  const [comparison, setComparison] = useState<VatBasis>("gross");
+  const [comparisonOverride, setComparison] = useState<VatBasis | null>(null);
+  const [sharedBasis, setSharedBasis] = useState<VatBasis>("gross");
+  const [savingBasis, setSavingBasis] = useState(false);
+  const [basisError, setBasisError] = useState("");
   const [checkInNote, setCheckInNote] = useState("");
   const [importPreview, setImportPreview] = useState<Plan | null>(null);
   const [importError, setImportError] = useState("");
   const [importText, setImportText] = useState("");
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [cloudUser, setCloudUser] = useState<CloudUser | null>(null);
+  const defaultBasis = grant ? sharedBasis : cloudUser?.dashboardBasis ?? "gross";
+  const comparison = comparisonOverride ?? defaultBasis;
   const browserReady = useBrowserReady();
   const isLocalMode = browserReady && isLocalHostname(window.location.hostname);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
@@ -328,10 +333,10 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
     if (grant !== null) {
       async function loadShared() {
         try {
-          const result = await sharing<{plan:Plan|null;revision:number|null;role:Access}>(space,"plan",{id:grant});
+          const result = await sharing<{plan:Plan|null;revision:number|null;role:Access;dashboardBasis?:VatBasis}>(space,"plan",{id:grant});
           if(cancelled) return;
           const loaded = result.plan ? normalizePlan(result.plan) : null;
-          setAccess(result.role); setPlan(loaded); setReady(true);
+          setSharedBasis(result.dashboardBasis ?? "gross"); setAccess(result.role); setPlan(loaded); setReady(true);
           if(loaded) setDraft(loaded);
           sharedRevision.current=result.revision;
           setAuthStatus("authenticated"); setSyncStatus("saved");
@@ -699,6 +704,26 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
     setEditing(false);
     setEditorScope(null);
     setEditorTarget(null);
+  }
+
+  async function saveDashboardBasis(basis: VatBasis) {
+    const copy = current.current;
+    if (!copy || savingBasis || copy.session !== currentSession()) return;
+    setSavingBasis(true);
+    setBasisError("");
+    try {
+      const response = await fetch("/api/account", {method: "PATCH", headers: {
+        "Content-Type": "application/json", "x-njora-browser-session": copy.session
+      }, body: JSON.stringify({dashboardBasis: basis}), signal: AbortSignal.timeout(15000)});
+      if (!response.ok || (await response.json()).dashboardBasis !== basis) throw new Error();
+      if (copy.session !== currentSession()) return;
+      setCloudUser(user => user ? {...user, dashboardBasis: basis} : user);
+      setComparison(null);
+      channel.current?.postMessage("dashboard-preference");
+      syncNow.current();
+    } catch {
+      setBasisError("Die Standardansicht konnte nicht gespeichert werden. Bitte versuche es erneut.");
+    } finally { setSavingBasis(false); }
   }
 
   async function persistPlan(next: Plan, base = plan) {
@@ -1284,6 +1309,13 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, {business ? "Vermögenswerte" : "Ziele, Ersparnisse"} und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
           </>}
           <a className="settings-card" href={sharePath}><strong>{business?"Business":"Privat"} teilen und Freigaben verwalten</strong></a>
+          <article className="account-card">
+            <h3>Business-Dashboards</h3>
+            <label className="comparison-basis">Standardansicht<select value={defaultBasis} disabled={savingBasis} onChange={event => void saveDashboardBasis(event.target.value === "net" ? "net" : "gross")}>
+              <option value="gross">Brutto</option><option value="net">Netto</option>
+            </select></label>
+            {basisError && <p role="alert">{basisError}</p>}
+          </article>
           <AppearancePicker {...appearance} />
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />

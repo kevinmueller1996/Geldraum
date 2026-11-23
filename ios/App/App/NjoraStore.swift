@@ -19,7 +19,12 @@ final class NjoraStore: ObservableObject {
         didSet { updateWidget() }
     }
     @Published private(set) var user: AccountPayload.User?
-    @Published private(set) var accountLifetime = UUID()
+    @Published private(set) var accountLifetime = UUID() {
+        didSet { comparisonOverride = nil }
+    }
+    @Published var comparisonOverride: Bool?
+    var defaultComparisonNet: Bool { user?.dashboardBasis == "net" }
+    var comparisonNet: Bool { comparisonOverride ?? defaultComparisonNet }
     @Published private(set) var busy = false
     enum NoticeScope: Hashable {
         case account, overview, month, section(PlanSection), editor, settings
@@ -78,6 +83,22 @@ final class NjoraStore: ObservableObject {
             if path.status == .satisfied { Task { @MainActor in self?.requestSync() } }
         }
         monitor.start(queue: DispatchQueue(label: "de.njora.connectivity"))
+    }
+
+    func setDashboardDefault(net: Bool) async throws {
+        guard let session else { throw APIError(401, "Bitte melde dich an.") }
+        let generation = epoch
+        // Finish any older read before persisting the new account preference.
+        if let syncTask { _ = await syncTask.value }
+        try Task.checkCancellation()
+        guard generation == epoch else { throw CancellationError() }
+        let basis = net ? "net" : "gross"
+        try await api.setDashboardBasis(basis, session: session)
+        guard generation == epoch, var record = local else { throw CancellationError() }
+        record.user.dashboardBasis = basis
+        try persist(record)
+        comparisonOverride = nil
+        requestSync()
     }
 
     func sharing<T: Decodable & Sendable>(_ action: String, workspace: FinanceWorkspace, fields: Record = [:], writePlan: Bool = false) async throws -> T {
@@ -324,7 +345,7 @@ final class NjoraStore: ObservableObject {
                 record = cached
             } else {
                 let reply = try await api.account(session: session, workspace: target)
-                guard epoch == previousEpoch, reply.user == user else { throw CancellationError() }
+                guard epoch == previousEpoch, reply.user.email == user.email, reply.user.accountCreatedAt == user.accountCreatedAt else { throw CancellationError() }
                 record = .cloud(reply)
                 try disk.write(record, to: targetFile)
             }
@@ -386,6 +407,7 @@ final class NjoraStore: ObservableObject {
         syncStatus = ""
         conflict = false
         user = nil
+        comparisonOverride = nil
         billing = nil
         plan = nil
         state = .signedOut
@@ -410,6 +432,7 @@ final class NjoraStore: ObservableObject {
         local = nil
         plan = nil
         user = nil
+        comparisonOverride = nil
         billing = nil
         workspace = .personal
         session = await api.sessionID()

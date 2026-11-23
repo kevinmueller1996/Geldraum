@@ -112,17 +112,17 @@ async function getAccount(request: NextRequest) {
     const billing = billingEnabled(id) && !identity.local ? await membership(await subscriber(id, identity.accountCreatedAt, planTable(request) === "business_plans" ? "business" : "private")) : null;
     const table = planTable(request);
     const otherTable = table === "business_plans" ? "finance_plans" : "business_plans";
-    const result = await db.prepare(`SELECT users.created_at, p.plan_json, p.revision, p.updated_at,
+    const result = await db.prepare(`SELECT users.created_at, pref.basis AS dashboard_basis, p.plan_json, p.revision, p.updated_at,
         json_extract(other.plan_json, '$.name') AS other_name
-      FROM users LEFT JOIN ${table} p ON p.user_id=users.id
+      FROM users LEFT JOIN dashboard_preferences pref ON pref.user_id=users.id LEFT JOIN ${table} p ON p.user_id=users.id
       LEFT JOIN ${otherTable} other ON other.user_id=users.id
       WHERE users.id=? AND (? IS NULL OR users.created_at=?)`)
       .bind(id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null)
-      .first<{ created_at: string; other_name: string | null; plan_json: string | null; revision: number | null; updated_at: string | null }>();
+      .first<{ created_at: string; dashboard_basis: string | null; other_name: string | null; plan_json: string | null; revision: number | null; updated_at: string | null }>();
     if (!result) return json({ authenticated: false }, 401);
     return json({
       authenticated: true, billing, otherWorkspaceName: result.other_name, workspace: table === "business_plans" ? "business" : "private",
-      user: { displayName: identity.displayName, email: identity.email, local: identity.local, accountCreatedAt: result.created_at },
+      user: { displayName: identity.displayName, email: identity.email, local: identity.local, accountCreatedAt: result.created_at, dashboardBasis: result.dashboard_basis ?? "gross" },
       plan: result.plan_json ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
       revision: result.revision,
       updatedAt: result.updated_at,
@@ -175,6 +175,29 @@ export async function PUT(request: NextRequest) {
   } catch {
     return json({ error: "Deine Änderungen konnten gerade nicht gespeichert werden." }, 503);
   }
+}
+
+// A display preference belongs to the signed-in person, independently of plan ownership or billing.
+export async function PATCH(request: NextRequest) {
+  if (await wrongSession(request)) return json({error: "Die Sitzung hat gewechselt."}, 412);
+  if (!isSameOrigin(request)) return json({error: "Unzulässige Anfrage."}, 403);
+  if (needsCloudflareBackendProxy()) return proxyApiRequest(request);
+  if (!request.headers.get("content-type")?.startsWith("application/json")) return json({error: "JSON erwartet."}, 415);
+  const identity = await requestIdentity(request);
+  if (!identity) return json({authenticated: false}, 401);
+  let basis: unknown;
+  try {
+    basis = JSON.parse(new TextDecoder().decode(await readBodyBytes(request, 256)))?.dashboardBasis;
+  } catch { return json({error: "Ungültige Dashboard-Einstellung."}, 400); }
+  if (basis !== "gross" && basis !== "net") return json({error: "Bitte Brutto oder Netto auswählen."}, 400);
+  try {
+    const {db, id} = await upsertUser(identity);
+    const lifetime = identity.accountCreatedAt ?? null;
+    const result = await db.prepare(`INSERT INTO dashboard_preferences (user_id, basis)
+      SELECT id, ? FROM users WHERE id=? AND (? IS NULL OR created_at=?)
+      ON CONFLICT(user_id) DO UPDATE SET basis=excluded.basis`).bind(basis, id, lifetime, lifetime).run();
+    return result.meta.changes ? json({dashboardBasis: basis}) : json({authenticated: false}, 401);
+  } catch { return json({error: "Die Standardansicht konnte nicht gespeichert werden."}, 503); }
 }
 
 export async function DELETE(request: NextRequest) {

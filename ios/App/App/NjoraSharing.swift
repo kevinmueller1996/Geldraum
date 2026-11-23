@@ -115,7 +115,6 @@ private struct SharingList: View {
 }
 
 private struct SharedFinance: View {
-    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @ObservedObject var store: NjoraStore
     let workspace: FinanceWorkspace
     let grant: Grant
@@ -134,11 +133,11 @@ private struct SharedFinance: View {
         List {
             Section { Text(grant.email); Text(grant.permission).font(.footnote) }
             if let record, let plan = record.plan {
-                if workspace == .business { ComparisonPicker() }
+                if workspace == .business { ComparisonPicker(store: store) }
                 if workspace == .business, !plan.monthlyRevenue.isEmpty {
-                    Section(comparisonNet ? "Monatsumsatz netto" : "Monatsumsatz brutto") {
+                    Section(store.comparisonNet ? "Monatsumsatz netto" : "Monatsumsatz brutto") {
                         ForEach(plan.monthlyRevenue.keys.sorted(by: >), id: \.self) { month in
-                            LabeledContent(month, value: plan.revenueValue(month, net: comparisonNet).map(euros) ?? "Steuerangabe fehlt")
+                            LabeledContent(month, value: plan.revenueValue(month, net: store.comparisonNet).map(euros) ?? "Steuerangabe fehlt")
                         }
                     }
                 }
@@ -172,10 +171,10 @@ private struct SharedFinance: View {
                     LabeledContent(item.fields.text("date"), value: item.fields["netBalance"]?.number.map(euros) ?? item.fields.text("note"))
                 } else if editable {
                     Button { selection = Selection(section: section, item: item, snapshot: snapshot) } label: {
-                        PlanItemRow(item: item, section: section, businessAssets: business, businessWorkspace: business)
+                        PlanItemRow(item: item, section: section, businessAssets: business, businessWorkspace: business, comparisonNet: store.comparisonNet)
                     }.buttonStyle(.plain)
                 } else {
-                    PlanItemRow(item: item, section: section, businessAssets: business, businessWorkspace: business)
+                    PlanItemRow(item: item, section: section, businessAssets: business, businessWorkspace: business, comparisonNet: store.comparisonNet)
                 }
             }
             if editable && section != .annual && plan[section].count < section.limit {
