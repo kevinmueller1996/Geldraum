@@ -711,7 +711,7 @@ struct PlanSectionView: View {
                                         Text(item.fields.text("note")).font(.footnote).foregroundStyle(.secondary)
                                     }
                                 }
-                                .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
+                                .swipeActions { Button("Löschen") { pendingRemoval = item }.tint(.red) }
                             } else {
                                 editableRow(item)
                             }
@@ -742,17 +742,20 @@ struct PlanSectionView: View {
             .sheet(item: $selection) { item in
                 PlanEditor(section: section, item: item, plan: plan, store: store)
             }
-            .confirmationDialog("Eintrag löschen?", isPresented: Binding(
-                get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }
-            ), titleVisibility: .visible) {
-                if let item = pendingRemoval {
-                    Button("Löschen", role: .destructive) {
-                        var changed = plan
-                        changed[section] = plan[section].filter { $0.id != item.id }
-                        let result = changed
-                        Task { _ = await store.save(result, basedOn: plan, in: .section(section)) }
-                    }
-                }
+            .alert(item: $pendingRemoval) { item in
+                let name = item.name.isEmpty ? section.itemTitle : item.name
+                let date = item.fields.text("date")
+                let label = section == .history
+                    ? "Check-in vom " + (PlanDate.parse(date)?.formatted(date: .abbreviated, time: .omitted) ?? date)
+                    : "„" + name + "“"
+                return Alert(title: Text("Eintrag löschen?"), message: Text("\(label) aus deinem Plan entfernen?"),
+                             primaryButton: .destructive(Text("Löschen")) {
+                                 var changed = plan
+                                 changed[section] = plan[section].filter { $0.id != item.id }
+                                 let result = changed
+                                 Task { _ = await store.save(result, basedOn: plan, in: .section(section)) }
+                             },
+                             secondaryButton: .cancel(Text("Abbrechen")))
             }
         }
     }
@@ -760,7 +763,7 @@ struct PlanSectionView: View {
         Button { selection = item } label: {
             PlanItemRow(item: item, section: section, businessAssets: businessAssets).contentShape(Rectangle())
         }.buttonStyle(.plain)
-        .swipeActions { Button("Löschen", role: .destructive) { pendingRemoval = item } }
+        .swipeActions { Button("Löschen") { pendingRemoval = item }.tint(.red) }
     }
 
 }
