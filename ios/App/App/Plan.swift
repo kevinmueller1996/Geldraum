@@ -382,8 +382,11 @@ struct PlanItem: Identifiable, Equatable {
     }
     func monthlyExpense(on date: Date) -> Double { frequency == .once ? 0 : expenseAmount(on: date) / Double(frequency.months) }
     var monthlyExpense: Double { monthlyExpense(on: .now) }
-    func annualExpenseCents(on date: Date) -> Double {
-        frequency == .once ? 0 : budgetCents(expenseAmount(on: date)) * Double(12 / frequency.months)
+    func annualExpenseCents(on date: Date, net: Bool = false) -> Double {
+        guard frequency != .once else { return 0 }
+        let gross = expenseAmount(on: date)
+        let amount = net ? ExpenseVAT.convert(gross, rate: fields.amount("vatRate"), toGross: false) : gross
+        return budgetCents(amount) * Double(12 / frequency.months)
     }
 
     var netBalance: Double { fields.amount("balance") * (fields.text("type") == "credit" ? -1 : 1) }
@@ -612,23 +615,29 @@ struct PlanMetrics {
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
-    var fixedCosts: Double {
+    var fixedCosts: Double { monthlyFixedCosts(net: false) }
+    func monthlyFixedCosts(net: Bool) -> Double {
         let loanCents = plan[.loans].reduce(0.0) { $0 + 12 * budgetCents($1.loanPayment(on: today)) }
-        return plan[.expenses].reduce(loanCents) { $0 + $1.annualExpenseCents(on: today) } / 1200
+        return plan[.expenses].reduce(loanCents) { $0 + $1.annualExpenseCents(on: today, net: net) } / 1200
     }
-    var rankedCategories: [(name: String, amount: Double)] {
+    var rankedCategories: [(name: String, amount: Double, net: Double)] {
         var totals: [String: Double] = [:]
+        var netTotals: [String: Double] = [:]
         var labels: [String: String] = [:]
-        func add(_ category: String, amount: Double) {
+        func add(_ category: String, amount: Double, net: Double) {
             let label = category.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
             let name = label.isEmpty ? "Sonstige" : label
             let key = name.lowercased()
             if labels[key] == nil { labels[key] = name }
             totals[key, default: 0] += amount
+            netTotals[key, default: 0] += net
         }
-        for item in plan[.expenses] where item.frequency != .once { add(item.expenseCategory, amount: item.annualExpenseCents(on: today)) }
-        for loan in loansWithPayments { add(loan.loanCategory, amount: 12 * budgetCents(loan.loanPayment(on: today))) }
-        return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value / 1200) }.sorted {
+        for item in plan[.expenses] where item.frequency != .once { add(item.expenseCategory, amount: item.annualExpenseCents(on: today), net: item.annualExpenseCents(on: today, net: true)) }
+        for loan in loansWithPayments {
+            let amount = 12 * budgetCents(loan.loanPayment(on: today))
+            add(loan.loanCategory, amount: amount, net: amount)
+        }
+        return totals.map { (name: labels[$0.key] ?? $0.key, amount: $0.value / 1200, net: netTotals[$0.key, default: 0] / 1200) }.sorted {
             if $0.amount != $1.amount { return $0.amount > $1.amount }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
@@ -641,6 +650,9 @@ struct PlanMetrics {
     }
     var payments: Double { plan[.loans].reduce(0) { $0 + $1.loanPayment(on: today) } }
     var flexibleBudget: Double { plan[.flexible].reduce(0) { $0 + ($1.fields.amount("amount") * 100).rounded() } / 100 }
+    var netFlexibleBudget: Double {
+        plan[.flexible].reduce(0) { $0 + budgetCents(ExpenseVAT.convert($1.fields.amount("amount"), rate: $1.fields.amount("vatRate"), toGross: false)) } / 100
+    }
     var available: Double { income - fixedCosts - flexibleBudget }
     var annualIncome: [PlanItem] { plan[.income].filter { $0.fields.flag("annual") && $0.fields.integer("month") == month } }
     var specialCosts: [PlanItem] {

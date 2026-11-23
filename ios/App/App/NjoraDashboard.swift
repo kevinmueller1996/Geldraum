@@ -512,10 +512,14 @@ struct MonthlyPlan: View {
                             }
                             Divider()
                             monthRow(section: .expenses) {
-                                LabeledAmount(label: store.workspace == .business ? "Betriebskosten brutto inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts)
+                                LabeledAmount(label: store.workspace == .business ? "Betriebskosten brutto inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts,
+                                              detail: store.workspace == .business ? euros(-metrics.monthlyFixedCosts(net: true)) + " netto" : nil)
                             }
                             Divider()
-                            monthRow(section: .flexible) { LabeledAmount(label: "Flexible Kosten", amount: -metrics.flexibleBudget) }
+                            monthRow(section: .flexible) {
+                                LabeledAmount(label: store.workspace == .business ? "Flexible Kosten brutto" : "Flexible Kosten", amount: -metrics.flexibleBudget,
+                                              detail: store.workspace == .business ? euros(-metrics.netFlexibleBudget) + " netto" : nil)
+                            }
                         }
                         .njoraCard(theme.card)
                         if !categories.isEmpty {
@@ -539,12 +543,13 @@ struct MonthlyPlan: View {
         }.background(theme.paper)
     }
 
-    private func categoryRow(_ category: (name: String, amount: Double), income: Double) -> some View {
+    private func categoryRow(_ category: (name: String, amount: Double, net: Double), income: Double) -> some View {
         monthRow(section: .expenses, category: category.name) {
             let share = income > 0 ? category.amount / income : nil
             VStack(alignment: .leading, spacing: 6) {
+                let percent = share.map { $0.formatted(.percent.precision(.fractionLength(0...1)).locale(Locale(identifier: "de_DE"))) }
                 LabeledAmount(label: category.name, amount: category.amount,
-                              detail: share.map { $0.formatted(.percent.precision(.fractionLength(0...1)).locale(Locale(identifier: "de_DE"))) })
+                              detail: store.workspace == .business ? ["brutto · " + euros(category.net) + " netto", percent].compactMap { $0 }.joined(separator: " · ") : percent)
                 GeometryReader { area in
                     let ratio = min(1, max(0, share ?? 0))
                     ZStack(alignment: .leading) {

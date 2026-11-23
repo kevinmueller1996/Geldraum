@@ -157,6 +157,7 @@ struct PlanEditor: View {
 
     @State private var vatEntry: String?
     @State private var vatRateEntry: String?
+    @FocusState private var editingVatRate: Bool
     private var businessExpense: Bool { (sharedWorkspace ?? store.workspace) == .business && ([PlanSection.expenses, .annual, .flexible].contains(section)) }
     private var businessAssets: Bool { section == .savings && (sharedWorkspace ?? store.workspace) == .business }
     private var assetTitle: String { businessAssets ? "Vermögenswert" : section.itemTitle }
@@ -359,15 +360,17 @@ struct PlanEditor: View {
                 updateGrossExpense(entersNet ? ExpenseVAT.convert(value, rate: vatRate, toGross: true) : value)
             }
         }), prompt: "0,00", unit: "€", keyboard: section == .flexible ? .decimalPad : .numbersAndPunctuation)
-        PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? editableAmount(vatRate) }, set: { text in
+        PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? ((editingVatRate && vatRate == 0) ? "" : item.fields["vatRate"]?.number.map(editableAmount) ?? "") }, set: { text in
             guard text.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) != nil,
                   let rate = germanAmount(text), rate <= 100 else { return }
             vatRateEntry = text
-            guard rate != vatRate else { return }
+            let previousRate = vatRate
             let net = vatEntry.flatMap(germanAmount) ?? netExpense
-            item.fields["vatRate"] = .number(rate)
-            if entersNet { updateGrossExpense(ExpenseVAT.convert(net, rate: rate, toGross: true)) }
-        }), prompt: "0", unit: "%", keyboard: .decimalPad)
+            item.fields["vatRate"] = text.isEmpty ? nil : .number(rate)
+            if entersNet && rate != previousRate { updateGrossExpense(ExpenseVAT.convert(net, rate: rate, toGross: true)) }
+        }), unit: "%", keyboard: .decimalPad)
+        .focused($editingVatRate)
+        .onChange(of: editingVatRate) { focused in if !focused { vatRateEntry = nil } }
         LabeledContent(entersNet ? "Bruttobetrag" : "Nettobetrag", value: euros(entersNet ? grossExpense : netExpense))
         LabeledContent("Enthaltene Umsatzsteuer", value: euros(grossExpense - netExpense))
     }

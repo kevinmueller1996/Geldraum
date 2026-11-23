@@ -260,6 +260,20 @@ test("business expenses use the same payable cents for either input basis", asyn
   }
 });
 
+test("business monthly net totals convert each payable amount before averaging", async () => {
+  const { averageMonthlyCosts, flexibleMonthlyBudget } = await import("../app/recurring-costs.ts");
+  const expenses = [
+    { amount: 119, vatRate: 19, rateChanges: [{ date: "2026-02-01", amount: 238 }] },
+    { amount: 321, frequency: "quarterly", vatRate: 7 },
+    { amount: 120, frequency: "annual" }, { amount: -11.90, vatRate: 19 },
+    { amount: 119, frequency: "once", vatRate: 19 }
+  ];
+  const loans = [{ balance: 400, payment: 25 }];
+  assert.equal(averageMonthlyCosts(expenses, loans, "2026-02-20", "net"), 325);
+  assert.equal(averageMonthlyCosts(expenses, loans, "2026-02-20"), 368.1);
+  assert.equal(flexibleMonthlyBudget([{ amount: 119, vatRate: 19 }, { amount: 10 }, { amount: 3, vatRate: 0 }], "net"), 113);
+});
+
 test("loan priority is optional, round-trips and uses amortized balances", async () => {
   const { currentLoan } = await import("../app/loan-schedule.ts");
   const loan = { id: "a", name: "Test", balance: 200, payment: 20, balanceDate: "2026-01-01", bookingDay: 1 };

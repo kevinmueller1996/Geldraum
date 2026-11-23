@@ -1002,7 +1002,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
     ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: item.amount, type: "income" as const })),
     ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
   ];
-  const monthOutflows = groupedExpenses.map(({ category: label, value, color }) => ({ label, value, color }));
+  const monthOutflows = groupedExpenses.map(({ category: label, value, color, expenses, loans }) => ({ label, value, color, net: business ? averageMonthlyCosts(expenses, loans, today, "net") : undefined }));
   const selectedCostGroup = groupedExpenses.find(group => group.category === costDetail.category);
   const costItems = costDetail.category ? selectedCostGroup?.expenses ?? [] : active.expenses;
   const costLoans = (costDetail.category ? selectedCostGroup?.loans ?? [] : active.commitments)
@@ -1170,13 +1170,13 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
         {business && activeView === "revenue" && plan && <RevenueHistory readOnly={!!grant && access === "view"} plan={plan} today={today} save={persistPlan} problem={problem} />}
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
-          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label={business ? "Betriebskosten brutto" : "Fixkosten"} value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /><SummaryCard label="Flexible Kosten" value={metrics.flexible} onClick={() => openFocusedEditor("flexible")} /></div>
+          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label={business ? "Betriebskosten brutto" : "Fixkosten"} value={metrics.fixedCosts} net={business ? averageMonthlyCosts(active.expenses, active.commitments, today, "net") : undefined} tone="coral" onClick={() => showCosts("month")} /><SummaryCard label={business ? "Flexible Kosten brutto" : "Flexible Kosten"} net={business ? flexibleMonthlyBudget(active.flexibleCosts, "net") : undefined} value={metrics.flexible} onClick={() => openFocusedEditor("flexible")} /></div>
           <article className="detail-card flow-detail">
             <div className="section-title compact"><div><h2>Durchschnittliche Kosten je Kategorie</h2><small>{metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen."}</small></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong>{metrics.income > 0 && <span>{incomePercent.format((metrics.fixedCosts + metrics.flexible) / metrics.income)} verplant</span>}</div></div>
             {metrics.income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / metrics.income * 100}%`, backgroundColor: item.color }} key={item.label} />)}{metrics.flexible > 0 && <i title="Flexible Kosten" style={{ width: `${metrics.flexible / metrics.income * 100}%`, backgroundColor: "var(--ink)" }} />}</div>}
             <div className="flow-list">{monthOutflows.map((item) => {
               const share = metrics.income > 0 ? item.value / metrics.income : null;
-              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>;
+              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{item.net !== undefined && <small>brutto · {exactEuros.format(item.net)} netto</small>}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>;
             })}</div>
           </article>
           </div>
@@ -1499,8 +1499,8 @@ function ViewHeader({ id, eyebrow, title, copy, total }: { id: string; eyebrow: 
     <p>{copy}</p></header>;
 }
 
-function SummaryCard({ label, value, tone = "", onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) {
-  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} <UiIcon name="next" /></span><strong>{exactEuros.format(value)}</strong></button>;
+function SummaryCard({ label, value, net, tone = "", onClick }: { label: string; value: number; net?: number; tone?: string; onClick?: () => void }) {
+  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} <UiIcon name="next" /></span><strong>{exactEuros.format(value)}</strong>{net !== undefined && <small>{exactEuros.format(net)} netto</small>}</button>;
   return <article className={`summary-card ${tone}`}><span>{label}</span><strong>{euro(value)}</strong></article>;
 }
 
@@ -1554,14 +1554,16 @@ function BusinessExpenseAmount({ item, day, update, signed = true }: { signed?: 
     </select></label>
     <label>{basis === "net" ? "Nettobetrag" : "Bruttobetrag"} (€)<DecimalInput key={basis} signed={signed} value={basis === "net" ? net : gross}
       onValueChange={amount => setGross(basis === "net" ? grossFromNet(amount, rate) : amount)} placeholder="0,00" /></label>
-    <label>Steuersatz (%)<input type="text" inputMode="decimal" placeholder="0" value={rateDraft ?? String(rate).replace(".", ",")}
+    <label>Steuersatz (%)<input type="text" inputMode="decimal" value={rateDraft ?? (item.vatRate === undefined ? "" : String(rate).replace(".", ","))}
+      onFocus={() => { if (rate === 0) setRateDraft(""); }}
       onChange={event => {
         const text = event.target.value;
         if (!/^\d{0,3}(?:[,.]\d{0,2})?$/.test(text)) return;
         const next = Number(text.replace(",", ".") || 0);
         if (!Number.isFinite(next) || next > 100) return;
         setRateDraft(text);
-        if (next !== rate) setGross(basis === "net" ? grossFromNet(net, next) : gross, { vatRate: next });
+        const storedRate = text === "" ? undefined : next;
+        if (storedRate !== item.vatRate) setGross(basis === "net" && rate !== next ? grossFromNet(net, next) : gross, { vatRate: storedRate });
       }} onBlur={() => setRateDraft(null)} /></label>
     <span className="vat-summary">{exactEuros.format(net)} netto · {exactEuros.format(gross - net)} USt. · {exactEuros.format(gross)} brutto</span>
   </div>;

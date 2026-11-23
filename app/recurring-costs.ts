@@ -88,8 +88,11 @@ export function isExpenseDue(item: ExpenseSchedule, month: number, year = new Da
 export type Expense = ExpenseSchedule & { id: string; name: string; category: string; bookingDay?: number };
 export type FlexibleCost = Pick<Expense, "id" | "name" | "amount" | "vatRate" | "vatBasis">;
 
-export function flexibleMonthlyBudget(items: FlexibleCost[] = []) {
-  return items.reduce((cents, item) => cents + Math.round(item.amount * 100), 0) / 100;
+export function flexibleMonthlyBudget(items: FlexibleCost[] = [], basis: VatBasis = "gross") {
+  return items.reduce((cents, item) => {
+    const amount = basis === "net" ? netFromGross(item.amount, item.vatRate ?? 0) : item.amount;
+    return cents + Math.round(amount * 100);
+  }, 0) / 100;
 }
 
 export type AnnualCost = Omit<Expense, "category" | "month"> & { category?: string; month: number };
@@ -173,7 +176,7 @@ export function monthlyLoanPayment(loan: LoanPayment) {
 
 // Sum the actual payments as annual cents before dividing. Adding rounded or
 // fractional monthly averages makes half-cent results depend on list order.
-export function averageMonthlyCosts(expenses: ExpenseSchedule[], loans: LoanPayment[], day: string) {
+export function averageMonthlyCosts(expenses: ExpenseSchedule[], loans: LoanPayment[], day: string, basis: VatBasis = "gross") {
   function cents(amount: number) {
     const value = amount * 100, nearest = Math.round(value);
     return Math.abs(value - nearest) <= Math.abs(value) * Number.EPSILON * 4 ? nearest : value;
@@ -181,7 +184,9 @@ export function averageMonthlyCosts(expenses: ExpenseSchedule[], loans: LoanPaym
   let yearly = loans.reduce((sum, loan) => sum + 12 * cents(monthlyLoanPayment(loan)), 0);
   for (const item of expenses) {
     if (item.frequency !== "once") {
-      yearly += cents(expenseAmount(item, day)) * (12 / intervalMonths[item.frequency ?? "monthly"]);
+      const gross = expenseAmount(item, day);
+      const amount = basis === "net" ? netFromGross(gross, item.vatRate ?? 0) : gross;
+      yearly += cents(amount) * (12 / intervalMonths[item.frequency ?? "monthly"]);
     }
   }
   return yearly / 1200;
