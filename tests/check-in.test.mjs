@@ -53,3 +53,35 @@ test("business history covers twelve closed months and distinguishes missing, ze
   assert.deepEqual([stats.count, stats.total, stats.min, stats.max], [3, 175, -25, 200]);
   assert.equal(revenueStats({}, "2026-03-01").count, 0);
 });
+
+test("business revenue comparisons preserve tax basis, mixed tax and cent rounding", async () => {
+  const { tsImport } = await import("tsx/esm/api");
+  const {revenueDraft, revenueAmounts, revenueValue, switchRevenueBasis, withRevenue} = await tsImport("../app/revenue-vat.ts", import.meta.url);
+  const month = "2026-10";
+  const empty = revenueDraft({}, month);
+  assert.equal(empty.basis, "gross");
+  for (const [amount, method, tax, net, gross] of [
+    ["119", "rate", "19", 100, 119], ["1130", "tax", "130", 1000, 1130],
+    ["-119", "rate", "19", -100, -119], ["-1130", "tax", "-130", -1000, -1130],
+    ["0,03", "rate", "19", 0.03, 0.03], ["100", "rate", "0", 100, 100],
+    ["0", "rate", "19", 0, 0]
+  ]) {
+    const draft = {...empty, amount, tax, method};
+    const edited = switchRevenueBasis(draft, "net");
+    assert.equal(edited.basis, "net");
+    const plan = withRevenue({}, month, revenueAmounts(edited));
+    assert.equal(revenueValue(plan, month, "net"), net);
+    assert.equal(revenueValue(plan, month, "gross"), gross);
+    const reopened = revenueDraft(plan, month);
+    assert.deepEqual(revenueAmounts(switchRevenueBasis(reopened, "gross")), revenueAmounts(draft));
+  }
+  const older = {monthlyRevenue: {[month]: 100}};
+  const original = revenueDraft(older, month);
+  assert.equal(original.basis, "net");
+  assert.equal(revenueValue(older, month, "gross"), undefined);
+  assert.deepEqual(revenueAmounts(original), {net: 100});
+  const corrected = withRevenue(older, month, revenueAmounts({...original, tax:"19"}));
+  assert.equal(revenueValue(corrected, month, "gross"), 119);
+  assert.equal(revenueValue({...corrected, monthlyRevenue: {[month]: 80}}, month, "gross"), undefined);
+  assert.equal(revenueAmounts({...empty, amount: "119"}), null);
+});

@@ -12,9 +12,20 @@ private enum DashboardLayout {
     }
 }
 
+struct ComparisonPicker: View {
+    @AppStorage("businessComparisonNet") private var net = false
+    var body: some View {
+        Picker("Vergleichswerte", selection: $net) {
+            Text("Brutto").tag(false)
+            Text("Netto").tag(true)
+        }.pickerStyle(.segmented)
+    }
+}
+
 enum DashboardTab: Hashable { case today, revenue, month, loans, goals, more }
 
 struct Dashboard: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @Environment(\.njoraAppearance) private var theme
     @ObservedObject var store: NjoraStore
     @Binding var tab: DashboardTab
@@ -46,7 +57,7 @@ struct Dashboard: View {
                 }
                 NavigationStack {
                     MonthlyPlan(plan: plan, store: store)
-                        .financialTitle("Monatsplan", width: DashboardLayout.maxWidth, amount: PlanMetrics(plan: plan).available, caption: "Spielraum pro Monat")
+                        .financialTitle("Monatsplan", width: DashboardLayout.maxWidth, amount: PlanMetrics(plan: plan).comparisonTotals(net: business && comparisonNet).surplus, caption: business ? (comparisonNet ? "Saldo netto pro Monat" : "Saldo brutto pro Monat") : "Spielraum pro Monat")
                         .toolbar { ToolbarItem(placement: .navigationBarTrailing) { ProfileButton(store: store) } }
                         .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store) } }
                 }.tabItem { Label("Monatsplan", systemImage: "calendar") }.tag(DashboardTab.month)
@@ -139,6 +150,7 @@ private struct ForecastCard: View {
 }
 
 private struct BusinessOverview: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @Environment(\.njoraAppearance) private var theme
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .body) private var columnThreshold: CGFloat = 820
@@ -154,6 +166,7 @@ private struct BusinessOverview: View {
                 DashboardLayout.columns(window.size.width >= columnThreshold && !typeSize.isAccessibilitySize) {
                     VStack(spacing: 14) {
                         ForecastCard(metrics: metrics, store: store)
+                        ComparisonPicker()
                         revenueCard
                     }.frame(maxWidth: .infinity)
                     VStack(spacing: 14) {
@@ -193,12 +206,12 @@ private struct BusinessOverview: View {
 
     private var revenueCard: some View {
         let month = PlanDate.previousRevenueMonth(for: .now)
-        let amount = plan.monthlyRevenue[month.key]?.number
+        let amount = plan.revenueValue(month.key, net: comparisonNet)
         return VStack(alignment: .leading, spacing: 8) {
             Button { tab = .revenue } label: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Nettoumsatz · " + month.title).font(.subheadline).foregroundStyle(.secondary)
-                    row(amount.map(euros) ?? "Noch offen", value: nil)
+                    Text((comparisonNet ? "Nettoumsatz · " : "Bruttoumsatz · ") + month.title).font(.subheadline).foregroundStyle(.secondary)
+                    row(amount.map(euros) ?? (plan.monthlyRevenue[month.key] == nil ? "Noch offen" : "Steuerangabe fehlt"), value: nil)
                         .font(.title2.weight(.semibold))
                 }
             }.accessibilityHint("Öffnet die Umsatzübersicht der letzten zwölf Monate.")
@@ -212,22 +225,23 @@ private struct BusinessOverview: View {
     }
 
     private func monthlyCard(_ metrics: PlanMetrics) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Monatsplanung").font(.headline).accessibilityAddTraits(.isHeader).padding(.bottom, 6)
+        let totals = metrics.comparisonTotals(net: comparisonNet)
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(comparisonNet ? "Monatsplanung netto" : "Monatsplanung brutto").font(.headline).accessibilityAddTraits(.isHeader).padding(.bottom, 6)
             NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                row("Regelmäßige Einnahmen brutto", value: euros(metrics.income))
+                row("Regelmäßige Einnahmen", value: euros(totals.income))
             }
             Divider()
             NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                row("Fixkosten inkl. Kreditraten", value: euros(metrics.fixedCosts))
+                row("Fixkosten inkl. Kreditraten", value: euros(totals.fixed))
             }
             Divider()
             NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
-                row("Flexible Kosten", value: euros(metrics.flexibleBudget))
+                row("Flexible Kosten", value: euros(totals.flexible))
             }
             Divider()
             Button { tab = .month } label: {
-                row(metrics.available < 0 ? "Fehlbetrag" : "Überschuss", value: euros(metrics.available))
+                row(totals.surplus < 0 ? "Fehlbetrag" : "Überschuss", value: euros(totals.surplus))
                     .fontWeight(.semibold)
             }
         }.njoraCard(theme.card)
@@ -396,7 +410,7 @@ private struct ForecastDetail: View {
             let metrics = PlanMetrics(plan: plan)
             let forecast = metrics.forecast
             List {
-                Section("Rechnung ab heute") {
+                Section(store.workspace == .business ? "Zahlungsbeträge ab heute · brutto" : "Rechnung ab heute") {
                     Button { checkingBalance = true } label: {
                         HStack {
                             LabeledAmount(label: "Kontoguthaben gesamt", amount: forecast.positiveBalance)
@@ -491,6 +505,7 @@ private struct ForecastDetail: View {
 }
 
 struct MonthlyPlan: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @Environment(\.njoraAppearance) private var theme
     let plan: Plan
     @ObservedObject var store: NjoraStore
@@ -499,38 +514,42 @@ struct MonthlyPlan: View {
 
     var body: some View {
         let metrics = PlanMetrics(plan: plan)
-        let categories = metrics.rankedCategories
+        let business = store.workspace == .business
+        let net = business && comparisonNet
+        let totals = metrics.comparisonTotals(net: net)
+        let categories = net ? metrics.rankedCategories.sorted { $0.net != $1.net ? $0.net > $1.net : $0.name.localizedStandardCompare($1.name) == .orderedAscending } : metrics.rankedCategories
         GeometryReader { window in
             let wide = window.size.width >= columnThreshold && !typeSize.isAccessibilitySize
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if business { ComparisonPicker() }
                     DashboardLayout.columns(wide && !categories.isEmpty) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Monatsdurchschnitt").font(.headline).accessibilityAddTraits(.isHeader)
                             monthRow(section: .income) {
-                                LabeledAmount(label: store.workspace == .business ? "Betriebseinnahmen brutto" : "Regelmäßiges Einkommen", amount: metrics.income,
-                                              detail: store.workspace == .business ? euros(metrics.netRegularIncome) + " netto" : nil)
+                                LabeledAmount(label: store.workspace == .business ? (net ? "Betriebseinnahmen netto" : "Betriebseinnahmen brutto") : "Regelmäßiges Einkommen", amount: totals.income,
+                                              detail: store.workspace == .business ? euros(net ? metrics.income : metrics.netRegularIncome) + (net ? " brutto" : " netto") : nil)
                             }
                             Divider()
                             monthRow(section: .expenses) {
-                                LabeledAmount(label: store.workspace == .business ? "Betriebskosten brutto inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts,
-                                              detail: store.workspace == .business ? euros(-metrics.monthlyFixedCosts(net: true)) + " netto" : nil)
+                                LabeledAmount(label: store.workspace == .business ? (net ? "Betriebskosten netto inkl. Kreditraten" : "Betriebskosten brutto inkl. Kreditraten") : "Fixkosten", amount: -totals.fixed,
+                                              detail: store.workspace == .business ? euros(-metrics.monthlyFixedCosts(net: !net)) + (net ? " brutto" : " netto") : nil)
                             }
                             Divider()
                             monthRow(section: .flexible) {
-                                LabeledAmount(label: store.workspace == .business ? "Flexible Kosten brutto" : "Flexible Kosten", amount: -metrics.flexibleBudget,
-                                              detail: store.workspace == .business ? euros(-metrics.netFlexibleBudget) + " netto" : nil)
+                                LabeledAmount(label: store.workspace == .business ? (net ? "Flexible Kosten netto" : "Flexible Kosten brutto") : "Flexible Kosten", amount: -totals.flexible,
+                                              detail: store.workspace == .business ? euros(net ? -metrics.flexibleBudget : -metrics.netFlexibleBudget) + (net ? " brutto" : " netto") : nil)
                             }
                         }
                         .njoraCard(theme.card)
                         if !categories.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Durchschnittliche Kosten je Kategorie").font(.headline).accessibilityAddTraits(.isHeader)
-                                Text(metrics.income > 0 ? (store.workspace == .business ? "Anteil an den regelmäßigen Bruttoeinnahmen" : "Anteil am regelmäßigen Monatseinkommen") : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
+                                Text(totals.income > 0 ? (store.workspace == .business ? (net ? "Anteil an den regelmäßigen Nettoeinnahmen" : "Anteil an den regelmäßigen Bruttoeinnahmen") : "Anteil am regelmäßigen Monatseinkommen") : "Für Prozentanteile ein regelmäßiges Einkommen eintragen.")
                                     .font(.footnote).foregroundStyle(.secondary)
                                 ForEach(categories, id: \.name) { category in
                                     Divider()
-                                    categoryRow(category, income: metrics.income)
+                                    categoryRow(category, income: totals.income, net: net)
                                 }
                             }
                             .njoraCard(theme.card)
@@ -544,13 +563,14 @@ struct MonthlyPlan: View {
         }.background(theme.paper)
     }
 
-    private func categoryRow(_ category: (name: String, amount: Double, net: Double), income: Double) -> some View {
+    private func categoryRow(_ category: (name: String, amount: Double, net: Double), income: Double, net: Bool) -> some View {
         monthRow(section: .expenses, category: category.name) {
-            let share = income > 0 ? category.amount / income : nil
+            let amount = net ? category.net : category.amount
+            let share = income > 0 ? amount / income : nil
             VStack(alignment: .leading, spacing: 6) {
                 let percent = share.map { $0.formatted(.percent.precision(.fractionLength(0...1)).locale(Locale(identifier: "de_DE"))) }
-                LabeledAmount(label: category.name, amount: category.amount,
-                              detail: store.workspace == .business ? ["brutto · " + euros(category.net) + " netto", percent].compactMap { $0 }.joined(separator: " · ") : percent)
+                LabeledAmount(label: category.name, amount: amount,
+                              detail: store.workspace == .business ? [(net ? "netto · " + euros(category.amount) + " brutto" : "brutto · " + euros(category.net) + " netto"), percent].compactMap { $0 }.joined(separator: " · ") : percent)
                 GeometryReader { area in
                     let ratio = min(1, max(0, share ?? 0))
                     ZStack(alignment: .leading) {
@@ -704,12 +724,12 @@ private struct FinancialTitle: View {
 }
 
 private extension PlanMetrics {
-    func titleTotal(for section: PlanSection) -> (amount: Double?, caption: String) {
+    func titleTotal(for section: PlanSection, compareNet: Bool) -> (amount: Double?, caption: String) {
         switch section {
-        case .flexible: (flexibleBudget, "pro Monat")
-        case .expenses: (fixedCosts, "Ø pro Monat")
-        case .income: (incomeThisMonth, "im " + monthNames[month])
-        case .annual: (plan[.annual].sum("amount"), "pro Jahr")
+        case .flexible: (compareNet ? netFlexibleBudget : flexibleBudget, "pro Monat")
+        case .expenses: (monthlyFixedCosts(net: compareNet), "Ø pro Monat")
+        case .income: (compareNet ? netRegularIncome + annualIncome.reduce(0) { $0 + $1.netAmount } : incomeThisMonth, "im " + monthNames[month])
+        case .annual: (compareNet ? plan[.annual].reduce(0) { $0 + $1.netAmount } : plan[.annual].sum("amount"), "pro Jahr")
         case .accounts: (net, "Nettostand")
         case .loans: (plan[.loans].reduce(0) { $0 + $1.loanSchedule().balance }, "Restschuld")
         case .goals: (plan[.goals].sum("saved"), "bereits gespart")
@@ -720,6 +740,7 @@ private extension PlanMetrics {
 }
 
 struct PlanSectionView: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @Environment(\.njoraAppearance) private var theme
     let section: PlanSection
     @ObservedObject var store: NjoraStore
@@ -752,13 +773,16 @@ struct PlanSectionView: View {
         if let plan = store.plan {
             let items = plan.entriesByDueDate(in: section).filter { matches($0.expenseCategory) }
             let metrics = PlanMetrics(plan: plan)
-            let total = metrics.titleTotal(for: section)
+            let taxable = store.workspace == .business && [.income, .expenses, .annual, .flexible].contains(section)
+            let net = taxable && comparisonNet
+            let total = metrics.titleTotal(for: section, compareNet: net)
             let loans = section == .expenses ? metrics.loansWithPayments.filter { matches($0.loanCategory) } : []
-            let categoryTotal = items.reduce(0) { $0 + $1.monthlyExpense } + loans.reduce(0) { $0 + $1.monthlyLoanPayment }
+            let categoryTotal = items.reduce(0) { $0 + $1.annualExpenseCents(on: metrics.today, net: net) / 1200 } + loans.reduce(0) { $0 + $1.monthlyLoanPayment }
             List {
+                if taxable { ComparisonPicker() }
                 if section == .income {
                     Section {
-                        LabeledAmount(label: "Pro Jahr", amount: metrics.incomePerYear)
+                        LabeledAmount(label: "Pro Jahr", amount: net ? plan[.income].reduce(0) { $0 + $1.netAmount * ($1.fields.flag("annual") ? 1 : 12) } : metrics.incomePerYear)
                     }
                 }
                 if section == .loans, items.contains(where: { $0.fields.flag("highPriority") }) {
@@ -834,7 +858,7 @@ struct PlanSectionView: View {
             .frame(maxWidth: DashboardLayout.readingWidth).frame(maxWidth: .infinity)
             .background(theme.paper)
             .refreshable { await store.refresh(in: .section(section)) }
-            .financialTitle(category ?? (businessAssets ? "Vermögenswerte" : section.title), amount: category == nil ? total.amount : categoryTotal, caption: total.caption)
+            .financialTitle(category ?? (businessAssets ? "Vermögenswerte" : section.title), amount: category == nil ? total.amount : categoryTotal, caption: (taxable ? (net ? "Netto · " : "Brutto · ") : "") + total.caption)
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     if section != .history {
@@ -879,6 +903,7 @@ struct PlanSectionView: View {
 }
 
 struct PlanItemRow: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     let item: PlanItem
     let section: PlanSection
     var businessAssets = false
@@ -892,8 +917,10 @@ struct PlanItemRow: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(.orange.opacity(0.18), in: Capsule())
             }
-            LabeledAmount(label: item.name.isEmpty ? section.title : item.name, amount: amount,
-                          detail: businessWorkspace && section == .income ? "brutto · " + euros(item.netAmount) + " netto" : nil)
+            let taxable = businessWorkspace && [.income, .expenses, .annual, .flexible].contains(section)
+            let net = ExpenseVAT.convert(amount, rate: fields.amount("vatRate"), toGross: false)
+            LabeledAmount(label: item.name.isEmpty ? section.title : item.name, amount: taxable && comparisonNet ? net : amount,
+                          detail: taxable ? (comparisonNet ? "netto · " + euros(amount) + " brutto" : "brutto · " + euros(net) + " netto") : nil)
             if let detail {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
@@ -979,6 +1006,7 @@ private struct RevenueMonthSelection: Identifiable {
 }
 
 private struct BusinessRevenueView: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @ObservedObject var store: NjoraStore
     @Environment(\.njoraAppearance) private var theme
     @State private var selection: RevenueMonthSelection?
@@ -986,21 +1014,22 @@ private struct BusinessRevenueView: View {
     var body: some View {
         if let plan = store.plan {
             let months = PlanDate.completedRevenueMonths(asOf: .now)
-            let amounts = months.compactMap { plan.monthlyRevenue[$0]?.number }
+            let amounts = months.compactMap { plan.revenueValue($0, net: comparisonNet) }
             let total = amounts.reduce(0, +)
             let older = plan.monthlyRevenue.keys.filter { $0 < months[11] }.sorted(by: >)
             List {
+                ComparisonPicker()
                 Section("Letzte 12 abgeschlossene Monate") {
-                    LabeledContent("Nettoumsatz gesamt", value: amounts.isEmpty ? "–" : euros(total))
+                    LabeledContent(comparisonNet ? "Nettoumsatz gesamt" : "Bruttoumsatz gesamt", value: amounts.isEmpty ? "–" : euros(total))
                     LabeledContent("Ø je erfasstem Monat", value: amounts.isEmpty ? "–" : euros(total / Double(amounts.count)))
-                    Text("\(amounts.count) von 12 Monaten erfasst").font(.footnote).foregroundStyle(.secondary)
+                    Text("\(amounts.count) von 12 Monaten im Vergleich").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Monatsumsätze") {
                     ForEach(months, id: \.self) { month in
-                        let value = plan.monthlyRevenue[month]?.number
+                        let value = plan.revenueValue(month, net: comparisonNet)
                         Button { selection = .init(id: month, base: plan) } label: {
                             VStack(alignment: .leading, spacing: 8) {
-                                LabeledContent(PlanDate.revenueTitle(month), value: value.map(euros) ?? "Nachtragen")
+                                LabeledContent(PlanDate.revenueTitle(month), value: value.map(euros) ?? (plan.monthlyRevenue[month] == nil ? "Nachtragen" : "Steuerangabe fehlt"))
                                 GeometryReader { proxy in
                                     let low = min(amounts.min() ?? 0, 0)
                                     let high = max(amounts.max() ?? 0, 0)
@@ -1022,7 +1051,7 @@ private struct BusinessRevenueView: View {
                     DisclosureGroup("Frühere Monate (\(older.count))") {
                         ForEach(older, id: \.self) { month in
                             Button { selection = .init(id: month, base: plan) } label: {
-                                LabeledContent(PlanDate.revenueTitle(month), value: plan.monthlyRevenue[month]?.number.map(euros) ?? "–")
+                                LabeledContent(PlanDate.revenueTitle(month), value: plan.revenueValue(month, net: comparisonNet).map(euros) ?? "Steuerangabe fehlt")
                             }
                         }
                     }
@@ -1050,7 +1079,7 @@ private struct RevenueMonthEditor: View {
     let latest: String
     @State private var year: Int
     @State private var month: Int
-    @State private var draft: String
+    @State private var draft: RevenueDraft
     @Environment(\.dismiss) private var dismiss
 
     init(store: NjoraStore, selection: RevenueMonthSelection, latest: String) {
@@ -1059,13 +1088,13 @@ private struct RevenueMonthEditor: View {
         self.latest = latest
         _year = State(initialValue: Int(selection.id.prefix(4))!)
         _month = State(initialValue: Int(selection.id.suffix(2))!)
-        _draft = State(initialValue: selection.base.monthlyRevenue[selection.id]?.number.map(editableAmount) ?? "")
+        _draft = State(initialValue: RevenueDraft(plan: selection.base, month: selection.id))
     }
 
     private var key: String { String(format: "%04d-%02d", year, month) }
     private var lastYear: Int { Int(latest.prefix(4))! }
     private var monthLimit: Int { year == lastYear ? Int(latest.suffix(2))! : 12 }
-    private var amount: Double? { draft.isEmpty ? nil : germanAmount(draft) }
+    private var amount: RevenueAmounts? { draft.amounts }
 
     var body: some View {
         NavigationStack {
@@ -1078,12 +1107,12 @@ private struct RevenueMonthEditor: View {
                         Text(Locale(identifier: "de_DE").calendar.monthSymbols[index - 1]).tag(index)
                     }
                 }
-                PlanField(title: "Nettoumsatz", text: $draft, prompt: "0,00", unit: "€", signed: true)
+                RevenueFields(draft: $draft)
                 Notice(text: store.notice(in: .editor))
             }
             .planFormStyle()
             .onChange(of: year) { _ in month = min(month, monthLimit) }
-            .onChange(of: key) { new in draft = selection.base.monthlyRevenue[new]?.number.map(editableAmount) ?? "" }
+            .onChange(of: key) { new in draft = RevenueDraft(plan: selection.base, month: new) }
             .onDisappear { store.clearNotice(in: .editor) }
             .navigationTitle("Monatsumsatz").navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(store.busy)
@@ -1093,7 +1122,7 @@ private struct RevenueMonthEditor: View {
                     Button("Speichern") {
                         guard let amount, key <= latest else { return }
                         var updated = selection.base
-                        updated.setRevenue(amount, forMonth: key)
+                        updated.saveRevenue(amount, month: key)
                         let result = updated
                         Task { if await store.save(result, basedOn: selection.base) { dismiss() } }
                     }.disabled(store.busy || amount == nil || key > latest)

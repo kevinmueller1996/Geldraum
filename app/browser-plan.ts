@@ -27,12 +27,13 @@ export function pending(copy: Copy) { return !!copy.sending || !equal(copy.plan,
 function merge(base: unknown, local: unknown, cloud: unknown, choice?: Choice, key = "id"): unknown {
   if (equal(local, cloud) || equal(base, cloud)) return local;
   if (equal(base, local)) return cloud;
-  if (object(base) && object(local) && object(cloud)) {
+  if (key !== "vatRecord" && object(base) && object(local) && object(cloud)) {
     const pairs = [...new Set([...Object.keys(local), ...Object.keys(cloud)])].map(k => {
       let original = base[k];
-      if (original === undefined && k === "monthlyRevenue" && object(local[k]) && object(cloud[k])) original = {};
+      if (original === undefined && (k === "monthlyRevenue" || k === "monthlyRevenueVAT") && object(local[k]) && object(cloud[k])) original = {};
       if (original === undefined && k === "flexibleCosts" && Array.isArray(local[k]) && Array.isArray(cloud[k])) original = [];
-      return [k, merge(original, local[k], cloud[k], choice, k === "snapshots" ? "date" : "id")] as const;
+      const childKey = k === "monthlyRevenueVAT" ? "vatMonths" : key === "vatMonths" ? "vatRecord" : k === "snapshots" ? "date" : "id";
+      return [k, merge(original, local[k], cloud[k], choice, childKey)] as const;
     });
     return Object.fromEntries(pairs.filter(([,v]) => v !== undefined));
   }

@@ -11,7 +11,8 @@ import { Capacitor } from "@capacitor/core";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { currentLoan, forecastLoans, loanSchedule } from "./loan-schedule";
 import { loanProjection, monthlyLoanPayment } from "./loan-projection";
-import { acceptsAmountEdit, parseAmount } from "./amount";
+import { revenueDraft, revenueAmounts, revenueValue, withRevenue, type RevenueDraft, type RevenueVAT } from "./revenue-vat";
+import { RevenueFields } from "./revenue-fields";
 import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "./check-in";
 import { backupPlan, isPlan, validCalendarDay, validDepreciation } from "./plan-validation";
 import RevenueHistory from "./revenue-history";
@@ -39,6 +40,7 @@ type View = "revenue" | "home" | "expenses" | "month" | "loans" | "goals" | "mor
 type EditorScope = "flexible" | "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
 export type Plan = {
   monthlyRevenue?: Record<string, number>;
+  monthlyRevenueVAT?: Record<string, RevenueVAT>;
   name: string;
   liquidity: number;
   categoryColors: Record<string, string>;
@@ -295,7 +297,8 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   const [activeView, setActiveView] = useState<View>("home");
   const [checkInAccounts, setCheckInAccounts] = useState<Account[]>([]);
   const [checkInDate, setCheckInDate] = useState("");
-  const [revenueDrafts, setRevenueDrafts] = useState<Record<string, string>>({});
+  const [revenueDrafts, setRevenueDrafts] = useState<Record<string, RevenueDraft>>({});
+  const [comparison, setComparison] = useState<VatBasis>("gross");
   const [checkInNote, setCheckInNote] = useState("");
   const [importPreview, setImportPreview] = useState<Plan | null>(null);
   const [importError, setImportError] = useState("");
@@ -838,9 +841,8 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   }
 
   const revenueMonth = previousRevenueMonth(checkInDate);
-  const savedRevenue = baseline.current?.monthlyRevenue?.[revenueMonth];
-  const revenueText = revenueDrafts[revenueMonth] ?? (savedRevenue === undefined ? "" : String(savedRevenue).replace(".", ","));
-  const revenueAmount = revenueText.trim() ? parseAmount(revenueText) : null;
+  const checkInRevenue = revenueDrafts[revenueMonth] ?? revenueDraft(baseline.current ?? {}, revenueMonth);
+  const revenueAmount = revenueAmounts(checkInRevenue);
   const dashboardRevenueMonth = previousRevenueMonth(today);
 
   function openCheckIn() {
@@ -860,8 +862,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
     const accounts = checkInAccounts.map(account => ({ ...account, name: account.name.trim() || "Unbenanntes Konto" }));
     const snapshot = checkInRecord(initial, checkInDate, localDay(), accounts, checkInNote, uid());
     const updated: Plan = {
-      ...initial,
-      ...(business && revenueAmount !== null ? { monthlyRevenue: { ...initial.monthlyRevenue, [revenueMonth]: revenueAmount } } : {}),
+      ...(business && revenueAmount ? withRevenue(initial, revenueMonth, revenueAmount) : initial),
       accounts: checkInDate === localDay() ? accounts : initial.accounts,
       snapshots: [...initial.snapshots.filter((item) => item.date !== snapshot.date), snapshot].sort((a, b) => a.date.localeCompare(b.date)),
     };
@@ -1000,11 +1001,25 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   const lastUpdateLabel = lastSnapshot ? new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${lastSnapshot.date}T12:00:00`)) : "Noch kein Update";
   const updateDue = daysSinceUpdate === null || daysSinceUpdate >= (active.checkInCadence === "daily" ? 1 : 7);
   const currentMonthName = new Intl.DateTimeFormat("de-DE", { month: "long" }).format(new Date());
+  const useNet = business && comparison === "net";
+  const basisLabel = useNet ? "Netto" : "Brutto";
+  const compareAmount = (gross: number, rate = 0) => useNet ? netFromGross(gross, rate) : gross;
+  const income = useNet ? metrics.netIncome : metrics.income;
+  const annualIncome = active.incomes.filter(row => row.annual).reduce((total, row) => total + compareAmount(row.amount, row.vatRate), 0);
+  const incomeThisMonth = income + active.incomes.filter(row => row.annual && row.month === currentMonth).reduce((total, row) => total + compareAmount(row.amount, row.vatRate), 0);
+  const netFixed = business ? averageMonthlyCosts(active.expenses, active.commitments, today, "net") : metrics.fixedCosts;
+  const netFlexible = business ? flexibleMonthlyBudget(active.flexibleCosts, "net") : metrics.flexible;
+  const fixed = useNet ? netFixed : metrics.fixedCosts;
+  const flexible = useNet ? netFlexible : metrics.flexible;
+  const surplus = income - fixed - flexible;
+  const dashboardRevenue = revenueValue(active, dashboardRevenueMonth, comparison);
+  const basisPicker = business && <label className="comparison-basis">Vergleichswerte<select value={comparison} onChange={e => setComparison(e.target.value === "net" ? "net" : "gross")}><option value="gross">Brutto</option><option value="net">Netto</option></select></label>;
   const currentSpecials = [
-    ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: item.amount, type: "income" as const })),
-    ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: item.amount, type: "cost" as const })),
+    ...active.incomes.filter((item) => item.annual && item.month === currentMonth).map((item) => ({ id: `income-${item.id}`, name: item.name, amount: compareAmount(item.amount, item.vatRate), type: "income" as const })),
+    ...active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, currentMonth)).map((item) => ({ id: `cost-${item.id}`, name: item.name, amount: compareAmount(expenseAmount(item, today), item.vatRate), type: "cost" as const })),
   ];
-  const monthOutflows = groupedExpenses.map(({ category: label, value, color, expenses, loans }) => ({ label, value, color, net: business ? averageMonthlyCosts(expenses, loans, today, "net") : undefined }));
+  const monthOutflows = groupedExpenses.map(({ category: label, value, color, expenses, loans }) => ({ label, value: useNet ? averageMonthlyCosts(expenses, loans, today, "net") : value, color, alternate: business ? (useNet ? value : averageMonthlyCosts(expenses, loans, today, "net")) : undefined }));
+  monthOutflows.sort((a, b) => b.value - a.value);
   const selectedCostGroup = groupedExpenses.find(group => group.category === costDetail.category);
   const costItems = costDetail.category ? selectedCostGroup?.expenses ?? [] : active.expenses;
   const costLoans = (costDetail.category ? selectedCostGroup?.loans ?? [] : active.commitments)
@@ -1119,17 +1134,18 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
             <strong>≈ {exactEuros.format(metrics.forecast.projectedBalance)}</strong>
             <span>{metrics.flexible ? "Mit Zahlungen und anteiligem Monatsbudget" : "Mit datierten Zahlungen"}{metrics.forecast.uncertain.length > 0 ? ` · ${metrics.forecast.uncertain.length} ${metrics.forecast.uncertain.length === 1 ? "Buchung" : "Buchungen"} offen` : ""}</span>
           </button>
+          {basisPicker}
           <div className="dashboard-metrics">
-            {business && <button type="button" onClick={() => navigate("revenue")}><span>Nettoumsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : exactEuros.format(active.monthlyRevenue[dashboardRevenueMonth])}</strong></button>}
-            <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen brutto" : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
-            <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten brutto" : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
-            <button type="button" onClick={() => openFocusedEditor("flexible")}><span>Flexible Kosten · pro Monat</span><strong>{exactEuros.format(metrics.flexible)}</strong></button>
-            <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(metrics.available)}</strong></button>
+            {business && <button type="button" onClick={() => navigate("revenue")}><span>{basisLabel}umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{dashboardRevenue !== undefined ? exactEuros.format(dashboardRevenue) : active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : "Steuerangabe fehlt"}</strong></button>}
+            <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen " + basisLabel.toLowerCase() : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(incomeThisMonth)}</strong></button>
+            <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten " + basisLabel.toLowerCase() : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(fixed)}</strong></button>
+            <button type="button" onClick={() => openFocusedEditor("flexible")}><span>Flexible Kosten · pro Monat</span><strong>{exactEuros.format(flexible)}</strong></button>
+            <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(surplus)}</strong></button>
             <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
           </div>
           {showForecast && <section id="forecast-detail" className="detail-card">
             <h2>Monatsendprognose</h2>
-            <h3>Rechnung ab heute</h3>
+            <h3>{business ? "Zahlungsbeträge ab heute · brutto" : "Rechnung ab heute"}</h3>
             <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Kontoguthaben gesamt</span><b>{exactEuros.format(metrics.forecast.positiveBalance)}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>
             {metrics.forecast.overdrafts < 0 && <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}>
               <span>Überzogene Konten</span><b>{exactEuros.format(metrics.forecast.overdrafts)}</b><span aria-hidden="true"><UiIcon name="next" /></span>
@@ -1165,20 +1181,21 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
           <div className="dashboard-specials">
             <button className="month-pulse month-specials" type="button" onClick={() => openFocusedEditor("specials")} title="Sonderposten anzeigen und bearbeiten"><span>Besonders im {currentMonthName}</span>{currentSpecials.length ? <div className="specials-preview">{currentSpecials.slice(0, 2).map((item) => <div key={item.id}><b className={item.type === "income" ? "positive" : "negative"}>{item.type === "income" ? "+ " : "− "}{euro(item.amount)}</b><small>{item.name}</small></div>)}</div> : <strong className="specials-empty-label">Keine Sonderposten</strong>}<p>{currentSpecials.length > 2 ? `+ ${currentSpecials.length - 2} weitere · ` : ""}Ansehen und planen <UiIcon name="forward" /></p></button>
           </div>
-          <details className="dashboard-income"><summary>Einkommen im Detail</summary><article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={metrics.income + metrics.currentAnnualIncome} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(metrics.income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{business ? exactEuros.format(item.amount) : euro(item.amount)}{business && <small>brutto · {exactEuros.format(netFromGross(item.amount, item.vatRate ?? 0))} netto</small>}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(metrics.annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{business ? exactEuros.format(item.amount) : euro(item.amount)}{business && <small>brutto · {exactEuros.format(netFromGross(item.amount, item.vatRate ?? 0))} netto</small>}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article></details>
+          <details className="dashboard-income"><summary>Einkommen im Detail</summary><article className="income-home-card"><div className="section-title compact"><div><p className="eyebrow">Einkommen</p><h2>Deine Zuflüsse</h2></div><div className="heading-actions"><TitleAmount value={incomeThisMonth} label={`im ${currentMonthName}`} /><button className="edit-chip" type="button" onClick={() => openFocusedEditor("income")}>Ändern</button></div></div><div className="income-group"><div className="income-group-head"><span>Monatlich</span><strong>{euro(income)}</strong></div>{active.incomes.filter((item) => !item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>regelmäßiger Monatszufluss</small></div><b>{business ? exactEuros.format(compareAmount(item.amount, item.vatRate)) : euro(item.amount)}{business && <small>{basisLabel.toLowerCase()} · {exactEuros.format(useNet ? item.amount : netFromGross(item.amount, item.vatRate ?? 0))} {useNet ? "brutto" : "netto"}</small>}</b></div>)}</div><div className="income-group annual"><div className="income-group-head"><span>Jährlich</span><strong>{euro(annualIncome)}</strong></div>{active.incomes.filter((item) => item.annual).map((item) => <div className="income-line" key={item.id}><div><strong>{item.name}</strong><small>jährlicher Sonderzufluss</small></div><b>{business ? exactEuros.format(compareAmount(item.amount, item.vatRate)) : euro(item.amount)}{business && <small>{basisLabel.toLowerCase()} · {exactEuros.format(useNet ? item.amount : netFromGross(item.amount, item.vatRate ?? 0))} {useNet ? "brutto" : "netto"}</small>}<small>{item.month === undefined ? "Monat noch festlegen" : `im ${months[item.month]}`}</small></b></div>)}</div></article></details>
           </div></div>
         </section>}
 
-        {business && activeView === "revenue" && plan && <RevenueHistory readOnly={!!grant && access === "view"} plan={plan} today={today} save={persistPlan} problem={problem} />}
+        {business && activeView === "revenue" && plan && <>{basisPicker}<RevenueHistory basis={comparison} readOnly={!!grant && access === "view"} plan={plan} today={today} save={persistPlan} problem={problem} /></>}
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
-          <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
-          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label={business ? "Betriebseinnahmen brutto" : "Monatliches Einkommen"} value={metrics.income} net={business ? metrics.netIncome : undefined} onClick={() => openFocusedEditor("income")} /><SummaryCard label={business ? "Betriebskosten brutto" : "Fixkosten"} value={metrics.fixedCosts} net={business ? averageMonthlyCosts(active.expenses, active.commitments, today, "net") : undefined} tone="coral" onClick={() => showCosts("month")} /><SummaryCard label={business ? "Flexible Kosten brutto" : "Flexible Kosten"} net={business ? flexibleMonthlyBudget(active.flexibleCosts, "net") : undefined} value={metrics.flexible} onClick={() => openFocusedEditor("flexible")} /></div>
+          <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: surplus, label: business ? "Saldo " + basisLabel.toLowerCase() + " pro Monat" : "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
+          {basisPicker}
+          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label={business ? "Betriebseinnahmen " + basisLabel.toLowerCase() : "Monatliches Einkommen"} value={income} alternate={business ? {value: useNet ? metrics.income : metrics.netIncome, label: useNet ? "brutto" : "netto"} : undefined} onClick={() => openFocusedEditor("income")} /><SummaryCard label={business ? "Betriebskosten " + basisLabel.toLowerCase() : "Fixkosten"} value={fixed} alternate={business ? {value: useNet ? metrics.fixedCosts : netFixed, label: useNet ? "brutto" : "netto"} : undefined} tone="coral" onClick={() => showCosts("month")} /><SummaryCard label={business ? "Flexible Kosten " + basisLabel.toLowerCase() : "Flexible Kosten"} alternate={business ? {value: useNet ? metrics.flexible : netFlexible, label: useNet ? "brutto" : "netto"} : undefined} value={flexible} onClick={() => openFocusedEditor("flexible")} /></div>
           <article className="detail-card flow-detail">
-            <div className="section-title compact"><div><h2>Durchschnittliche Kosten je Kategorie</h2><small>{metrics.income > 0 ? (business ? "Anteil an den regelmäßigen Bruttoeinnahmen" : "Anteil am regelmäßigen Monatseinkommen") : "Für Prozentanteile ein regelmäßiges Einkommen eintragen."}</small></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong>{metrics.income > 0 && <span>{incomePercent.format((metrics.fixedCosts + metrics.flexible) / metrics.income)} verplant</span>}</div></div>
-            {metrics.income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / metrics.income * 100}%`, backgroundColor: item.color }} key={item.label} />)}{metrics.flexible > 0 && <i title="Flexible Kosten" style={{ width: `${metrics.flexible / metrics.income * 100}%`, backgroundColor: "var(--ink)" }} />}</div>}
+            <div className="section-title compact"><div><h2>Durchschnittliche Kosten je Kategorie</h2><small>{income > 0 ? (business ? "Anteil an den regelmäßigen " + basisLabel + "einnahmen" : "Anteil am regelmäßigen Monatseinkommen") : "Für Prozentanteile ein regelmäßiges Einkommen eintragen."}</small></div><div className="plan-position"><strong className={surplus >= 0 ? "positive" : "negative"}>{surplus >= 0 ? "+ " : "− "}{euro(Math.abs(surplus))}</strong>{income > 0 && <span>{incomePercent.format((fixed + flexible) / income)} verplant</span>}</div></div>
+            {income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / income * 100}%`, backgroundColor: item.color }} key={item.label} />)}{flexible > 0 && <i title="Flexible Kosten" style={{ width: `${flexible / income * 100}%`, backgroundColor: "var(--ink)" }} />}</div>}
             <div className="flow-list">{monthOutflows.map((item) => {
-              const share = metrics.income > 0 ? item.value / metrics.income : null;
-              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{item.net !== undefined && <small>brutto · {exactEuros.format(item.net)} netto</small>}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>;
+              const share = income > 0 ? item.value / income : null;
+              return <button type="button" className="flow-item month-link" onClick={() => showCosts("month", item.label)} key={item.label}><i style={{ backgroundColor: item.color }} /><div><strong>{item.label}</strong><span><em style={{ width: `${Math.min(1, Math.max(0, share ?? 0)) * 100}%`, backgroundColor: item.color }} /></span></div><b>{exactEuros.format(item.value)}{item.alternate !== undefined && <small>{basisLabel.toLowerCase()} · {exactEuros.format(item.alternate)} {useNet ? "brutto" : "netto"}</small>}{share !== null && <small>{incomePercent.format(share)}</small>}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>;
             })}</div>
           </article>
           </div>
@@ -1186,7 +1203,8 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
 
         {activeView === "expenses" && <section className="view" aria-labelledby="expenses-title">
           <button type="button" className="edit-chip" onClick={() => navigate(costDetail.from)}><UiIcon name="back" /> {costDetail.from === "month" ? "Monatsplan" : "Heute"}</button>
-          <div className="section-title financial-heading"><h2 id="expenses-title">{costDetail.category ?? "Fixkosten"}</h2><TitleAmount value={costDetail.category ? selectedCostGroup?.value ?? 0 : metrics.fixedCosts} label={business ? "Brutto · Ø pro Monat" : "Ø pro Monat"} /></div>
+          <div className="section-title financial-heading"><h2 id="expenses-title">{costDetail.category ?? "Fixkosten"}</h2><TitleAmount value={costDetail.category ? averageMonthlyCosts(costItems, costLoans, today, useNet ? "net" : "gross") : fixed} label={business ? basisLabel + " · Ø pro Monat" : "Ø pro Monat"} /></div>
+          {basisPicker}
           <div className="category-details">
             {costLoans.length > 0 && <article className="detail-card category-card">
               <h3>Kredite</h3>
@@ -1203,7 +1221,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
                 <h3>{title}</h3>
                 {entries.map(item => <button className="detail-row forecast-entry" type="button" key={item.id} onClick={() => openFocusedEditor("expenses", undefined, "item:" + item.id)}>
                   <span>{item.name}<small>{item.category}{frequency === "once" ? ` · ${item.dueDate} · ${item.paid ? "Beglichen" : "Offen"}` : frequency !== "monthly" ? ` · ${months[item.month ?? 0]}` : ""}{frequency !== "once" && item.bookingDay ? ` · am ${item.bookingDay}.` : ""}</small></span>
-                  <b>{exactEuros.format(expenseAmount(item, today))}</b><span aria-hidden="true"><UiIcon name="next" /></span>
+                  <b>{exactEuros.format(compareAmount(expenseAmount(item, today), item.vatRate))}</b><span aria-hidden="true"><UiIcon name="next" /></span>
                 </button>)}
               </article>;
             })}
@@ -1460,12 +1478,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
           {pastCheckIn && <p className="editor-intro">{previousCheckIn
             ? "Du bearbeitest den gespeicherten Stand dieses Tages. Frühere Konten bleiben im Verlauf erhalten."
             : "Für diesen Tag gibt es noch keinen Check-in. Die heutigen Beträge sind vorausgefüllt. Trage die damaligen Stände ein."}</p>}
-          {business && revenueMonth && <label>Nettoumsatz {revenueMonthLabel(revenueMonth)} (€)
-            <input type="text" inputMode="decimal" required placeholder="0,00" value={revenueText} onChange={event => {
-              const text = event.target.value;
-              if (acceptsAmountEdit(text)) setRevenueDrafts(current => ({ ...current, [revenueMonth]: text }));
-            }} />
-          </label>}
+          {business && revenueMonth && <div><p>{revenueMonthLabel(revenueMonth)}</p><RevenueFields draft={checkInRevenue} change={next => setRevenueDrafts(current => ({...current, [revenueMonth]: next}))} /></div>}
           <div className="checkin-accounts" key={checkInDate}>{checkInAccounts.map((account, index) => <div className="checkin-account-edit" key={account.id}><label>Kontoname<input disabled={pastCheckIn} maxLength={120} aria-label="Kontoname" value={account.name} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} placeholder="Kontoname" /></label><label>Kontotyp<select disabled={pastCheckIn} aria-label={`Typ von ${account.name || "Konto"}`} value={account.type} onChange={(e) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, type: e.target.value as Account["type"] } : item))}><option value="bank">Konto</option><option value="credit">Kreditkarte</option><option value="cash">Bargeld</option></select></label><label>Kontostand<span className="currency-input"><DecimalInput aria-label={`Stand von ${account.name || "Konto"}`} fixedMinus={account.type === "credit"} value={account.balance} onValueChange={(value) => setCheckInAccounts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, balance: value } : item))} placeholder="Stand" /><b>€</b></span></label>{!pastCheckIn && checkInAccounts.length > 1 && <RemoveButton onClick={() => setCheckInAccounts((current) => current.filter((_, itemIndex) => itemIndex !== index))} />}</div>)}{!pastCheckIn && <button className="account-add-line" type="button" onClick={() => setCheckInAccounts((current) => [...current, { id: uid(), name: "", type: "bank", balance: 0 }])}><span>+</span> Konto oder Karte hinzufügen</button>}</div>
           <label>Notiz (optional)<input maxLength={500} value={checkInNote} onChange={(e) => setCheckInNote(e.target.value)} placeholder="z. B. Kreditkarte bereits ausgeglichen" /></label>
           <div className="checkin-preview"><span>Netto-Stand am gewählten Datum</span><strong>{exactEuros.format(checkInTotal)}</strong></div>
@@ -1501,8 +1514,8 @@ function ViewHeader({ id, eyebrow, title, copy, total }: { id: string; eyebrow: 
     <p>{copy}</p></header>;
 }
 
-function SummaryCard({ label, value, net, tone = "", onClick }: { label: string; value: number; net?: number; tone?: string; onClick?: () => void }) {
-  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} <UiIcon name="next" /></span><strong>{exactEuros.format(value)}</strong>{net !== undefined && <small>{exactEuros.format(net)} netto</small>}</button>;
+function SummaryCard({ label, value, alternate, tone = "", onClick }: { label: string; value: number; alternate?: { value: number; label: string }; tone?: string; onClick?: () => void }) {
+  if (onClick) return <button type="button" className={`summary-card month-link ${tone}`} onClick={onClick}><span>{label} <UiIcon name="next" /></span><strong>{exactEuros.format(value)}</strong>{alternate && <small>{exactEuros.format(alternate.value)} {alternate.label}</small>}</button>;
   return <article className={`summary-card ${tone}`}><span>{label}</span><strong>{euro(value)}</strong></article>;
 }
 

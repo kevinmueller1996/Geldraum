@@ -1456,3 +1456,6 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 
 .share-editor-fields { display: contents; }
 .share-indicator { text-align: center; font-size: .88rem; }
+
+.comparison-basis { display: flex; align-items: center; gap: .75rem; margin-block: 1rem; font-weight: 600; }
+.comparison-basis select { width: auto; }

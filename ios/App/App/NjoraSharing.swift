@@ -115,6 +115,7 @@ private struct SharingList: View {
 }
 
 private struct SharedFinance: View {
+    @AppStorage("businessComparisonNet") private var comparisonNet = false
     @ObservedObject var store: NjoraStore
     let workspace: FinanceWorkspace
     let grant: Grant
@@ -133,10 +134,11 @@ private struct SharedFinance: View {
         List {
             Section { Text(grant.email); Text(grant.permission).font(.footnote) }
             if let record, let plan = record.plan {
+                if workspace == .business { ComparisonPicker() }
                 if workspace == .business, !plan.monthlyRevenue.isEmpty {
-                    Section("Monatsumsatz") {
+                    Section(comparisonNet ? "Monatsumsatz netto" : "Monatsumsatz brutto") {
                         ForEach(plan.monthlyRevenue.keys.sorted(by: >), id: \.self) { month in
-                            LabeledContent(month, value: euros(plan.monthlyRevenue.amount(month)))
+                            LabeledContent(month, value: plan.revenueValue(month, net: comparisonNet).map(euros) ?? "Steuerangabe fehlt")
                         }
                     }
                 }

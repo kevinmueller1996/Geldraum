@@ -567,8 +567,37 @@ struct PlanEditor: View {
     }
 }
 
-func editableAmount(_ value: Double) -> String {
-    value.formatted(.number.grouping(.never).precision(.fractionLength(0...10)).locale(Locale(identifier: "de_DE")))
+struct RevenueFields: View {
+    @Binding var draft: RevenueDraft
+    var body: some View {
+        Picker("Eingabe als", selection: Binding(get: { draft.basis }, set: { draft.selectBasis($0) })) {
+            Text("Brutto").tag("gross")
+            Text("Netto").tag("net")
+        }.pickerStyle(.segmented).disabled(!draft.amount.isEmpty && draft.amounts?.meta == nil)
+        PlanField(title: draft.basis == "gross" ? "Bruttoumsatz" : "Nettoumsatz", text: Binding(get: { draft.amount }, set: {
+            draft.amount = $0
+            draft.originalGross = nil
+        }), prompt: "0,00", unit: "€", signed: true)
+        Picker("Steuerangabe", selection: Binding(get: { draft.method }, set: {
+            draft.method = $0
+            draft.tax = ""
+            draft.originalGross = nil
+        })) {
+            Text("Steuersatz").tag("rate")
+            Text("Umsatzsteuer in Euro").tag("tax")
+        }
+        PlanField(title: draft.method == "rate" ? "Steuersatz" : "Umsatzsteuer gesamt", text: Binding(get: { draft.tax }, set: { value in
+            if draft.method == "rate", value.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) == nil { return }
+            draft.tax = value
+            draft.originalGross = nil
+        }), unit: draft.method == "rate" ? "%" : "€", keyboard: .decimalPad, signed: draft.method == "tax")
+        if let meta = draft.amounts?.meta {
+            LabeledContent("Brutto", value: euros(meta.amount("gross")))
+            LabeledContent("Netto", value: euros(meta.amount("net")))
+        } else {
+            Text("Für die Umrechnung Steuersatz oder Umsatzsteuer angeben. Bei gemischten Steuersätzen die gesamte Umsatzsteuer in Euro eintragen.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
 }
 
 struct CheckInView: View {
@@ -585,17 +614,13 @@ struct CheckInView: View {
     @State private var note: String
     @State private var drafts: [String: (balances: [String: String], note: String)] = [:]
 
-    @State private var revenueDrafts: [String: String] = [:]
+    @State private var revenueDrafts: [String: RevenueDraft] = [:]
     private var revenueMonth: (key: String, title: String) { PlanDate.previousRevenueMonth(for: day) }
-    private var revenueText: Binding<String> {
+    private var revenueInput: Binding<RevenueDraft> {
         let key = revenueMonth.key
-        return Binding(get: { revenueDrafts[key] ?? plan.monthlyRevenue[key]?.number.map(editableAmount) ?? "" },
-                       set: { revenueDrafts[key] = $0 })
+        return Binding(get: { revenueDrafts[key] ?? RevenueDraft(plan: plan, month: key) }, set: { revenueDrafts[key] = $0 })
     }
-    private var revenueAmount: Double? {
-        let text = revenueText.wrappedValue
-        return text.isEmpty ? nil : germanAmount(text)
-    }
+    private var revenueAmount: RevenueAmounts? { revenueInput.wrappedValue.amounts }
 
     private var checkInDate: Binding<Date> {
         Binding(get: { day }, set: { selected in
@@ -630,8 +655,8 @@ struct CheckInView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if store.workspace == .business {
-                    Section("Umsatz des Vormonats") {
-                        PlanField(title: "Nettoumsatz " + revenueMonth.title, text: revenueText, prompt: "0,00", unit: "€", signed: true)
+                    Section("Umsatz · " + revenueMonth.title) {
+                        RevenueFields(draft: revenueInput)
                     }
                 }
                 Section("Kontostände") {
@@ -675,7 +700,7 @@ struct CheckInView: View {
         var changed = plan
         if store.workspace == .business {
             guard let amount = revenueAmount else { validation = "Bitte gib den Umsatz des Vormonats ein."; return }
-            changed.setRevenue(amount, forMonth: revenueMonth.key)
+            changed.saveRevenue(amount, month: revenueMonth.key)
         }
         changed.recordCheckIn(accounts: accounts, date: date, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
         let result = changed

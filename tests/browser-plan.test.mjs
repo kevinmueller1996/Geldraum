@@ -51,3 +51,14 @@ test("first offline revenue entries merge by month and conflicting corrections r
   assert.deepEqual(mergeDraft(base, january, february).monthlyRevenue, {"2026-01":0, "2026-02":1320.57});
   assert.throws(() => mergeDraft(base, january, {...base, monthlyRevenue: {"2026-01": 50}}), Conflict);
 });
+
+test("monthly VAT records merge independently and a correction keeps its amounts together", () => {
+  const jan = {basis: "gross", gross: 119, net: 100, rate: 19};
+  const feb = {basis: "net", gross: 107, net: 100, rate: 7};
+  assert.deepEqual(mergeDraft({}, {monthlyRevenueVAT: {jan}}, {monthlyRevenueVAT: {feb}}).monthlyRevenueVAT, {jan, feb});
+  const start = {monthlyRevenueVAT: {jan}};
+  const local = {monthlyRevenueVAT: {jan: {...jan, basis: "net"}}};
+  const remote = {monthlyRevenueVAT: {jan: feb}};
+  assert.throws(() => mergeDraft(start, local, remote), Conflict);
+  assert.deepEqual(mergeDraft(start, local, remote, "device"), local);
+});

@@ -131,6 +131,14 @@ struct Plan: Codable, Equatable {
         if let revenue = fields["monthlyRevenue"] {
             guard let entries = revenue.object, entries.keys.allSatisfy({ PlanDate.parse($0 + "-01") != nil && entries.hasMoney($0) }) else { return false }
         }
+        if let metadata = fields["monthlyRevenueVAT"] {
+            guard let entries = metadata.object, entries.allSatisfy({ month, value in
+                guard PlanDate.parse(month + "-01") != nil, let m = value.object,
+                      m.hasMoney("net"), m.hasMoney("gross"), ["net", "gross"].contains(m.text("basis")) else { return false }
+                let rate = m.amount("rate")
+                return m.optionalMoney("rate") && (0...100).contains(rate) && (rate * 100).rounded() / 100 == rate
+            }) else { return false }
+        }
         if let scenario = fields["scenario"] {
             guard let data = scenario.object, data.hasText("name", 160), data.hasMoney("cost"), data.hasMoney("equity") else { return false }
         }
@@ -150,6 +158,21 @@ struct Plan: Codable, Equatable {
         var revenue = monthlyRevenue
         revenue[month] = .number(amount)
         fields["monthlyRevenue"] = .object(revenue)
+    }
+
+    func revenueValue(_ month: String, net: Bool) -> Double? {
+        let saved = monthlyRevenue[month]?.number
+        if net { return saved }
+        guard let saved, let meta = fields["monthlyRevenueVAT"]?.object?[month]?.object,
+              meta["net"]?.number == saved else { return nil }
+        return meta["gross"]?.number
+    }
+
+    mutating func saveRevenue(_ pair: RevenueAmounts, month: String) {
+        setRevenue(pair.net, forMonth: month)
+        var all = fields["monthlyRevenueVAT"]?.object ?? [:]
+        all[month] = pair.meta.map(JSONValue.object)
+        fields["monthlyRevenueVAT"] = .object(all)
     }
 
     var unifiedCosts: Plan {
@@ -297,6 +320,67 @@ enum ExpenseVAT {
         let factor = 10_000 + (rate * 100).rounded()
         let result = (toGross ? cents * factor / 10_000 : cents * 10_000 / factor).rounded() / 100
         return value < 0 ? -result : result
+    }
+}
+
+func editableAmount(_ value: Double) -> String {
+    value.formatted(.number.grouping(.never).precision(.fractionLength(0...10)).locale(Locale(identifier: "de_DE")))
+}
+
+struct RevenueAmounts {
+    let net: Double
+    let meta: Record?
+}
+
+struct RevenueDraft {
+    var basis: String
+    var amount: String
+    var method: String
+    var tax: String
+    var originalGross: Double?
+
+    init(plan: Plan, month: String) {
+        let net = plan.revenueValue(month, net: true)
+        let gross = plan.revenueValue(month, net: false)
+        let meta = gross == nil ? nil : plan.fields["monthlyRevenueVAT"]?.object?[month]?.object
+        basis = meta?["basis"]?.string ?? (net == nil ? "gross" : "net")
+        amount = (basis == "gross" ? gross : net).map(editableAmount) ?? ""
+        let rate = meta?["rate"]?.number
+        method = meta != nil && rate == nil ? "tax" : "rate"
+        tax = rate.map(editableAmount) ?? ""
+        if method == "tax", let gross, let net { tax = editableAmount(Self.difference(gross, net)) }
+        originalGross = gross
+    }
+
+    private static func difference(_ a: Double, _ b: Double) -> Double {
+        ((a * 100).rounded() - (b * 100).rounded()) / 100
+    }
+
+    var amounts: RevenueAmounts? {
+        guard !amount.isEmpty, let value = germanAmount(amount) else { return nil }
+        if tax.isEmpty { return basis == "net" ? RevenueAmounts(net: value, meta: nil) : nil }
+        guard (value * 100).rounded() / 100 == value, let taxValue = germanAmount(tax),
+              (taxValue * 100).rounded() / 100 == taxValue else { return nil }
+        if method == "rate", !(0...100).contains(taxValue) || (taxValue * 100).rounded() / 100 != taxValue { return nil }
+        let net = basis == "net" ? value : method == "tax" ? Self.difference(value, taxValue) : ExpenseVAT.convert(value, rate: taxValue, toGross: false)
+        let gross: Double
+        if basis == "gross" { gross = value }
+        else if method == "tax" { gross = Self.difference(value, -taxValue) }
+        else if let originalGross, ExpenseVAT.convert(originalGross, rate: taxValue, toGross: false) == net { gross = originalGross }
+        else { gross = ExpenseVAT.convert(net, rate: taxValue, toGross: true) }
+        guard abs(gross) <= 1e9, abs(net) <= 1e9 else { return nil }
+        var meta: Record = ["net": .number(net), "gross": .number(gross), "basis": .string(basis)]
+        if method == "rate" { meta["rate"] = .number(taxValue) }
+        return RevenueAmounts(net: net, meta: meta)
+    }
+
+    mutating func selectBasis(_ next: String) {
+        guard next != basis else { return }
+        let meta = amounts?.meta
+        guard amount.isEmpty || meta != nil else { return }
+        basis = next
+        amount = meta?[next]?.number.map(editableAmount) ?? ""
+        originalGross = meta?["gross"]?.number
     }
 }
 
@@ -617,6 +701,12 @@ struct PlanMetrics {
     var net: Double { plan[.accounts].reduce(0) { $0 + $1.netBalance } }
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var netRegularIncome: Double { plan[.income].filter { !$0.fields.flag("annual") }.reduce(0) { $0 + budgetCents($1.netAmount) } / 100 }
+    func comparisonTotals(net: Bool) -> (income: Double, fixed: Double, flexible: Double, surplus: Double) {
+        let receipts = net ? netRegularIncome : income
+        let costs = monthlyFixedCosts(net: net)
+        let budget = net ? netFlexibleBudget : flexibleBudget
+        return (receipts, costs, budget, receipts - costs - budget)
+    }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
     var fixedCosts: Double { monthlyFixedCosts(net: false) }
