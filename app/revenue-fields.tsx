@@ -3,10 +3,10 @@ import { revenueAmounts, switchRevenueBasis, type RevenueDraft } from "./revenue
 
 const euros = new Intl.NumberFormat("de-DE", {style:"currency", currency:"EUR"});
 
-export function RevenueFields({ draft, change, disabled }: { draft: RevenueDraft; change: (d: RevenueDraft) => void; disabled?: boolean }) {
+export function RevenueFields({ draft, change, disabled, legend = "Monatsumsatz" }: { draft: RevenueDraft; change: (d: RevenueDraft) => void; disabled?: boolean; legend?: string }) {
   const pair = revenueAmounts(draft)?.meta;
   return <fieldset className="payment-fields vat-fields" disabled={disabled}>
-    <legend>Monatsumsatz</legend>
+    <legend>{legend}</legend>
     <label>Eingabe als<select value={draft.basis} onChange={e => change(switchRevenueBasis(draft, e.target.value === "net" ? "net" : "gross"))}>
       <option value="gross" disabled={draft.basis === "net" && !!draft.amount && !pair}>Brutto</option><option value="net" disabled={draft.basis === "gross" && !!draft.amount && !pair}>Netto</option>
     </select></label>

@@ -1459,3 +1459,7 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 
 .comparison-basis { display: flex; align-items: center; gap: .75rem; margin-block: 1rem; font-weight: 600; }
 .comparison-basis select { width: auto; }
+
+.forecast-switch { display: inline-flex; gap: .25rem; padding: .25rem; border: 1px solid var(--line); border-radius: 2rem; }
+.forecast-switch button { min-height: 44px; padding: .45rem 1rem; border: 0; border-radius: inherit; background: transparent; color: var(--ink); }
+.forecast-switch button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }

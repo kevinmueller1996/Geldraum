@@ -1014,6 +1014,13 @@ private struct BusinessRevenueView: View {
             let older = plan.monthlyRevenue.keys.filter { $0 < months[11] }.sorted(by: >)
             List {
                 ComparisonPicker(store: store)
+                NavigationLink("Forecast") {
+                    RevenueForecastView(store: store, plan: store.plan ?? plan) { updated, base in
+                        guard await store.save(updated, basedOn: base) else {
+                            throw APIError(0, store.notice(in: .editor))
+                        }
+                    }
+                }
                 Section("Letzte 12 abgeschlossene Monate") {
                     LabeledContent(store.comparisonNet ? "Nettoumsatz gesamt" : "Bruttoumsatz gesamt", value: amounts.isEmpty ? "–" : euros(total))
                     LabeledContent("Ø je erfasstem Monat", value: amounts.isEmpty ? "–" : euros(total / Double(amounts.count)))

@@ -15,6 +15,7 @@ import { revenueDraft, revenueAmounts, revenueValue, withRevenue, type RevenueDr
 import { RevenueFields } from "./revenue-fields";
 import { checkInFields, checkInRecord, previousRevenueMonth, revenueMonthLabel } from "./check-in";
 import { backupPlan, isPlan, validCalendarDay, validDepreciation } from "./plan-validation";
+import RevenueForecast, {type ConfirmedRevenue} from "./revenue-forecast";
 import RevenueHistory from "./revenue-history";
 import BalanceHistory from "./balance-history";
 import DepreciationFields from "./depreciation-fields";
@@ -36,9 +37,10 @@ type SavingKind = "security" | "dayMoney" | "fixedDeposit" | "buildingSavings" |
 type SavingAsset = AssetBasis & { id: string; name: string; kind: SavingKind; balance: number; symbol?: string; quantity?: number; price?: number; priceEur?: number; currency?: string; quoteUpdatedAt?: string; quoteVenue?: string };
 type Account = { bookingDay?: number; id: string; name: string; type: "bank" | "credit" | "cash"; balance: number; monthlyPayment?: number; category?: string };
 type Snapshot = { id: string; date: string; balances: Record<string, number>; note: string; netBalance?: number };
-type View = "revenue" | "home" | "expenses" | "month" | "loans" | "goals" | "more";
+type View = "forecast" | "revenue" | "home" | "expenses" | "month" | "loans" | "goals" | "more";
 type EditorScope = "flexible" | "accounts" | "income" | "expenses" | "specials" | "loans" | "goals" | "savings";
 export type Plan = {
+  revenueForecast?: Record<string, ConfirmedRevenue>;
   monthlyRevenue?: Record<string, number>;
   monthlyRevenueVAT?: Record<string, RevenueVAT>;
   name: string;
@@ -1138,7 +1140,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
         <div className="workspace-brand">{workspacePicker}<button className="brand" type="button" onClick={() => navigate("home")} aria-label="Njora Startseite"><Brand /></button></div>
         <nav className="desktop-nav" aria-label="Hauptnavigation">
           <NavButton active={activeView === "home"} onClick={() => navigate("home")}>Heute</NavButton>
-          {business && <NavButton active={activeView === "revenue"} onClick={() => navigate("revenue")}>Umsatz</NavButton>}
+          {business && <NavButton active={activeView === "revenue" || activeView === "forecast"} onClick={() => navigate("revenue")}>Umsatz</NavButton>}
           <NavButton active={activeView === "month"} onClick={() => navigate("month")}>Monatsplan</NavButton>
           <NavButton active={activeView === "loans"} onClick={() => navigate("loans")}>Kredite</NavButton>
           {!business && <NavButton active={activeView === "goals"} onClick={() => navigate("goals")}>Ziele</NavButton>}
@@ -1210,7 +1212,13 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
           </div></div>
         </section>}
 
-        {business && activeView === "revenue" && plan && <>{basisPicker}<RevenueHistory basis={comparison} readOnly={!!grant && access === "view"} plan={plan} today={today} save={persistPlan} problem={problem} /></>}
+        {business && (activeView === "revenue" || activeView === "forecast") && plan && <>
+          <nav className="forecast-switch" aria-label="Umsatzansicht">
+            <button type="button" aria-pressed={activeView === "revenue"} onClick={() => navigate("revenue")}>Ist-Umsatz</button>
+            <button type="button" aria-pressed={activeView === "forecast"} onClick={() => navigate("forecast")}>Forecast</button>
+          </nav>
+          {basisPicker}
+          {activeView === "forecast" ? <RevenueForecast plan={plan} today={today} basis={comparison} readOnly={!!grant && access === "view"} save={persistPlan} /> : <RevenueHistory basis={comparison} readOnly={!!grant && access === "view"} plan={plan} today={today} save={persistPlan} problem={problem} />}</>}
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: surplus, label: business ? "Saldo " + basisLabel.toLowerCase() + " pro Monat" : "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
           {basisPicker}
@@ -1331,7 +1339,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
 
       <nav className="bottom-nav" aria-label="Mobile Hauptnavigation">
         <MobileNavButton icon="today" label="Heute" active={activeView === "home"} onClick={() => navigate("home")} />
-        {business && <MobileNavButton icon="revenue" label="Umsatz" active={activeView === "revenue"} onClick={() => navigate("revenue")} />}
+        {business && <MobileNavButton icon="revenue" label="Umsatz" active={activeView === "revenue" || activeView === "forecast"} onClick={() => navigate("revenue")} />}
         <MobileNavButton icon="calendar" label="Monatsplan" active={activeView === "month"} onClick={() => navigate("month")} />
         <MobileNavButton icon="loans" label="Kredite" active={activeView === "loans"} onClick={() => navigate("loans")} />
         {!business && <MobileNavButton icon="goals" label="Ziele" active={activeView === "goals"} onClick={() => navigate("goals")} />}

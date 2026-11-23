@@ -85,3 +85,16 @@ test("business revenue comparisons preserve tax basis, mixed tax and cent roundi
   assert.equal(revenueValue({...corrected, monthlyRevenue: {[month]: 80}}, month, "gross"), undefined);
   assert.equal(revenueAmounts({...empty, amount: "119"}), null);
 });
+
+test("confirmed orders survive backup without becoming actual turnover or cash receipts", async () => {
+  const {backupPlan} = await import("../app/plan-validation.ts");
+  const base = {name:"Test", incomes:[], expenses:[], annualCosts:[], goals:[], accounts:[], savings:[], commitments:[], snapshots:[], monthlyRevenue:{"2026-10":50}};
+  const row = {name:"Projekt", month:"2027-01", vat:{basis:"gross", net:100, gross:119, rate:19}};
+  const plan = {...base, revenueForecast:{a:row, b:{...row,name:"Zweiter Auftrag"}}};
+  assert.deepEqual(backupPlan(plan).revenueForecast, plan.revenueForecast);
+  assert.deepEqual(backupPlan(plan).monthlyRevenue, base.monthlyRevenue);
+  assert.deepEqual(backupPlan(plan).incomes, []);
+  for (const item of [{...row,month:"2026-13"},{...row,name:" "},{...row,vat:{...row.vat,net:-1}},{...row,vat:{...row.vat,basis:"unknown"}}]) {
+    assert.equal(backupPlan({...base,revenueForecast:{a:item}}),null);
+  }
+});

@@ -133,7 +133,21 @@ private struct SharedFinance: View {
         List {
             Section { Text(grant.email); Text(grant.permission).font(.footnote) }
             if let record, let plan = record.plan {
-                if workspace == .business { ComparisonPicker(store: store) }
+                if workspace == .business {
+                    ComparisonPicker(store: store)
+                    NavigationLink("Forecast") {
+                        RevenueForecastView(store: store, plan: plan, readOnly: record.role != "edit") { updated, base in
+                            guard record.role == "edit", self.record?.plan == base, let revision = record.revision else {
+                                throw APIError(409, "Der Finanzbereich wurde inzwischen geändert. Bitte öffne den Forecast erneut.")
+                            }
+                            struct Saved: Decodable { let revision: Int }
+                            let _: Saved = try await store.sharing("plan", workspace: workspace, fields: [
+                                "id": .string(grant.id), "revision": .number(Double(revision)), "plan": .object(updated.storagePlan.fields)
+                            ], writePlan: true)
+                            await load()
+                        }
+                    }
+                }
                 if workspace == .business, !plan.monthlyRevenue.isEmpty {
                     Section(store.comparisonNet ? "Monatsumsatz netto" : "Monatsumsatz brutto") {
                         ForEach(plan.monthlyRevenue.keys.sorted(by: >), id: \.self) { month in

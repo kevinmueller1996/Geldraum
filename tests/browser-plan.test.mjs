@@ -62,3 +62,14 @@ test("monthly VAT records merge independently and a correction keeps its amounts
   assert.throws(() => mergeDraft(start, local, remote), Conflict);
   assert.deepEqual(mergeDraft(start, local, remote, "device"), local);
 });
+
+test("concurrent confirmed orders merge individually and conflicting edits keep a complete order", () => {
+  const entry = {name:"Projekt", month:"2027-01", vat:{basis:"gross", net:100, gross:119, rate:19}};
+  const local = {revenueForecast: {a:entry}};
+  const cloud = {revenueForecast: {b:entry}};
+  assert.deepEqual(mergeDraft({},local,cloud).revenueForecast, {a:entry,b:entry});
+  const edited = {revenueForecast: {a:{...entry, month:"2027-02"}}};
+  const renamed = {revenueForecast: {a:{...entry, name:"Auftrag B"}}};
+  assert.throws(() => mergeDraft(local,edited,renamed), Conflict);
+  assert.throws(() => mergeDraft(local,{revenueForecast:{}},renamed), Conflict);
+});

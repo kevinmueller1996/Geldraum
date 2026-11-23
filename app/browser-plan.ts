@@ -30,9 +30,9 @@ function merge(base: unknown, local: unknown, cloud: unknown, choice?: Choice, k
   if (key !== "vatRecord" && object(base) && object(local) && object(cloud)) {
     const pairs = [...new Set([...Object.keys(local), ...Object.keys(cloud)])].map(k => {
       let original = base[k];
-      if (original === undefined && (k === "monthlyRevenue" || k === "monthlyRevenueVAT") && object(local[k]) && object(cloud[k])) original = {};
+      if (original === undefined && (k === "monthlyRevenue" || k === "monthlyRevenueVAT" || k === "revenueForecast") && object(local[k]) && object(cloud[k])) original = {};
       if (original === undefined && k === "flexibleCosts" && Array.isArray(local[k]) && Array.isArray(cloud[k])) original = [];
-      const childKey = k === "monthlyRevenueVAT" ? "vatMonths" : key === "vatMonths" ? "vatRecord" : k === "snapshots" ? "date" : "id";
+      const childKey = (k === "monthlyRevenueVAT" || k === "revenueForecast") ? "vatMonths" : key === "vatMonths" ? "vatRecord" : k === "snapshots" ? "date" : "id";
       return [k, merge(original, local[k], cloud[k], choice, childKey)] as const;
     });
     return Object.fromEntries(pairs.filter(([,v]) => v !== undefined));

@@ -131,6 +131,17 @@ struct Plan: Codable, Equatable {
         if let revenue = fields["monthlyRevenue"] {
             guard let entries = revenue.object, entries.keys.allSatisfy({ PlanDate.parse($0 + "-01") != nil && entries.hasMoney($0) }) else { return false }
         }
+        if let forecast = fields["revenueForecast"] {
+            guard let entries = forecast.object, entries.count <= 1000, entries.allSatisfy({ id, value in
+                guard id.range(of: #"\A[a-zA-Z0-9-]{1,100}\z"#, options: .regularExpression) != nil,
+                      let item = value.object, item.hasText("name", 120), !item.text("name").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      PlanDate.parse(item.text("month") + "-01") != nil, let vat = item["vat"]?.object,
+                      vat.hasMoney("net"), vat.hasMoney("gross"), vat.amount("net") > 0, vat.amount("gross") >= vat.amount("net"),
+                      ["gross", "net"].contains(vat.text("basis")) else { return false }
+                let rate = vat.amount("rate")
+                return vat.optionalMoney("rate") && (0...100).contains(rate) && (rate * 100).rounded() / 100 == rate
+            }) else { return false }
+        }
         if let metadata = fields["monthlyRevenueVAT"] {
             guard let entries = metadata.object, entries.allSatisfy({ month, value in
                 guard PlanDate.parse(month + "-01") != nil, let m = value.object,
@@ -343,6 +354,11 @@ struct RevenueDraft {
         let net = plan.revenueValue(month, net: true)
         let gross = plan.revenueValue(month, net: false)
         let meta = gross == nil ? nil : plan.fields["monthlyRevenueVAT"]?.object?[month]?.object
+        self.init(net: net, meta: meta)
+    }
+
+    init(net: Double? = nil, meta: Record? = nil) {
+        let gross = meta?["gross"]?.number
         basis = meta?["basis"]?.string ?? (net == nil ? "gross" : "net")
         amount = (basis == "gross" ? gross : net).map(editableAmount) ?? ""
         let rate = meta?["rate"]?.number

@@ -15,6 +15,10 @@ export function revenueValue(plan: RevenuePlan, month: string, basis: VatBasis) 
 export function revenueDraft(plan: RevenuePlan, month: string): RevenueDraft {
   const net = revenueValue(plan, month, "net"), gross = revenueValue(plan, month, "gross");
   const meta = gross === undefined ? undefined : plan.monthlyRevenueVAT?.[month];
+  return draftFromRevenue(net, meta);
+}
+export function draftFromRevenue(net?: number, meta?: RevenueVAT): RevenueDraft {
+  const gross = meta?.gross;
   const basis = meta?.basis ?? (net === undefined ? "gross" : "net");
   return { basis, amount: editable(basis === "gross" ? gross : net), method: meta && meta.rate === undefined ? "tax" : "rate",
     tax: editable(meta && (meta.rate ?? difference(meta.gross, meta.net))), originalGross: gross };

@@ -47,6 +47,16 @@ function validList(value: unknown, max: number, validator: (item: Record<string,
 export function isPlan(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value) || !isText(value.name, 80)) return false;
   if (value.scenario !== undefined && (!isRecord(value.scenario) || !isText(value.scenario.name) || !isMoney(value.scenario.cost) || !isMoney(value.scenario.equity))) return false;
+  if (value.revenueForecast !== undefined) {
+    const entries = value.revenueForecast;
+    if (!isRecord(entries) || Object.keys(entries).length > 1000 || !Object.entries(entries).every(([id, row]) => {
+      if (!/^[a-zA-Z0-9-]{1,100}$/.test(id) || !isRecord(row) || !isText(row.name, 120) || !String(row.name).trim() ||
+          typeof row.month !== "string" || !validCalendarDay(row.month + "-01") || !isRecord(row.vat)) return false;
+      const {net, gross, basis, rate} = row.vat;
+      return isMoney(net) && isMoney(gross) && Number(net) > 0 && Number(gross) >= Number(net) &&
+        (basis === "net" || basis === "gross") && validVat({vatRate: rate});
+    })) return false;
+  }
   if (value.monthlyRevenue !== undefined && (!isRecord(value.monthlyRevenue) || !Object.entries(value.monthlyRevenue).every(([month, amount]) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && isMoney(amount)))) return false;
   if (value.monthlyRevenueVAT !== undefined && (!isRecord(value.monthlyRevenueVAT) || !Object.entries(value.monthlyRevenueVAT).every(([month, meta]) =>
     /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && isRecord(meta) && isMoney(meta.net) && isMoney(meta.gross) &&
