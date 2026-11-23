@@ -336,14 +336,22 @@ private struct ForecastDetail: View {
                 Section("Rechnung ab heute") {
                     Button { checkingBalance = true } label: {
                         HStack {
-                            LabeledAmount(label: "Eingetragener Nettokontostand", amount: forecast.balance)
+                            LabeledAmount(label: "Kontoguthaben gesamt", amount: forecast.positiveBalance)
                             disclosure
                         }.contentShape(Rectangle())
                     }.buttonStyle(.plain)
+                    if forecast.overdrafts < 0 {
+                        Button { checkingBalance = true } label: {
+                            HStack {
+                                LabeledAmount(label: "Überzogene Konten", amount: forecast.overdrafts)
+                                disclosure
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                    }
                     ForEach(forecast.rowsFromToday) { row in
                         entryButton(row, dated: true)
                     }
-                    LabeledAmount(label: "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: metrics.flexibleBudget == 0)
+                    LabeledAmount(label: forecast.rowsFromToday.contains(where: { $0.cardReserve }) ? "Nach Zahlungen und Kartenrücklagen" : "Mit datierten Zahlungen", amount: forecast.datedBalance, emphasis: metrics.flexibleBudget == 0)
                     if metrics.flexibleBudget > 0 {
                         NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
                             LabeledAmount(label: "Flexible Kosten · anteilig ab heute", amount: -forecast.remainingBudget)
@@ -389,10 +397,11 @@ private struct ForecastDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if row.section == .accounts {
                         let date = row.bookingDate.map { $0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "de_DE"))) }
-                        Text([date, "Kartenausgleich " + row.item.name].compactMap { $0 }.joined(separator: " · "))
-                            .font(.subheadline)
-                        Text(date == nil ? "Buchungstag offen · Im Nettokontostand enthalten" : "Im Nettokontostand enthalten")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        LabeledAmount(label: [date, "Kartenausgleich " + row.item.name].compactMap { $0 }.joined(separator: " · "), amount: row.amount)
+                        if row.cardReserve {
+                            Text(date == nil ? "Zurückgelegt · Buchungstag offen" : "Für nächsten Monat zurückgelegt")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                     } else {
                         LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
                     }

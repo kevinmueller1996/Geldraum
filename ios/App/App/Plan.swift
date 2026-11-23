@@ -582,10 +582,13 @@ struct ForecastEntry: Identifiable {
     let day: Int
     let monthUnknown: Bool
     var bookingDate: Date? = nil
+    var cardReserve = false
 }
 
 struct MonthForecast {
     let balance: Double
+    let positiveBalance: Double
+    let overdrafts: Double
     var rowsFromToday: [ForecastEntry] = []
     var scheduled: [ForecastEntry] = []
     var uncertain: [ForecastEntry] = []
@@ -671,7 +674,10 @@ struct PlanMetrics {
         let start = calendar.startOfDay(for: today)
         let day = calendar.component(.day, from: start)
         let lastDay = calendar.range(of: .day, in: .month, for: today)?.count ?? 31
-        var result = MonthForecast(balance: net)
+        let accounts = plan[.accounts]
+        var result = MonthForecast(balance: net,
+            positiveBalance: accounts.reduce(0) { $0 + max(0, $1.netBalance) },
+            overdrafts: accounts.filter { $0.fields.text("type") != "credit" }.reduce(0) { $0 + min(0, $1.netBalance) })
         result.remainingBudget = ((flexibleBudget * 100).rounded() * Double(lastDay - day + 1) / Double(lastDay)).rounded() / 100
         func include(_ item: PlanItem, section: PlanSection, amount: Double, monthUnknown: Bool = false) {
             guard amount != 0 else { return }
@@ -713,7 +719,8 @@ struct PlanMetrics {
         let transfers = cardSettlements.map { card in
             ForecastEntry(section: .accounts, item: card.account, amount: -card.account.fields.amount("balance"),
                           day: card.date.map { calendar.component(.day, from: $0) } ?? 0,
-                          monthUnknown: false, bookingDate: card.date)
+                          monthUnknown: false, bookingDate: card.date,
+                          cardReserve: card.date.map { !calendar.isDate($0, equalTo: start, toGranularity: .month) } ?? true)
         }
         result.rowsFromToday = (result.scheduled + transfers).sorted {
             ($0.bookingDate ?? .distantFuture) < ($1.bookingDate ?? .distantFuture)

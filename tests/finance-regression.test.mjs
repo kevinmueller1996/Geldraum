@@ -189,6 +189,21 @@ test("monthly credit card settlement dates use the local calendar without changi
   }
 });
 
+test("positive balances, overdrafts and each card settlement reconcile with the month-end total", async () => {
+  const { monthEndForecast } = await import("../app/recurring-costs.ts");
+  const accounts = [
+    {id:"bank",type:"bank",balance:600}, {id:"cash",type:"cash",balance:25},
+    {id:"overdraft",type:"bank",balance:-50}, {id:"later",type:"credit",balance:120,bookingDay:1},
+    {id:"open",type:"credit",balance:20}, {id:"card",type:"credit",balance:400,bookingDay:28}
+  ].map(a => ({...a,name:a.id}));
+  const forecast = monthEndForecast(35,new Date(2026,10,22),{accounts,incomes:[],commitments:[],
+    expenses:[{id:"fee",name:"Kartengebühr",amount:5,bookingDay:28}]});
+  const shown = forecast.rowsFromToday.map(e => e.kind === "transfer" ? -e.account.balance : e.row.amount);
+  assert.deepEqual([forecast.positiveBalance, forecast.overdrafts, forecast.datedBalance],[625,-50,30]);
+  assert.equal(shown.reduce((sum,amount)=>sum+amount,forecast.positiveBalance+forecast.overdrafts),forecast.datedBalance);
+  assert.deepEqual(forecast.rowsFromToday.filter(e=>e.kind==="transfer" && e.reserved).map(e=>e.account.id),["later","open"]);
+});
+
 test("the forecast timeline interleaves card transfers, including today, with dated payments", async () => {
   const { monthEndForecast } = await import("../app/recurring-costs.ts");
   const card = { id: "later", name: "Karte", type: "credit", balance: 180, bookingDay: 23 };

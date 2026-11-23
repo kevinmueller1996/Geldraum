@@ -230,8 +230,11 @@ export function monthEndForecast(balance: number, today: Date, plan: {
   const projectedBalance = datedBalance - remainingBudget;
   const low = uncertain.reduce((sum, row) => sum + Math.min(0, row.amount), projectedBalance);
   const high = uncertain.reduce((sum, row) => sum + Math.max(0, row.amount), projectedBalance);
-  const transfers = upcomingCardSettlements(plan.accounts ?? [], today).map(({ account, date }) => ({
-    kind: "transfer" as const, account, date
+  const accounts = plan.accounts ?? [];
+  const positiveBalance = accounts.reduce((sum, a) => sum + Math.max(0, a.type === "credit" ? -a.balance : a.balance), 0);
+  const overdrafts = accounts.reduce((sum, a) => sum + (a.type === "credit" ? 0 : Math.min(0, a.balance)), 0);
+  const transfers = upcomingCardSettlements(accounts, today).map(({ account, date }) => ({
+    kind: "transfer" as const, account, date, reserved: !date || date.getMonth() !== month
   }));
   const payments = scheduled.map(row => ({
     kind: "payment" as const, row, date: new Date(today.getFullYear(), month, row.day)
@@ -239,5 +242,5 @@ export function monthEndForecast(balance: number, today: Date, plan: {
   const rowsFromToday = [...payments, ...transfers].sort((a, b) =>
     (a.date?.getTime() ?? Infinity) - (b.date?.getTime() ?? Infinity)
   );
-  return { scheduled, rowsFromToday, uncertain, datedBalance, remainingBudget, projectedBalance, low, high };
+  return { positiveBalance, overdrafts, hasCardReserve: transfers.some(t => t.reserved), scheduled, rowsFromToday, uncertain, datedBalance, remainingBudget, projectedBalance, low, high };
 }

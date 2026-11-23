@@ -1128,18 +1128,21 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
           {showForecast && <section id="forecast-detail" className="detail-card">
             <h2>Monatsendprognose</h2>
             <h3>Rechnung ab heute</h3>
-            <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Eingetragener Nettokontostand</span><b>{exactEuros.format(metrics.netBalance)}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>
+            <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}><span>Kontoguthaben gesamt</span><b>{exactEuros.format(metrics.forecast.positiveBalance)}</b><span aria-hidden="true"><UiIcon name="next" /></span></button>
+            {metrics.forecast.overdrafts < 0 && <button type="button" className="detail-row forecast-entry" onClick={openCheckIn}>
+              <span>Überzogene Konten</span><b>{exactEuros.format(metrics.forecast.overdrafts)}</b><span aria-hidden="true"><UiIcon name="next" /></span>
+            </button>}
             {metrics.forecast.rowsFromToday.map(entry => {
               if (entry.kind === "payment") return forecastButton(entry.row, true);
               const { account, date } = entry;
               return <button type="button" className="detail-row forecast-entry" key={`accounts:${account.id}`} onClick={() => openFocusedEditor("accounts", undefined, account.id)}>
                 <span>{date && date.toLocaleDateString("de-DE", { day: "numeric", month: "short" }) + " · "}Kartenausgleich {account.name}
-                  <small>{date ? "Im Nettokontostand enthalten" : "Buchungstag offen · Im Nettokontostand enthalten"}</small>
+                  {entry.reserved && <small>{date ? "Für nächsten Monat zurückgelegt" : "Zurückgelegt · Buchungstag offen"}</small>}
                 </span>
-                <span aria-hidden="true"><UiIcon name="next" /></span>
+                <b>{exactEuros.format(-account.balance)}</b><span aria-hidden="true"><UiIcon name="next" /></span>
               </button>;
             })}
-            <div className="detail-row"><strong>Mit datierten Zahlungen</strong><b>{exactEuros.format(metrics.forecast.datedBalance)}</b></div>
+            <div className="detail-row"><strong>{metrics.forecast.hasCardReserve ? "Nach Zahlungen und Kartenrücklagen" : "Mit datierten Zahlungen"}</strong><b>{exactEuros.format(metrics.forecast.datedBalance)}</b></div>
             {metrics.flexible > 0 && <>
               <button type="button" className="detail-row forecast-entry" onClick={() => openFocusedEditor("flexible")}><span>Flexible Kosten<small>Monatsbudget anteilig ab heute bis Monatsende</small></span><b>{exactEuros.format(-metrics.forecast.remainingBudget)}</b><UiIcon name="next" /></button>
               <div className="detail-row"><strong>Prognose inkl. flexibler Kosten</strong><b>{exactEuros.format(metrics.forecast.projectedBalance)}</b></div>
