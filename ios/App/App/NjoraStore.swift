@@ -96,6 +96,10 @@ final class NjoraStore: ObservableObject {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-njora-demo") {
             plan = .demo
+            if ProcessInfo.processInfo.arguments.contains("-njora-business") {
+                workspace = .business
+                plan?.fields["name"] = .string("Beispielfirma")
+            }
             state = .preview
             return
         }

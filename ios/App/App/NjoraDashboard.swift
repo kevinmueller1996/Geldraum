@@ -105,60 +105,145 @@ struct WorkspacePicker: View {
     }
 }
 
+private struct ForecastCard: View {
+    @Environment(\.njoraAppearance) private var theme
+    @Environment(\.dynamicTypeSize) private var typeSize
+    let metrics: PlanMetrics
+    @ObservedObject var store: NjoraStore
+
+    var body: some View {
+        let forecast = metrics.forecast
+        NavigationLink { ForecastDetail(store: store) } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Prognose zum Monatsende").font(.headline)
+                    Spacer()
+                    if !typeSize.isAccessibilitySize {
+                        Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
+                    }
+                }
+                Text("≈ " + euros(forecast.projectedBalance))
+                    .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
+                    .accessibilityLabel("Ungefähr " + euros(forecast.projectedBalance))
+                let basis = metrics.flexibleBudget > 0 ? "Mit Zahlungen und anteiligem Monatsbudget" : "Mit datierten Zahlungen"
+                Text(forecast.uncertain.isEmpty ? basis : basis + " · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
+                    .font(.footnote)
+            }
+            .foregroundStyle(theme.paper)
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.accent, in: RoundedRectangle(cornerRadius: 18))
+        }.buttonStyle(.plain)
+        .accessibilityIdentifier("njora.overview.forecast")
+    }
+}
+
 private struct BusinessOverview: View {
+    @Environment(\.njoraAppearance) private var theme
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var columnThreshold: CGFloat = 820
     @ObservedObject var store: NjoraStore
     let plan: Plan
     @Binding var tab: DashboardTab
     @State private var checkIn = false
 
     var body: some View {
-        let month = PlanDate.previousRevenueMonth(for: .now)
         let metrics = PlanMetrics(plan: plan)
-        List {
-            Section("Liquidität") {
-                NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
-                    LabeledAmount(label: "Geschäftskonten", amount: metrics.net)
+        GeometryReader { window in
+            ScrollView {
+                DashboardLayout.columns(window.size.width >= columnThreshold && !typeSize.isAccessibilitySize) {
+                    VStack(spacing: 14) {
+                        ForecastCard(metrics: metrics, store: store)
+                        revenueCard
+                    }.frame(maxWidth: .infinity)
+                    VStack(spacing: 14) {
+                        monthlyCard(metrics)
+                        VStack(alignment: .leading, spacing: 0) {
+                            NavigationLink { PlanSectionView(section: .savings, store: store) } label: {
+                                row("Vermögenswerte", value: euros(plan[.savings].reduce(0) { $0 + $1.savingValue }))
+                            }
+                            Divider()
+                            Button { tab = .loans } label: {
+                                row("Offene Kreditschuld", value: euros(plan[.loans].reduce(0) { $0 + $1.loanSchedule().balance }))
+                            }
+                        }.njoraCard(theme.card)
+                    }.frame(maxWidth: .infinity)
                 }
-                NavigationLink { ForecastDetail(store: store) } label: {
-                    LabeledContent("Prognose zum Monatsende", value: "≈ " + euros(metrics.forecast.projectedBalance))
-                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 22).padding(.vertical, 12)
+                .frame(maxWidth: DashboardLayout.maxWidth).frame(maxWidth: .infinity)
+                if store.conflict || (store.needsSync && !store.syncing) { Notice(text: store.syncStatus) }
+                Notice(text: store.notice(in: .overview))
             }
-            Section("Umsatz") {
-                Button { tab = .revenue } label: {
-                    LabeledContent("Umsatzübersicht", value: "12 Monate")
-                }
-            }
-            Section("Check-in") {
-                Button { checkIn = true } label: {
-                    LabeledContent("Nettoumsatz " + month.title, value: plan.monthlyRevenue[month.key]?.number.map { euros($0) } ?? "Erfassen")
-                }.accessibilityHint("Öffnet den Check-in für Umsatz und Kontostände.")
-            }
-            Section("Monatsplanung") {
-                NavigationLink { PlanSectionView(section: .income, store: store) } label: {
-                    LabeledAmount(label: "Regelmäßige Betriebseinnahmen", amount: metrics.income)
-                }
-                NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                    LabeledAmount(label: "Betriebskosten brutto inkl. Kreditraten", amount: metrics.fixedCosts)
-                }
-                NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
-                    LabeledAmount(label: "Flexible Kosten", amount: metrics.flexibleBudget)
-                }
-                LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
-            }
-            Section("Vermögen") {
-                NavigationLink { PlanSectionView(section: .savings, store: store) } label: {
-                    LabeledAmount(label: "Vermögenswerte", amount: plan[.savings].reduce(0) { $0 + $1.savingValue })
-                }
-            }
-            Section("Finanzierung") {
-                Button("Geschäftskredite") { tab = .loans }
-            }
-            if store.conflict || store.needsSync { Notice(text: store.syncStatus) }
+            .refreshable { await store.refresh(in: .overview) }
         }
-        .planFormStyle()
-        .navigationTitle(plan.name)
+        .fixedPageHeader {
+            NavigationLink { PlanSectionView(section: .accounts, store: store) } label: {
+                FinancialTitle(title: "Heute", amount: metrics.net, caption: "Geschäftskonten · netto")
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 22).padding(.vertical, 8)
+            .frame(maxWidth: DashboardLayout.maxWidth).frame(maxWidth: .infinity)
+        }
+        .navigationTitle("Heute")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
         .sheet(isPresented: $checkIn) { CheckInView(plan: plan, store: store) }
-        .refreshable { await store.refresh(in: .overview) }
+    }
+
+    private var revenueCard: some View {
+        let month = PlanDate.previousRevenueMonth(for: .now)
+        let amount = plan.monthlyRevenue[month.key]?.number
+        return VStack(alignment: .leading, spacing: 8) {
+            Button { tab = .revenue } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Nettoumsatz · " + month.title).font(.subheadline).foregroundStyle(.secondary)
+                    row(amount.map(euros) ?? "Noch offen", value: nil)
+                        .font(.title2.weight(.semibold))
+                }
+            }.accessibilityHint("Öffnet die Umsatzübersicht der letzten zwölf Monate.")
+            Divider()
+            Button { checkIn = true } label: {
+                Label("Check-in öffnen", systemImage: "square.and.pencil")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(theme.accent)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+            }.accessibilityHint("Umsatz und Kontostände erfassen.")
+        }.njoraCard(theme.card)
+    }
+
+    private func monthlyCard(_ metrics: PlanMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Monatsplanung").font(.headline).accessibilityAddTraits(.isHeader).padding(.bottom, 6)
+            NavigationLink { PlanSectionView(section: .income, store: store) } label: {
+                row("Regelmäßige Einnahmen", value: euros(metrics.income))
+            }
+            Divider()
+            NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
+                row("Fixkosten inkl. Kreditraten", value: euros(metrics.fixedCosts))
+            }
+            Divider()
+            NavigationLink { PlanSectionView(section: .flexible, store: store) } label: {
+                row("Flexible Kosten", value: euros(metrics.flexibleBudget))
+            }
+            Divider()
+            Button { tab = .month } label: {
+                row(metrics.available < 0 ? "Fehlbetrag" : "Überschuss", value: euros(metrics.available))
+                    .fontWeight(.semibold)
+            }
+        }.njoraCard(theme.card)
+    }
+
+    private func row(_ title: String, value: String?) -> some View {
+        HStack(spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack { Text(title).fixedSize(); Spacer(minLength: 8); if let value { Text(value).fixedSize() } }
+                VStack(alignment: .leading, spacing: 4) { Text(title); if let value { Text(value) } }
+            }
+            .monospacedDigit().frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary).accessibilityHidden(true)
+        }
+        .frame(minHeight: 44).contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -234,29 +319,7 @@ struct Overview: View {
     @ScaledMetric(relativeTo: .body) private var columnThreshold: CGFloat = 820
 
     @ViewBuilder private func primaryCards(_ metrics: PlanMetrics, columns: Int) -> some View {
-        let forecast = metrics.forecast
-        NavigationLink { ForecastDetail(store: store) } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Prognose zum Monatsende").font(.headline)
-                    Spacer()
-                    if !typeSize.isAccessibilitySize {
-                        Image(systemName: "chevron.right").font(.footnote.bold()).accessibilityHidden(true)
-                    }
-                }
-                Text("≈ " + euros(forecast.projectedBalance))
-                    .font(.system(.largeTitle, design: .rounded, weight: .semibold))
-                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
-                    .accessibilityLabel("Ungefähr " + euros(forecast.projectedBalance))
-                let basis = metrics.flexibleBudget > 0 ? "Mit Zahlungen und anteiligem Monatsbudget" : "Mit datierten Zahlungen"
-                Text(forecast.uncertain.isEmpty ? basis : basis + " · " + (forecast.uncertain.count == 1 ? "1 Buchung offen" : "\(forecast.uncertain.count) Buchungen offen"))
-                    .font(.footnote)
-            }
-            .foregroundStyle(theme.paper)
-            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.accent, in: RoundedRectangle(cornerRadius: 18))
-        }.buttonStyle(.plain)
-        .accessibilityIdentifier("njora.overview.forecast")
+        ForecastCard(metrics: metrics, store: store)
 
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: columns), spacing: 12) {
             NavigationLink { PlanSectionView(section: .income, store: store) } label: {
