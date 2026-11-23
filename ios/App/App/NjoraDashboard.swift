@@ -389,8 +389,9 @@ private struct ForecastDetail: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if row.section == .accounts {
                         let date = row.bookingDate.map { $0.formatted(.dateTime.day().month(.abbreviated).locale(Locale(identifier: "de_DE"))) }
-                        LabeledAmount(label: [date, row.item.name].compactMap { $0 }.joined(separator: " · "), amount: row.amount)
-                        Text(date == nil ? "Kartenausgleich · Abbuchungstag offen" : "Kartenausgleich · bereits im Nettostand")
+                        Text([date, "Kartenausgleich " + row.item.name].compactMap { $0 }.joined(separator: " · "))
+                            .font(.subheadline)
+                        Text(date == nil ? "Buchungstag offen · Im Nettokontostand enthalten" : "Im Nettokontostand enthalten")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else {
                         LabeledAmount(label: dated ? "\(row.day). · " + row.item.name : row.item.name, amount: row.amount)
@@ -400,6 +401,7 @@ private struct ForecastDetail: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 disclosure
             }.contentShape(Rectangle())
         }

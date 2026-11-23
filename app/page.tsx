@@ -1126,10 +1126,10 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
               if (entry.kind === "payment") return forecastButton(entry.row, true);
               const { account, date } = entry;
               return <button type="button" className="detail-row forecast-entry" key={`accounts:${account.id}`} onClick={() => openFocusedEditor("accounts", undefined, account.id)}>
-                <span>{date && date.toLocaleDateString("de-DE", { day: "numeric", month: "short" }) + " · "}{account.name}
-                  <small>{date ? "Kartenausgleich · bereits im Nettostand" : "Kartenausgleich · Abbuchungstag offen"}</small>
+                <span>{date && date.toLocaleDateString("de-DE", { day: "numeric", month: "short" }) + " · "}Kartenausgleich {account.name}
+                  <small>{date ? "Im Nettokontostand enthalten" : "Buchungstag offen · Im Nettokontostand enthalten"}</small>
                 </span>
-                <b>{exactEuros.format(-account.balance)}</b><span aria-hidden="true"><UiIcon name="next" /></span>
+                <span aria-hidden="true"><UiIcon name="next" /></span>
               </button>;
             })}
             <div className="detail-row"><strong>Mit datierten Zahlungen</strong><b>{exactEuros.format(metrics.forecast.datedBalance)}</b></div>
