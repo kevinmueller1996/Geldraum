@@ -45,7 +45,18 @@ export const frequencies = { monthly: "Monatlich", quarterly: "Quartalsweise", a
 export type Frequency = keyof typeof frequencies;
 
 export type RateChange = { date: string; amount: number };
+// Stored amounts, including scheduled rate changes, are always gross cash amounts.
+export type VatBasis = "gross" | "net";
+function vatConversion(value: number, rate: number, toGross: boolean) {
+  const cents = Math.round(Math.abs(value) * 100 + Number.EPSILON * Math.abs(value) * 100);
+  const factor = 10000 + Math.round(rate * 100);
+  return Math.sign(value) * Math.round(toGross ? cents * factor / 10000 : cents * 10000 / factor) / 100;
+}
+export const grossFromNet = (net: number, rate: number) => vatConversion(net, rate, true);
+export const netFromGross = (gross: number, rate: number) => vatConversion(gross, rate, false);
+
 type ExpenseSchedule = {
+  vatBasis?: VatBasis; vatRate?: number;
   amount: number; frequency?: Frequency; month?: number; dueDate?: string; paid?: boolean; rateChanges?: RateChange[];
 };
 const intervalMonths = { monthly: 1, quarterly: 3, annual: 12 };

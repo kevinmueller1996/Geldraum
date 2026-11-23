@@ -135,7 +135,7 @@ private struct BusinessOverview: View {
                     LabeledAmount(label: "Regelmäßige Betriebseinnahmen", amount: metrics.income)
                 }
                 NavigationLink { PlanSectionView(section: .expenses, store: store) } label: {
-                    LabeledAmount(label: "Betriebskosten inkl. Kreditraten", amount: metrics.fixedCosts)
+                    LabeledAmount(label: "Betriebskosten brutto inkl. Kreditraten", amount: metrics.fixedCosts)
                 }
                 LabeledAmount(label: "Monatlicher Überschuss", amount: metrics.available, emphasis: true)
             }
@@ -416,7 +416,7 @@ struct MonthlyPlan: View {
                             }
                             Divider()
                             monthRow(section: .expenses) {
-                                LabeledAmount(label: store.workspace == .business ? "Betriebskosten inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts)
+                                LabeledAmount(label: store.workspace == .business ? "Betriebskosten brutto inkl. Kreditraten" : "Fixkosten", amount: -metrics.fixedCosts)
                             }
                         }
                         .njoraCard(theme.card)

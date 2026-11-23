@@ -148,6 +148,9 @@ struct PlanEditor: View {
         _item = State(initialValue: item)
     }
 
+    @State private var vatEntry: String?
+    @State private var vatRateEntry: String?
+    private var businessExpense: Bool { store.workspace == .business && (section == .expenses || section == .annual) }
     private var businessAssets: Bool { section == .savings && store.workspace == .business }
     private var assetTitle: String { businessAssets ? "Vermögenswert" : section.itemTitle }
 
@@ -220,7 +223,8 @@ struct PlanEditor: View {
             })) {
                 ForEach(ExpenseFrequency.allCases, id: \.self) { Text($0.label).tag($0) }
             }.pickerStyle(.menu)
-            amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true)
+            if businessExpense { businessAmountFields }
+            else { amount(item.frequency == .monthly ? "Monatsbetrag" : "Betrag je Zahlung", key: "amount", signed: true) }
             if item.frequency == .quarterly || item.frequency == .annual { monthPicker() }
             categoryPicker(default: "Wohnen")
             if item.frequency == .once {
@@ -232,14 +236,14 @@ struct PlanEditor: View {
             } else { bookingDayPicker() }
             ForEach(item.rates.filter { $0.text("date") > PlanDate.string(.now) }.map { $0.text("date") }, id: \.self) { date in
                 if let rate = item.rates.first(where: { $0.text("date") == date }) {
-                    LabeledContent("Ab " + date, value: euros(rate.amount("amount")))
+                    LabeledContent((businessExpense ? "Brutto ab " : "Ab ") + date, value: euros(rate.amount("amount")))
                     Button("Änderung am " + date + " entfernen", role: .destructive) {
                         item.fields["rateChanges"] = .array(item.rates.filter { $0.text("date") != date }.map(JSONValue.object))
                     }
                 }
             }
         case .annual:
-            amount("Jahresbetrag", key: "amount", signed: true)
+            if businessExpense { businessAmountFields } else { amount("Jahresbetrag", key: "amount", signed: true) }
             monthPicker()
         case .loans:
             categoryPicker(default: "Kreditraten")
@@ -309,6 +313,49 @@ struct PlanEditor: View {
             }
         case .history: EmptyView()
         }
+    }
+
+    private var vatRate: Double { item.fields.amount("vatRate") }
+    private var entersNet: Bool { item.fields.text("vatBasis") == "net" }
+    private var grossExpense: Double { item.expenseAmount() }
+    private var netExpense: Double { ExpenseVAT.convert(grossExpense, rate: vatRate, toGross: false) }
+
+    private func updateGrossExpense(_ value: Double) {
+        guard value != grossExpense else { return }
+        item.fields["amount"] = .number(value)
+        if !item.rates.isEmpty {
+            item.fields["rateChanges"] = .array(item.rates.filter { $0.text("date") > PlanDate.string(.now) }.map(JSONValue.object))
+        }
+    }
+
+    @ViewBuilder private var businessAmountFields: some View {
+        Picker("Eingabe als", selection: Binding(get: { entersNet }, set: { net in
+            item.fields["vatBasis"] = .string(net ? "net" : "gross")
+            vatEntry = nil
+        })) {
+            Text("Brutto").tag(false)
+            Text("Netto").tag(true)
+        }.pickerStyle(.segmented)
+        PlanField(title: entersNet ? "Nettobetrag" : "Bruttobetrag", text: Binding(get: {
+            let value = entersNet ? netExpense : grossExpense
+            return vatEntry ?? (value == 0 ? "" : editableAmount(value))
+        }, set: { text in
+            vatEntry = text
+            if let value = germanAmount(text) {
+                updateGrossExpense(entersNet ? ExpenseVAT.convert(value, rate: vatRate, toGross: true) : value)
+            }
+        }), prompt: "0,00", unit: "€", keyboard: .numbersAndPunctuation)
+        PlanField(title: "Steuersatz", text: Binding(get: { vatRateEntry ?? editableAmount(vatRate) }, set: { text in
+            guard text.range(of: #"\A[0-9]{0,3}(?:[.,][0-9]{0,2})?\z"#, options: .regularExpression) != nil,
+                  let rate = germanAmount(text), rate <= 100 else { return }
+            vatRateEntry = text
+            guard rate != vatRate else { return }
+            let net = vatEntry.flatMap(germanAmount) ?? netExpense
+            item.fields["vatRate"] = .number(rate)
+            if entersNet { updateGrossExpense(ExpenseVAT.convert(net, rate: rate, toGross: true)) }
+        }), prompt: "0", unit: "%", keyboard: .decimalPad)
+        LabeledContent(entersNet ? "Bruttobetrag" : "Nettobetrag", value: euros(entersNet ? grossExpense : netExpense))
+        LabeledContent("Enthaltene Umsatzsteuer", value: euros(grossExpense - netExpense))
     }
 
     private var assetPreview: PlanItem {
@@ -395,6 +442,9 @@ struct PlanEditor: View {
         let name = changed.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.utf16.count <= 120 else {
             validation = "Bitte gib eine Bezeichnung mit höchstens 120 Zeichen ein."; return
+        }
+        if businessExpense && (vatEntry.map { germanAmount($0) == nil } == true || abs(grossExpense) > 1_000_000_000) {
+            validation = "Bitte prüfe den eingegebenen Betrag."; return
         }
         changed.fields["name"] = .string(name)
         if section == .accounts && changed.fields.text("type") != "credit" { changed.fields.removeValue(forKey: "bookingDay") }

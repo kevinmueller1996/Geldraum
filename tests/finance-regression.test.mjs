@@ -227,3 +227,20 @@ test("a zero euro one-off invoice adds no forecast rows before, on or after its 
     assert.deepEqual([forecast.datedBalance,forecast.uncertain.length,forecast.rowsFromToday.length],[35,0,0]);
   }
 });
+
+test("business expenses use the same payable cents for either input basis", async () => {
+  const { grossFromNet, netFromGross, averageMonthlyCosts, monthEndForecast } = await import("../app/recurring-costs.ts");
+  for (const [net, rate, gross] of [[100, 19, 119], [100, 0, 100], [-10.5, 7, -11.24], [80, 8.25, 86.60], [0.5, 19, 0.60]]) {
+    assert.equal(grossFromNet(net, rate), gross);
+    assert.equal(netFromGross(gross, rate), net);
+  }
+  const item = { id: "e", name: "Software", category: "Büro", frequency: "quarterly", month: 0,
+    bookingDay: 15, amount: grossFromNet(100, 19), vatBasis: "net", vatRate: 19 };
+  const plan = { name: "Test", expenses: [item], annualCosts: [], incomes: [], accounts: [], savings: [], commitments: [], goals: [], snapshots: [] };
+  assert.deepEqual(backupPlan(plan), plan);
+  assert.equal(averageMonthlyCosts([item], [], "2026-01-05"), 119 / 3);
+  assert.equal(monthEndForecast(500, new Date(2026, 0, 5), plan).scheduled[0].amount, -119);
+  for (const bad of [{vatRate: -1}, {vatRate: 100.1}, {vatRate: 0.001}, {vatRate: "19"}, {vatBasis: "x"}]) {
+    assert.equal(backupPlan({...plan, expenses: [{...item, ...bad}]}), null);
+  }
+});

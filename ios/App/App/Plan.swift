@@ -290,6 +290,16 @@ enum ExpenseFrequency: String, CaseIterable {
 
 let standardExpenseCategories = ["Wohnen", "Versicherungen", "Mobilität", "Kommunikation", "Lebenshaltung", "Abos & Sonstiges", "Sonstige"]
 
+enum ExpenseVAT {
+    static func convert(_ value: Double, rate: Double, toGross: Bool) -> Double {
+        let scaled = abs(value) * 100
+        let cents = (scaled + scaled * Double.ulpOfOne).rounded()
+        let factor = 10_000 + (rate * 100).rounded()
+        let result = (toGross ? cents * factor / 10_000 : cents * 10_000 / factor).rounded() / 100
+        return value < 0 ? -result : result
+    }
+}
+
 struct PlanItem: Identifiable, Equatable {
     var fields: Record
     init(_ fields: Record) { self.fields = fields }

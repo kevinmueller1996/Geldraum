@@ -26,7 +26,7 @@ import { isLocalHostname } from "./local-host";
 import NativeSettingsCard from "./native-settings-card";
 
 type IncomeSource = { bookingDay?: number; id: string; name: string; amount: number; annual: boolean; month?: number };
-import { byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, expenseAmount, averageMonthlyCosts, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
+import { grossFromNet, netFromGross, type VatBasis, byDueDate, byTargetDate, standardExpenseCategories as categories, expenseCategoryResolver, frequencies, expenseAmount, averageMonthlyCosts, isExpenseDue, monthEndForecast, unifiedExpenses, storagePlan, type Expense, type AnnualCost, type Frequency, type ForecastRow } from "./recurring-costs";
 
 type Commitment = { originalPrincipal?: number; balanceDate?: string; paidBefore?: number; bookingDay?: number; category?: string; id: string; name: string; balance: number; payment: number; interestRate?: number; termMonths?: number; extraPayment?: number };
 type Goal = { id: string; name: string; target: number; saved: number; monthly: number; targetDate?: string };
@@ -1037,7 +1037,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           <div className="dashboard-metrics">
             {business && <button type="button" onClick={() => navigate("revenue")}><span>Umsatz {revenueMonthLabel(dashboardRevenueMonth)}</span><strong>{active.monthlyRevenue?.[dashboardRevenueMonth] === undefined ? "Umsatz erfassen" : exactEuros.format(active.monthlyRevenue[dashboardRevenueMonth])}</strong></button>}
             <button type="button" onClick={() => openFocusedEditor("income")}><span>{business ? "Betriebseinnahmen" : "Einkommen"} im {currentMonthName}</span><strong>{exactEuros.format(metrics.income + metrics.currentAnnualIncome)}</strong></button>
-            <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten" : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
+            <button type="button" onClick={() => showCosts("home")}><span>{business ? "Betriebskosten brutto" : "Fixkosten"} · Ø pro Monat</span><strong>{exactEuros.format(metrics.fixedCosts)}</strong></button>
             <button type="button" onClick={() => navigate("month")}><span>{business ? "Monatlicher Überschuss" : "Monatlicher Spielraum"}</span><strong>{exactEuros.format(metrics.available)}</strong></button>
             <button type="button" onClick={() => navigate("loans")}><span>Offene Kreditschuld</span><strong>{exactEuros.format(metrics.totalDebt)}</strong></button>
           </div>
@@ -1077,7 +1077,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
         {business && activeView === "revenue" && plan && <RevenueHistory plan={plan} today={today} save={persistPlan} problem={problem} />}
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
-          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label="Fixkosten" value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
+          <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label={business ? "Betriebskosten brutto" : "Fixkosten"} value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /></div>
           <article className="detail-card flow-detail">
             <div className="section-title compact"><div><h2>Durchschnittliche Kosten je Kategorie</h2><small>{metrics.income > 0 ? "Anteil am regelmäßigen Monatseinkommen" : "Für Prozentanteile ein regelmäßiges Einkommen eintragen."}</small></div><div className="plan-position"><strong className={metrics.unallocated >= 0 ? "positive" : "negative"}>{metrics.unallocated >= 0 ? "+ " : "− "}{euro(Math.abs(metrics.unallocated))}</strong>{metrics.income > 0 && <span>{incomePercent.format(metrics.fixedCosts / metrics.income)} verplant</span>}</div></div>
             {metrics.income > 0 && <div className="stacked-bar" aria-label="Monatseinkommen für geplante Ausgaben">{monthOutflows.map((item) => <i style={{ width: `${item.value / metrics.income * 100}%`, backgroundColor: item.color }} key={item.label} />)}</div>}
@@ -1091,7 +1091,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
 
         {activeView === "expenses" && <section className="view" aria-labelledby="expenses-title">
           <button type="button" className="edit-chip" onClick={() => navigate(costDetail.from)}><UiIcon name="back" /> {costDetail.from === "month" ? "Monatsplan" : "Heute"}</button>
-          <div className="section-title financial-heading"><h2 id="expenses-title">{costDetail.category ?? "Fixkosten"}</h2><TitleAmount value={costDetail.category ? selectedCostGroup?.value ?? 0 : metrics.fixedCosts} label="Ø pro Monat" /></div>
+          <div className="section-title financial-heading"><h2 id="expenses-title">{costDetail.category ?? "Fixkosten"}</h2><TitleAmount value={costDetail.category ? selectedCostGroup?.value ?? 0 : metrics.fixedCosts} label={business ? "Brutto · Ø pro Monat" : "Ø pro Monat"} /></div>
           <div className="category-details">
             {costLoans.length > 0 && <article className="detail-card category-card">
               <h3>Kredite</h3>
@@ -1211,7 +1211,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
             {onboardingStep === 3 && <>
               <p className="eyebrow">Fixkosten</p><h2 id="onboarding-title">Was geht regelmäßig raus?</h2><p className="onboarding-intro">Dieser Schritt ist optional. Starte mit den größten Fixkosten; weitere Details kannst du jederzeit nachtragen.</p>
               <div className="optional-note"><b>Optional</b><span>Du kannst direkt weitergehen.</span></div>
-              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="0" /><b>€</b></span></label><label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
+              <div className="onboarding-list">{draft.expenses.map((item, index) => <div className="onboarding-row expense" key={item.id}><label><FieldTitle>Bezeichnung</FieldTitle><input maxLength={120} value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label>{business ? <BusinessExpenseAmount item={item} day={today} update={patch => updateList("expenses", index, patch)} /> : <label><FieldTitle>Betrag</FieldTitle><span className="currency-input"><DecimalInput value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="0" /><b>€</b></span></label>}<label><FieldTitle>Kategorie</FieldTitle><select value={item.category} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label><ExpenseScheduleFields business={business} item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}</div>
               <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: business ? "Betriebskosten" : "Wohnen", bookingDay: 0 }] })}>Ausgabe</AddButton>
             </>}
 
@@ -1261,8 +1261,8 @@ function FinanceDashboard({ business }: { business: boolean }) {
 
           {(!editorScope || editorScope === "expenses" || editorScope === "specials") && <EditorSection id="editor-expenses" title="Fixkosten" subtitle="Betrag, Rhythmus und Fälligkeit">
             {editorTarget && !editorTarget.startsWith("item:") && <div className="category-color-editor"><div><span className="category-color-preview" style={{ backgroundColor: draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget] }} /><span><strong>Kategoriefarbe</strong><small>Für Diagramm und Monatsübersicht</small></span></div><label><input aria-label={`Farbe für ${editorTarget}`} type="color" value={draft.categoryColors[editorTarget] ?? defaultCategoryColors[editorTarget]} onChange={(e) => setDraft({ ...draft, categoryColors: { ...draft.categoryColors, [editorTarget]: e.target.value } })} /></label></div>}
-            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><label>Ausgabe<input maxLength={120} aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label><label>Betrag je Zahlung (€)<DecimalInput aria-label="Betrag je Zahlung" value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="Betrag je Zahlung" /></label><label>Kategorie<select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>{item.frequency !== "once" && <label>Buchungstag<input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /></label>}<ExpenseScheduleFields item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
-            {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget ?? "Wohnen", bookingDay: 0, ...(editorScope === "specials" ? { frequency: "annual" as const, month: currentMonth } : {}) }] })}>Ausgabe</AddButton>}
+            {draft.expenses.map((item, index) => ({ item, index })).filter(({ item }) => editorScope !== "specials" || (item.frequency && item.frequency !== "monthly")).filter(({ item }) => !editorTarget || (editorTarget.startsWith("item:") ? item.id === editorTarget.slice(5) : item.category === editorTarget)).map(({ item, index }) => <div className="editor-row expense-edit" key={item.id}><label>Ausgabe<input maxLength={120} aria-label="Ausgabe" value={item.name} onChange={(e) => updateList("expenses", index, { name: e.target.value })} placeholder="z. B. Miete" /></label>{business ? <BusinessExpenseAmount item={item} day={today} update={patch => updateList("expenses", index, patch)} /> : <label>Betrag je Zahlung (€)<DecimalInput aria-label="Betrag je Zahlung" value={expenseAmount(item, today)} onValueChange={(amount) => updateList("expenses", index, { amount, rateChanges: item.rateChanges?.filter(rate => rate.date > today) })} placeholder="Betrag je Zahlung" /></label>}<label>Kategorie<select aria-label="Kategorie" value={item.category} disabled={Boolean(editorTarget && !editorTarget.startsWith("item:"))} onChange={(e) => updateList("expenses", index, { category: e.target.value })}>{categoryOptions.map((category) => <option key={category}>{category}</option>)}</select></label>{item.frequency !== "once" && <label>Buchungstag<input aria-label="Buchungstag" type="number" min="1" max="31" value={item.bookingDay || ""} onChange={(e) => updateList("expenses", index, { bookingDay: Math.min(Math.max(numberValue(e.target.value), 0), 31) })} placeholder="Tag optional" /></label>}<ExpenseScheduleFields business={business} item={item} update={(patch) => updateList("expenses", index, patch)} /><RemoveButton onClick={() => removeListItem("expenses", index)} /></div>)}
+            {!editorTarget?.startsWith("item:") && <AddButton onClick={() => setDraft({ ...draft, expenses: [...draft.expenses, { id: uid(), name: "", amount: 0, category: editorTarget ?? (business ? "Betriebskosten" : "Wohnen"), bookingDay: 0, ...(editorScope === "specials" ? { frequency: "annual" as const, month: currentMonth } : {}) }] })}>Ausgabe</AddButton>}
           </EditorSection>}
 
 
@@ -1420,7 +1420,35 @@ function BookingDayField({ day, update, label = "Buchungstag" }: { day?: number;
   </select></label>;
 }
 
-function ExpenseScheduleFields({ item, update }: { item: Expense; update: (patch: Partial<Expense>) => void }) {
+function BusinessExpenseAmount({ item, day, update }: { item: Expense; day: string; update: (patch: Partial<Expense>) => void }) {
+  const [rateDraft, setRateDraft] = useState<string | null>(null);
+  const gross = expenseAmount(item, day);
+  const rate = item.vatRate ?? 0;
+  const net = netFromGross(gross, rate);
+  const basis = item.vatBasis ?? "gross";
+  function setGross(amount: number, extra: Partial<Expense> = {}) {
+    update(amount === gross ? extra : { ...extra, amount, rateChanges: item.rateChanges?.filter(change => change.date > day) });
+  }
+  return <div className="payment-fields vat-fields">
+    <label>Eingabe als<select value={basis} onChange={event => update({ vatBasis: event.target.value as VatBasis })}>
+      <option value="gross">Brutto</option><option value="net">Netto</option>
+    </select></label>
+    <label>{basis === "net" ? "Nettobetrag" : "Bruttobetrag"} (€)<DecimalInput key={basis} value={basis === "net" ? net : gross}
+      onValueChange={amount => setGross(basis === "net" ? grossFromNet(amount, rate) : amount)} placeholder="0,00" /></label>
+    <label>Steuersatz (%)<input type="text" inputMode="decimal" placeholder="0" value={rateDraft ?? String(rate).replace(".", ",")}
+      onChange={event => {
+        const text = event.target.value;
+        if (!/^\d{0,3}(?:[,.]\d{0,2})?$/.test(text)) return;
+        const next = Number(text.replace(",", ".") || 0);
+        if (!Number.isFinite(next) || next > 100) return;
+        setRateDraft(text);
+        if (next !== rate) setGross(basis === "net" ? grossFromNet(net, next) : gross, { vatRate: next });
+      }} onBlur={() => setRateDraft(null)} /></label>
+    <span className="vat-summary">{exactEuros.format(net)} netto · {exactEuros.format(gross - net)} USt. · {exactEuros.format(gross)} brutto</span>
+  </div>;
+}
+
+function ExpenseScheduleFields({ item, update, business }: { business: boolean; item: Expense; update: (patch: Partial<Expense>) => void }) {
   return <div className="payment-fields">
     <label>Zahlungsrhythmus<select value={item.frequency ?? "monthly"} onChange={(event) => {
       const frequency = event.target.value as Frequency;
@@ -1433,7 +1461,7 @@ function ExpenseScheduleFields({ item, update }: { item: Expense; update: (patch
       <label><input type="checkbox" checked={Boolean(item.paid)} onChange={event => update({paid: event.target.checked})} /> Bezahlt</label>
     </>}
     {item.rateChanges?.filter(rate => rate.date > localDay()).map(rate => <div key={rate.date}>
-      <label>Monatsbetrag ab {rate.date}<DecimalInput value={rate.amount} onValueChange={amount => update({rateChanges: item.rateChanges?.map(r => r.date === rate.date ? {...r, amount} : r)})} /></label>
+      <label>Monatsbetrag{business ? (item.vatBasis === "net" ? " netto" : " brutto") : ""} ab {rate.date}<DecimalInput key={item.vatBasis} value={business && item.vatBasis === "net" ? netFromGross(rate.amount, item.vatRate ?? 0) : rate.amount} onValueChange={amount => update({rateChanges: item.rateChanges?.map(r => r.date === rate.date ? {...r, amount: business && item.vatBasis === "net" ? grossFromNet(amount, item.vatRate ?? 0) : amount} : r)})} /></label>
       <button type="button" onClick={() => update({rateChanges: item.rateChanges?.filter(r => r.date !== rate.date)})}>Änderung entfernen</button>
     </div>)}
     {(item.frequency === "annual" || item.frequency === "quarterly") && <label>Fälligkeitsmonat<select value={item.month ?? 0} onChange={(event) => update({ month: Number(event.target.value) })}>
