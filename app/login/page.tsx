@@ -16,7 +16,7 @@ function signInDestination() {
   if (!next) return "/";
   try {
     const target = new URL(next, window.location.origin);
-    const allowed = ["/api/chatgpt/authorize", "/api/chatgpt/confirm", "/api/chatgpt/manage"];
+    const allowed = ["/freigaben", "/api/chatgpt/authorize", "/api/chatgpt/confirm", "/api/chatgpt/manage"];
     if (target.origin === window.location.origin && allowed.includes(target.pathname)) return target.pathname + target.search;
   } catch { /* Incomplete return URLs fall back to the dashboard. */ }
   return "/";
@@ -44,7 +44,7 @@ export default function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "1") window.location.replace("/");
-    if (params.get("start") === "register" || params.get("verification") === "invalid") {
+    if (params.has("weiter") || params.get("start") === "register" || params.get("verification") === "invalid") {
       document.getElementById("zugang")?.scrollIntoView({ block: "start" });
     }
   }, []);

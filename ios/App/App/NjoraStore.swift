@@ -80,6 +80,16 @@ final class NjoraStore: ObservableObject {
         monitor.start(queue: DispatchQueue(label: "de.njora.connectivity"))
     }
 
+    func sharing<T: Decodable & Sendable>(_ action: String, workspace: FinanceWorkspace, fields: Record = [:], writePlan: Bool = false) async throws -> T {
+        guard let session else { throw APIError(401, "Bitte melde dich an.") }
+        var body = fields
+        body["action"] = .string(action)
+        body["workspace"] = .string(workspace == .business ? "business" : "private")
+        let result: T = try await api.sharing(body, session: session, writePlan: writePlan)
+        guard self.session == session else { throw CancellationError() }
+        return result
+    }
+
     deinit { monitor.cancel(); syncTask?.cancel(); retryTask?.cancel() }
 
     func restore() async {

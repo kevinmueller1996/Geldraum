@@ -1,0 +1,12 @@
+.share-panel {display:grid;gap:1rem}
+.share-panel h2,.share-panel p {margin:0}
+.share-panel h2:not(:first-child) {margin-top:1rem}
+.share-panel nav,.share-panel form,.share-row {display:flex;gap:.8rem;align-items:end;flex-wrap:wrap}
+.share-panel nav a {padding:.5rem .9rem;border-radius:2rem}
+.share-panel nav [aria-current] {background:var(--ink,#422b24);color:var(--paper,#fff)}
+.share-panel form label,.share-row div {display:grid;gap:.4rem;min-width:0;flex:1 1 11rem}
+.share-panel input,.share-panel select,.share-panel button {font:inherit;padding:.65rem .9rem;border:1px solid currentColor;border-radius:.65rem}
+.share-panel input,.share-panel select {width:100%;min-width:0;background:transparent;color:inherit}
+.share-panel button {cursor:pointer}
+.share-row {border-bottom:1px solid #99897e55;padding:.8rem 0;align-items:center;overflow-wrap:anywhere}
+.share-row small {opacity:.8}

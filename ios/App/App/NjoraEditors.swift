@@ -141,7 +141,14 @@ struct PlanEditor: View {
     @State private var amounts: [String: String] = [:]
     @State private var validation = ""
 
-    init(section: PlanSection, item: PlanItem, plan: Plan, store: NjoraStore) {
+    private let sharedWorkspace: FinanceWorkspace?
+    private let sharedSave: ((Plan) async throws -> Void)?
+    @State private var savingShared = false
+
+    init(section: PlanSection, item: PlanItem, plan: Plan, store: NjoraStore,
+         sharedWorkspace: FinanceWorkspace? = nil, sharedSave: ((Plan) async throws -> Void)? = nil) {
+        self.sharedWorkspace = sharedWorkspace
+        self.sharedSave = sharedSave
         self.section = section
         _plan = State(initialValue: plan)
         self.store = store
@@ -150,8 +157,8 @@ struct PlanEditor: View {
 
     @State private var vatEntry: String?
     @State private var vatRateEntry: String?
-    private var businessExpense: Bool { store.workspace == .business && ([PlanSection.expenses, .annual, .flexible].contains(section)) }
-    private var businessAssets: Bool { section == .savings && store.workspace == .business }
+    private var businessExpense: Bool { (sharedWorkspace ?? store.workspace) == .business && ([PlanSection.expenses, .annual, .flexible].contains(section)) }
+    private var businessAssets: Bool { section == .savings && (sharedWorkspace ?? store.workspace) == .business }
     private var assetTitle: String { businessAssets ? "Vermögenswert" : section.itemTitle }
 
     var body: some View {
@@ -169,16 +176,16 @@ struct PlanEditor: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { dismiss() } label: { Label("Abbrechen", systemImage: "xmark") }
-                        .labelStyle(.iconOnly).disabled(store.busy)
+                        .labelStyle(.iconOnly).disabled(savingShared || store.busy)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(action: save) { Label("Speichern", systemImage: "checkmark") }
                         .labelStyle(.iconOnly)
-                        .disabled(store.busy || item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(savingShared || store.busy || item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onDisappear { store.clearNotice(in: .editor) }
-            .interactiveDismissDisabled(store.busy)
+            .interactiveDismissDisabled(savingShared || store.busy)
 
         }
     }
@@ -404,7 +411,7 @@ struct PlanEditor: View {
     }
 
     private func categoryPicker(default fallback: String) -> some View {
-        let categories = store.workspace == .business ? ["Betriebskosten", "Personal", "Büro", "Software", "Marketing", "Versicherungen", "Mobilität", "Sonstige"] : standardExpenseCategories
+        let categories = (sharedWorkspace ?? store.workspace) == .business ? ["Betriebskosten", "Personal", "Büro", "Software", "Marketing", "Versicherungen", "Mobilität", "Sonstige"] : standardExpenseCategories
         let base = categories + (section == .loans ? ["Kreditraten"] : [])
         let used = plan[.expenses].map(\.expenseCategory) + plan[.loans].map(\.loanCategory)
         let selected = item.costCategory(default: fallback)
@@ -508,7 +515,16 @@ struct PlanEditor: View {
             return
         }
         let result = revised
-        Task { if await store.save(result, basedOn: plan) { dismiss() } }
+        if let sharedSave {
+            savingShared = true
+            Task {
+                defer { savingShared = false }
+                do { try await sharedSave(result); dismiss() }
+                catch { validation = error.localizedDescription }
+            }
+        } else {
+            Task { if await store.save(result, basedOn: plan) { dismiss() } }
+        }
     }
 }
 
@@ -667,6 +683,9 @@ struct SettingsView: View {
                         Text("Dein Web-Abo verwaltest du im Kontobereich von njora.de.")
                     }
                 }
+            }
+            Section("Freigaben") {
+                NavigationLink("Finanzbereich teilen") { SharingView(store: store, initial: store.workspace) }
             }
             Section("Erscheinungsbild") {
                 ForEach(NjoraAppearance.allCases, id: \.self) { option in

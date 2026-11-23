@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, uniqueIndex, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -23,6 +23,23 @@ export const businessPlans = sqliteTable("business_plans", {
   revision: integer("revision").notNull().default(1),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+});
+
+export const workspaceShares = sqliteTable("workspace_shares", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id, {onDelete:"cascade"}),
+  workspace: text("workspace", {enum:["private","business"]}).notNull(),
+  recipientId: text("recipient_id").notNull(),
+  recipientEmail: text("recipient_email").notNull(),
+  role: text("role", {enum:["view","edit"]}).notNull(),
+  acceptedBy: text("accepted_by").references(() => users.id, {onDelete:"cascade"}),
+  expiresAt: text("expires_at").notNull(),
+}, t => [uniqueIndex("workspace_shares_pair").on(t.ownerId,t.workspace,t.recipientId),index("workspace_shares_recipient").on(t.recipientId)]);
+
+export const workspaceInviteMailLimits = sqliteTable("workspace_invite_mail_limits", {
+  bucket: text("bucket").primaryKey(),
+  day: text("day").notNull(),
+  sent: integer("sent").notNull(),
 });
 
 export const userActivity = sqliteTable("user_activity", {

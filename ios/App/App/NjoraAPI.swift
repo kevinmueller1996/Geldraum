@@ -237,6 +237,10 @@ actor NjoraAPI {
         token = cookie.value
     }
 
+    func sharing<T: Decodable>(_ fields: Record, session: String, writePlan: Bool) async throws -> T {
+        try await request("/api/sharing", method: writePlan ? "PUT" : "POST", body: fields, expectedSession: session)
+    }
+
     private func request<T: Decodable>(_ path: String, method: String = "GET", body: Record? = nil, query: [URLQueryItem] = [], includeSession: Bool = true, expectedSession: String? = nil) async throws -> T {
         let (data, _) = try await send(path, method: method, body: body, query: query, includeSession: includeSession, expectedSession: expectedSession)
         return try decoder.decode(T.self, from: data)

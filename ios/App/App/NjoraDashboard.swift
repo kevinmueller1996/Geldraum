@@ -791,7 +791,7 @@ struct PlanSectionView: View {
 
 }
 
-private struct PlanItemRow: View {
+struct PlanItemRow: View {
     let item: PlanItem
     let section: PlanSection
     var businessAssets = false

@@ -41,6 +41,7 @@ async function backend(env) {
       export * as billing from "./app/billing/subscription";
       export * as backup from "./app/api/admin/backup/route";
       export * as account from "./app/api/account/route";
+      export * as sharing from "./app/api/sharing/route";
       export * as register from "./app/api/auth/register/route";
       export * as verify from "./app/api/auth/verify-email/route";
       export * as auth from "./app/password-auth";
@@ -337,4 +338,59 @@ test("Stripe must confirm the linked customer's deletion before Njora deletes it
   assert.equal((await account.DELETE(request("/api/account","DELETE",undefined,cookie))).status,200);
   assert.equal(queue.length,0);
   assert.equal(db.sql.prepare("SELECT id FROM users WHERE id=?").get(id),undefined);
+});
+
+test("sharing binds each grant to one verified recipient, owner, role and workspace", async t => {
+  const db = database();
+  t.after(()=>db.sql.close());
+  const env = {DB:db, AUTH_REQUIRE_EMAIL_VERIFICATION:"1"};
+  const {auth,account,sharing} = await backend(env);
+  const session = async name => {
+    const email = name+"@example.invalid";
+    const pending = await auth.registerPasswordAccount(email,undefined,true);
+    const result = await auth.confirmEmailVerification(pending.verificationToken,"example secure fixture");
+    return "__Host-njora_session="+result.token;
+  };
+  const owner = await session("owner"), partner = await session("partner"), spouse = await session("spouse");
+  const call = (cookie,workspace,action,fields={},method="POST") => sharing[method](request("/api/sharing",method,{workspace,action,...fields},cookie));
+  const grants = async (cookie,space) => (await call(cookie,space,"list")).json();
+  const write = (c,space,id,revision,name) => call(c,space,"plan",{id,revision,plan:{...example,name}},"PUT");
+  for (const [path,cookie,name] of [["/api/account",owner,"Privat"],["/api/account/business",owner,"Firma"],["/api/account",partner,"Mein eigener Plan"]]) {
+    assert.equal((await account.PUT(request(path,"PUT",{revision:null,plan:{...example,name}},cookie))).status,200);
+  }
+  assert.equal((await call("","private","list")).status,401);
+  assert.equal((await call(owner,"both","invite",{email:"spouse@example.invalid",role:"view"})).status,400);
+  assert.equal((await call(owner,"private","invite",{email:"owner@example.invalid",role:"edit"})).status,400);
+  for(const [space,name,role] of [["private","spouse","view"],["business","partner","edit"]]) {
+    const invite = await call(owner,space,"invite",{email:name+"@example.invalid",role});
+    assert.equal(invite.status,200);
+    assert.equal((await invite.json()).mailed,false);
+  }
+  const {id:personal} = (await grants(spouse,"private")).received[0];
+  const {id:business} = (await grants(partner,"business")).received[0];
+  assert.deepEqual((await grants(spouse,"business")).received,[]);
+  assert.deepEqual((await grants(partner,"private")).received,[]);
+  assert.equal((await call(spouse,"private","plan",{id:personal})).status,404);
+  assert.equal((await call(partner,"private","accept",{id:personal})).status,404);
+  assert.equal((await call(spouse,"private","accept",{id:personal})).status,200);
+  assert.equal((await call(partner,"business","accept",{id:business})).status,200);
+  assert.equal((await call(partner,"private","plan",{id:business})).status,404);
+  assert.equal((await call(partner,"private","plan",{id:personal})).status,404);
+  assert.equal((await (await call(spouse,"private","plan",{id:personal})).json()).plan.name,"Privat");
+  assert.equal((await write(spouse,"private",personal,1,"Changed")).status,403);
+  assert.equal((await write(partner,"business",business,1,"Firma aktualisiert")).status,200);
+  assert.equal((await write(partner,"business",business,1,"Veraltet")).status,409);
+  assert.equal((await (await account.GET(request("/api/account/business","GET",null,owner))).json()).plan.name,"Firma aktualisiert");
+  assert.equal((await (await account.GET(request("/api/account","GET",null,partner))).json()).plan.name,"Mein eigener Plan");
+  assert.equal((await call(owner,"business","remove",{id:business})).status,200);
+  assert.equal((await call(partner,"business","plan",{id:business})).status,404);
+  assert.equal((await write(partner,"business",business,2,"Nach Widerruf")).status,404);
+  assert.equal((await call(owner,"business","invite",{email:"spouse@example.invalid",role:"edit"})).status,200);
+  const pending = (await grants(spouse,"business")).received[0].id;
+  db.prepare("UPDATE workspace_shares SET expires_at='2000-01-01' WHERE id=?").bind(pending).run();
+  assert.equal((await call(spouse,"business","accept",{id:pending})).status,404);
+  assert.equal((await account.DELETE(request("/api/account","DELETE",null,spouse))).status,200);
+  const fresh = await session("spouse");
+  assert.deepEqual((await grants(fresh,"private")).received,[]);
+  assert.equal((await call(fresh,"private","plan",{id:personal})).status,404);
 });

@@ -268,6 +268,7 @@ struct SetupView: View {
                     Task { _ = await store.save(newPlan, in: .account) }
                 }.disabled(store.busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.utf16.count > 80)
                 Section("Konto") {
+                    NavigationLink("Einladungen und geteilte Bereiche") { SharingView(store: store, initial: store.workspace) }
                     Button("Abmelden") { Task { await store.endSession(deleteAccount: false) } }.disabled(store.busy)
                     Button("Konto löschen", role: .destructive) { confirmDelete = true }.disabled(store.busy)
                     LegalLinksView()

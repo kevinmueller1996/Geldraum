@@ -11,9 +11,10 @@ type Props = {
   today: string;
   save: (next: Plan, base: Plan) => Promise<boolean>;
   problem: string;
+  readOnly?: boolean;
 };
 
-export default function RevenueHistory({ plan, today, save, problem }: Props) {
+export default function RevenueHistory({ plan, today, save, problem, readOnly=false }: Props) {
   const stats = revenueStats(plan.monthlyRevenue ?? {}, today);
   const [edit, setEdit] = useState<{ month: string; base: Plan } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -38,17 +39,17 @@ export default function RevenueHistory({ plan, today, save, problem }: Props) {
   function row(month: string) {
     const value = plan.monthlyRevenue?.[month];
     const range = stats.max - stats.min || 1;
-    return <button key={month} className="revenue-row" type="button" onClick={() => selectMonth(month, plan)}>
+    return <button key={month} className="revenue-row" type="button" disabled={readOnly} onClick={() => selectMonth(month, plan)}>
       <span>{revenueMonthLabel(month)}</span>
       <span className="revenue-track" aria-hidden="true">
         {value !== undefined && value !== 0 && <i style={{ left: ((Math.min(value, 0) - stats.min) / range * 100) + "%", width: (Math.abs(value) / range * 100) + "%" }} />}
       </span>
-      <strong>{value === undefined ? "Nachtragen" : money.format(value)}</strong>
+      <strong>{value === undefined ? (readOnly?"–":"Nachtragen") : money.format(value)}</strong>
     </button>;
   }
   const older = Object.keys(plan.monthlyRevenue ?? {}).filter(month => month < stats.months[11]).sort().reverse();
   return <section className="view" aria-labelledby="revenue-heading">
-    <div className="section-title financial-heading"><h1 id="revenue-heading">Umsatz</h1><button className="edit-chip" type="button" onClick={() => selectMonth(stats.months.find(m => plan.monthlyRevenue?.[m] === undefined) ?? stats.months[0], plan)}>Monat nachtragen</button></div>
+    <div className="section-title financial-heading"><h1 id="revenue-heading">Umsatz</h1>{!readOnly && <button className="edit-chip" type="button" onClick={() => selectMonth(stats.months.find(m => plan.monthlyRevenue?.[m] === undefined) ?? stats.months[0], plan)}>Monat nachtragen</button>}</div>
     <article className="detail-card">
       <h2>Letzte 12 abgeschlossene Monate</h2>
       <p>{stats.count} von 12 Monaten erfasst</p>
@@ -57,7 +58,7 @@ export default function RevenueHistory({ plan, today, save, problem }: Props) {
       <div className="revenue-rows">{stats.months.map(row)}</div>
     </article>
     {older.length > 0 && <details className="detail-card"><summary>Frühere Monate ({older.length})</summary>{older.map(month =>
-      <button className="revenue-row" type="button" key={month} onClick={() => selectMonth(month, plan)}><span>{revenueMonthLabel(month)}</span><span /><strong>{money.format(plan.monthlyRevenue![month])}</strong></button>)}</details>}
+      <button className="revenue-row" type="button" disabled={readOnly} key={month} onClick={() => selectMonth(month, plan)}><span>{revenueMonthLabel(month)}</span><span /><strong>{money.format(plan.monthlyRevenue![month])}</strong></button>)}</details>}
     {edit && <dialog ref={dialog} className="revenue-dialog" aria-labelledby="revenue-editor-title" onCancel={e => { e.preventDefault(); if (!saving) close(); }}>
       <form onSubmit={async e => {
         e.preventDefault();

@@ -1,5 +1,6 @@
 "use client";
 
+import { sharing, ShareError, type Access } from "./freigaben/client";
 import { UiIcon, type IconName } from "./ui-icon";
 import { applyClosingPrices, closeVenue, securityISIN, type ClosingPrices } from "./market/closing-prices";
 import { currentSession, offlineCopy, updateCopy, mergeDraft, reconcile, bindBrowserCopy, differentAccount, pending, Conflict, SessionChanged, type Copy, type Remote, type Choice } from "./browser-plan";
@@ -255,16 +256,22 @@ function migrateOldProfile(): Plan | null {
 export default function Home() {
   const ready = useBrowserReady();
   if (!ready) return <main className="loading" aria-label="Njora wird geladen"><span className="loading-mark" /></main>;
-  return <FinanceDashboard business={new URLSearchParams(location.search).get("bereich") === "business"} />;
+  const query = new URLSearchParams(location.search);
+  return <FinanceDashboard key={query.toString()} business={query.get("bereich") === "business"} grant={query.get("freigabe")} />;
 }
 
-function FinanceDashboard({ business }: { business: boolean }) {
+function FinanceDashboard({ business, grant }: { business: boolean; grant:string|null }) {
+  const space = business ? "business" : "private";
+  const sharePath = "/freigaben?bereich="+space;
+  const sharedRevision = useRef<number|null>(null);
+  const [access,setAccess] = useState<Access>("view");
+  const [sharedFailure,setSharedFailure] = useState("");
   const onboardingSteps = business ? businessSteps : privateSteps;
   const assetKinds = business ? { ...savingKindLabels, other: "Sonstiger Vermögenswert" } : savingKindLabels;
   const savingsTitle = business ? "Vermögenswerte" : "Deine Ersparnisse";
   const newSavingKind = business ? "other" : "dayMoney";
   const accountEndpoint = business ? "/api/account/business" : "/api/account";
-  const workspacePicker = <select className="workspace-picker" aria-label="Finanzbereich" value={business ? "business" : "private"}
+  const workspacePicker = grant !== null ? <a className="workspace-picker" href={sharePath}>{business?"Business":"Privat"} · Geteilt</a> : <select className="workspace-picker" aria-label="Finanzbereich" value={business ? "business" : "private"}
     onChange={event => location.assign(event.target.value === "business" ? "/?bereich=business" : "/")}>
     <option value="private">Privat</option><option value="business">Business</option>
   </select>;
@@ -309,6 +316,44 @@ function FinanceDashboard({ business }: { business: boolean }) {
 
   useEffect(() => {
     let cancelled = false;
+    if (grant !== null) {
+      async function loadShared() {
+        try {
+          const result = await sharing<{plan:Plan|null;revision:number|null;role:Access}>(space,"plan",{id:grant});
+          if(cancelled) return;
+          const loaded = result.plan ? normalizePlan(result.plan) : null;
+          setAccess(result.role); setPlan(loaded); setReady(true);
+          if(loaded) setDraft(loaded);
+          sharedRevision.current=result.revision;
+          setAuthStatus("authenticated"); setSyncStatus("saved");
+          setSharedFailure(loaded ? "" : "In diesem Finanzbereich wurde noch kein Plan angelegt.");
+        } catch(e) {
+          if(cancelled) return;
+          setPlan(null); setReady(true); setSharedFailure(e instanceof Error ? e.message : "Freigabe nicht erreichbar.");
+        }
+      }
+      // Reload on return to recheck access. A suspended page must not restore a guest plan from cache.
+      let requestNumber = 0;
+      const checkAccess = async () => {
+        if(document.hidden) return;
+        const number = ++requestNumber;
+        try {
+          await sharing(space,"status",{id:grant});
+        } catch(e) {
+          if(cancelled || number!==requestNumber) return;
+          if(e instanceof ShareError && [401,402,403,404,412].includes(e.status)) {
+            setPlan(null); setDraft(emptyPlan()); setEditing(false); setCheckingIn(false); setSharedFailure(e.message);
+          }
+        }
+      };
+      const interval = window.setInterval(checkAccess,60000);
+      document.addEventListener("visibilitychange",checkAccess);
+      const returned = (e:PageTransitionEvent) => { if(e.persisted) location.reload(); };
+      window.addEventListener("pageshow",returned);
+      syncNow.current=()=>location.reload();
+      void loadShared();
+      return ()=>{cancelled=true;window.clearInterval(interval);document.removeEventListener("visibilitychange",checkAccess);window.removeEventListener("pageshow",returned);};
+    }
     let running = false;
     let again = false;
     let delay = 2000;
@@ -461,7 +506,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
     })().catch(() => {});
     return () => { cancelled = true; clearInterval(marketTimer); messages?.close(); channel.current = null; clearTimeout(timer); window.removeEventListener("online",resume);
       window.removeEventListener("pageshow",changed); window.removeEventListener("storage",changed); document.removeEventListener("visibilitychange",changed); };
-  }, [business, accountEndpoint]);
+  }, [business, accountEndpoint, grant, space]);
 
   const hasPlan = Boolean(plan);
   const [today, setToday] = useState(() => localDay());
@@ -480,7 +525,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }, []);
 
   useEffect(() => {
-    const modalOpen = billing?.active !== false && (checkingIn || editing || savingsOpen || showLegacyPrompt || (authStatus === "authenticated" && !hasPlan));
+    const modalOpen = !sharedFailure && billing?.active !== false && (checkingIn || editing || savingsOpen || showLegacyPrompt || (authStatus === "authenticated" && !hasPlan));
     if (!modalOpen) return;
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
@@ -510,7 +555,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
       if (trigger?.isConnected) trigger.focus({ preventScroll: true });
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [authStatus, billing?.active, checkingIn, editing, onboardingStep, hasPlan, savingsOpen, showLegacyPrompt]);
+  }, [sharedFailure, authStatus, billing?.active, checkingIn, editing, onboardingStep, hasPlan, savingsOpen, showLegacyPrompt]);
 
   const source = plan ?? demoPlan;
   const active = useMemo(() => orderedPlan({ ...source, commitments: source.commitments.map(loan => currentLoan(loan, today)) }), [source, today]);
@@ -609,6 +654,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }
 
   function openFocusedEditor(section: EditorScope, add?: "account" | "income" | "expense" | "loan" | "goal" | "security" | "saving", target?: string) {
+    if (add && grant && access === "view") return;
     baseline.current = plan;
     const next = structuredClone(orderedPlan(plan ?? emptyPlan()));
     let nextTarget = target ?? null;
@@ -644,6 +690,16 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }
 
   async function persistPlan(next: Plan, base = plan) {
+    if (grant !== null) {
+      if(access !== "edit") { setProblem("Du hast Lesezugriff."); return false; }
+      try {
+        const reply = await sharing<{revision:number}>(space,"plan",{id:grant,plan:storagePlan(next),revision:sharedRevision.current},"PUT");
+        sharedRevision.current=reply.revision; setPlan(next); setProblem(""); setSyncStatus("saved"); return true;
+      } catch(e) {
+        if(e instanceof ShareError && [401,402,403,404,409].includes(e.status)) setSharedFailure(e.message);
+        setProblem(e instanceof Error ? e.message : "Speichern fehlgeschlagen."); return false;
+      }
+    }
     const copy = current.current;
     if (!copy || copy.billing?.active === false) return false;
     setSyncStatus("saving");
@@ -779,6 +835,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   const dashboardRevenueMonth = previousRevenueMonth(today);
 
   function openCheckIn() {
+    if (grant && access === "view") return;
     if (!plan) return;
     baseline.current = plan;
     setRevenueDrafts({});
@@ -924,6 +981,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }
 
   if (!ready) return <main className="loading" aria-label="Njora wird geladen"><span className="loading-mark" /></main>;
+  if (grant !== null && sharedFailure) return <main className="legal-page"><article><h1>Geteilter Finanzbereich</h1><p>{sharedFailure}</p><a href={sharePath}>Freigaben öffnen</a></article></main>;
   if (authStatus === "anonymous") return <main className="loading" aria-label="Weiterleitung zur Anmeldung" />;
   if (authStatus === "unavailable") return <main className="auth-shell"><section className="auth-card"><Brand /><p className="eyebrow">Kurz nicht erreichbar</p><h1>{isLocalMode ? "Lokale Version wird vorbereitet." : "Deine Daten bleiben sicher."}</h1><p>{isLocalMode ? "Die lokale Datenbank konnte gerade nicht erreicht werden. Eine Anmeldung ist für localhost nicht erforderlich." : "Njora konnte die persönliche Cloud gerade nicht erreichen. Bitte versuche es in einem Moment erneut."}</p><button className="auth-button" type="button" onClick={() => window.location.reload()}>Erneut versuchen <b><UiIcon name="retry" /></b></button></section></main>;
 
@@ -992,6 +1050,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
   }
 
   function navigate(view: View) {
+    if (grant && view === "more") { location.assign(sharePath); return; }
     setActiveView(view);
     window.scrollTo({ top: 0 });
   }
@@ -1012,7 +1071,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
 
   if (billing && !billing.active && activeView !== "more") return (
     <main className="legal-page"><article>
-      <BillingOffer billing={billing} standalone />
+      <BillingOffer billing={billing} standalone /><a href={sharePath}>Einladungen und geteilte Bereiche</a>
       <button type="button" className="text-action" onClick={() => navigate("more")}>Konto, Datenexport und Löschung</button>
       <LegalLinks />
     </article></main>
@@ -1039,6 +1098,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
         <button className="profile-button" type="button" onClick={() => navigate("more")} aria-label={active.name + " – Konto und Einstellungen"}><span aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" focusable="false"><circle cx="12" cy="8" r="3.3" /><path d="M4.7 20a7.3 7.3 0 0 1 14.6 0" /></svg></span><b>{active.name}</b></button>
       </header>
 
+      {grant && <p className="share-indicator">Geteilter Bereich · {access === "view" ? "Nur ansehen" : "Mitbearbeiten"}</p>}
       {!editing && !checkingIn && !savingsOpen && (plan || billing?.active === false) && saveNotice}
 
       <div className="app-content">
@@ -1095,7 +1155,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           </div></div>
         </section>}
 
-        {business && activeView === "revenue" && plan && <RevenueHistory plan={plan} today={today} save={persistPlan} problem={problem} />}
+        {business && activeView === "revenue" && plan && <RevenueHistory readOnly={!!grant && access === "view"} plan={plan} today={today} save={persistPlan} problem={problem} />}
         {activeView === "month" && <section className="view" aria-labelledby="month-title">
           <ViewHeader id="month-title" eyebrow={`Plan für ${currentMonthName}`} title="Monatsplan" total={{ value: metrics.available, label: "Spielraum pro Monat" }} copy="Laufende Kosten, Kreditraten und Rücklagen – in Summe und anteilig." />
           <div className="njora-columns month-columns"><div className="summary-grid"><SummaryCard label="Monatliches Einkommen" value={metrics.income} onClick={() => openFocusedEditor("income")} /><SummaryCard label={business ? "Betriebskosten brutto" : "Fixkosten"} value={metrics.fixedCosts} tone="coral" onClick={() => showCosts("month")} /><SummaryCard label="Flexible Kosten" value={metrics.flexible} onClick={() => openFocusedEditor("flexible")} /></div>
@@ -1182,7 +1242,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           <article className="detail-card goal-allocation"><div className="section-title compact"><div><p className="eyebrow">Machbarkeitscheck</p><h2>Was deine Termine erfordern</h2></div></div>{active.goals.map((goal) => <div className="allocation-line" key={goal.id}><span>{goal.name}<small>{validCalendarDay(goal.targetDate) ? `bis ${new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" }).format(new Date(`${goal.targetDate}T12:00:00`))}` : goal.targetDate ? "Datum bitte prüfen" : "ohne festen Termin"}</small></span><strong>{goal.targetDate ? `${euro(goalMonthlyNeed(goal))} / Monat` : "flexibel"}</strong></div>)}<div className="allocation-total"><span>Rechnerischer Bedarf aus Terminzielen</span><strong>{euro(metrics.goalNeed)}</strong></div><p className={`goal-feasibility ${metrics.goalNeed > metrics.available ? "warning" : ""}`}>{metrics.goalNeed === 0 ? "Ohne Zieldatum bleibt dein gesamter Überschuss frei verteilbar." : metrics.goalNeed <= metrics.available ? `Nach allen Terminzielen blieben rechnerisch ${euro(metrics.available - metrics.goalNeed)} pro Monat frei.` : `Die Terminziele übersteigen deinen Überschuss um ${euro(metrics.goalNeed - metrics.available)} pro Monat.`}</p></article>
         </section>}
 
-        {activeView === "more" && <section className="view" aria-labelledby="more-title">
+        {grant === null && activeView === "more" && <section className="view" aria-labelledby="more-title">
           <ViewHeader id="more-title" eyebrow="Account & Einstellungen" title="Dein persönlicher Bereich" copy={cloudUser?.local ? "Lokale Datenhaltung und die Pflege deines Finanzplans an einem Ort." : "Synchronisierung, Datenschutz und die Pflege deines Finanzplans an einem Ort."} />
           {billing?.active !== false && <><article className="detail-card annual-card"><div className="section-title compact"><div><h2>Fälligkeiten im Jahresverlauf</h2></div></div><div className="month-strip">{months.map((month, index) => {
             const sum = active.expenses.filter((item) => item.frequency && item.frequency !== "monthly" && isExpenseDue(item, index)).reduce((total, item) => total + item.amount, 0);
@@ -1191,6 +1251,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
           {business && savingsOverview}
           <button className="settings-card" type="button" onClick={openEditor}><span className="settings-icon">N</span><div><strong>Finanzplan bearbeiten</strong><small>Konten, Einnahmen, Kosten, {business ? "Vermögenswerte" : "Ziele, Ersparnisse"} und Rhythmus</small></div><b><UiIcon name="next" /></b></button>
           </>}
+          <a className="settings-card" href={sharePath}><strong>{business?"Business":"Privat"} teilen und Freigaben verwalten</strong></a>
           <AppearancePicker {...appearance} />
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
@@ -1220,6 +1281,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
       {billing?.active !== false && !plan && !showLegacyPrompt && <div className="modal-backdrop onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <div className="onboarding-top"><Brand /><span>Kurzer Fragebogen · etwa 3 Minuten</span></div>
         {workspacePicker}
+        <a href={sharePath}>Einladungen und geteilte Bereiche</a>
         <div className="onboarding-progress-copy"><span>Schritt {onboardingStep + 1} von {onboardingSteps.length}</span><strong>{onboardingSteps[onboardingStep]}</strong></div>
         <div className="onboarding-progress" role="progressbar" aria-label="Fortschritt bei der Einrichtung" aria-valuemin={1} aria-valuemax={onboardingSteps.length} aria-valuenow={onboardingStep + 1}><i style={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }} /></div>
         <ol className="onboarding-step-list" aria-label="Einrichtungsschritte">{onboardingSteps.map((step, index) => <li className={index === onboardingStep ? "active" : index < onboardingStep ? "done" : ""} key={step}><span>{index < onboardingStep ? "✓" : index + 1}</span><small>{step}</small></li>)}</ol>
@@ -1274,7 +1336,7 @@ function FinanceDashboard({ business }: { business: boolean }) {
       {billing?.active !== false && editing && plan && !showLegacyPrompt && <div className="modal-backdrop"><section className={`editor-card ${editorScope ? "focused-editor" : ""}`} role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="editor-header"><div><p className="eyebrow">{currentEditorCopy?.eyebrow ?? "Dein lokaler Finanzplan"}</p><h2 id="editor-title">{currentEditorCopy?.title ?? (plan ? "Plan bearbeiten" : "Lass uns Klarheit schaffen.")}</h2></div>{plan && <button type="button" className="close-button" onClick={closeEditor} aria-label="Schließen">×</button>}</div>
         <p className="editor-intro">{currentEditorCopy?.intro ?? "Richte deinen Alltag einmal ein. Danach reichen kurze Check-ins, um jederzeit ein klares Bild zu haben."}</p>
-        <form onSubmit={savePlan}>
+        <form onSubmit={savePlan}><fieldset className="share-editor-fields" disabled={!!grant && access === "view"}>
           {!editorScope && <div className="editor-section basis-grid"><label>Profilname<input maxLength={80} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="z. B. Mein Budget" required /></label><label>Check-in-Rhythmus<select value={draft.checkInCadence} onChange={(e) => setDraft({ ...draft, checkInCadence: e.target.value as Plan["checkInCadence"] })}><option value="daily">täglich</option><option value="weekly">wöchentlich</option></select></label></div>}
 
           {(!editorScope || editorScope === "accounts") && <EditorSection id="editor-accounts" title="Konten & Karten" subtitle="Nur der aktuelle Stand – keine Bankverbindung nötig">
@@ -1357,7 +1419,8 @@ function FinanceDashboard({ business }: { business: boolean }) {
           </details>}
 
           {saveNotice}
-          <div className="editor-actions"><span>{syncLabel}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b><UiIcon name="forward" /></b></button></div>
+          </fieldset>
+          {grant && access === "view" ? <p>Du hast Lesezugriff.</p> : <div className="editor-actions"><span>{syncLabel}</span><button className="primary-button" type="submit" disabled={syncStatus === "saving"}>{editorScope ? "Änderungen speichern" : "Übersicht speichern"} <b><UiIcon name="forward" /></b></button></div>}
         </form>
       </section></div>}
 

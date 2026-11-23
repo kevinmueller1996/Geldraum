@@ -72,3 +72,18 @@ export async function sendAuthEmail(to: string, token: string, purpose: AuthMail
   });
   if (!response.ok) throw new Error(`Transactional email provider returned ${response.status}`);
 }
+
+export async function sendWorkspaceInvitation(to: string, owner: string, workspace: "private"|"business", role: string, id: string) {
+  const runtime = mailEnv();
+  if (!authEmailConfigured()) return false;
+  const title = workspace === "business" ? "Business" : "Privat";
+  const url = new URL("/freigaben",authPublicOrigin());
+  url.searchParams.set("bereich",workspace);
+  const response = await fetch("https://api.resend.com/emails", {
+    method:"POST", redirect:"manual", signal:AbortSignal.timeout(5000),
+    headers:{Authorization:"Bearer "+runtime.RESEND_API_KEY?.trim(),"Content-Type":"application/json","Idempotency-Key":"njora-share-"+id},
+    body:JSON.stringify({from:runtime.AUTH_EMAIL_FROM?.trim(),to:[to],subject:"Einladung zum Finanzbereich "+title+" in Njora",
+      text:owner+" lädt dich ein, den Finanzbereich "+title+" in Njora "+(role==="edit"?"mitzubearbeiten":"anzusehen")+". Melde dich innerhalb von sieben Tagen mit "+to+" an und nimm die Einladung unter „Mit dir geteilt“ an.\n\n"+url.href+"\n\nFalls du keine Einladung erwartet hast, kannst du sie ignorieren."})
+  });
+  return response.ok;
+}

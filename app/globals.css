@@ -1444,3 +1444,6 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .loan-monthly-rate { margin:.25rem 0 .75rem; font-variant-numeric:tabular-nums; }
 .compact-loan .loan-details > summary { color:inherit; font-size:.875rem; padding:.5rem 0; }
 .compact-loan .loan-stats { grid-template-columns:repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); }
+
+.share-editor-fields { display: contents; }
+.share-indicator { text-align: center; font-size: .88rem; }

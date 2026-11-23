@@ -15,6 +15,7 @@
 		9B773B11F702000000000192 /* NjoraLocalPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B773B11F702000000000292 /* NjoraLocalPlan.swift */; };
 		9B773B11F702000000000103 /* NjoraDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B773B11F702000000000203 /* NjoraDashboard.swift */; };
 		9B773B11F702000000000104 /* NjoraEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B773B11F702000000000204 /* NjoraEditors.swift */; };
+		9B773B11F702000000000105 /* NjoraSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B773B11F702000000000205 /* NjoraSharing.swift */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		9408A9EF8B2F5E86AD10EFE8 /* Snapshot in App */ = {isa = PBXBuildFile; fileRef = 6D690FB9875558EBB10BD2B7 /* WidgetSnapshot.swift */;};
@@ -34,6 +35,7 @@
 		9B773B11F702000000000292 /* NjoraLocalPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NjoraLocalPlan.swift; sourceTree = "<group>"; };
 		9B773B11F702000000000203 /* NjoraDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NjoraDashboard.swift; sourceTree = "<group>"; };
 		9B773B11F702000000000204 /* NjoraEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NjoraEditors.swift; sourceTree = "<group>"; };
+		9B773B11F702000000000205 /* NjoraSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NjoraSharing.swift; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -98,6 +100,7 @@
 				9B773B11F702000000000292 /* NjoraLocalPlan.swift */,
 				9B773B11F702000000000203 /* NjoraDashboard.swift */,
 				9B773B11F702000000000204 /* NjoraEditors.swift */,
+				9B773B11F702000000000205 /* NjoraSharing.swift */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
 				037AA9BA2A8C48C986F09A24 /* PrivacyInfo.xcprivacy */,
@@ -193,6 +196,7 @@
 				9B773B11F702000000000192 /* NjoraLocalPlan.swift in Sources */,
 				9B773B11F702000000000103 /* NjoraDashboard.swift in Sources */,
 				9B773B11F702000000000104 /* NjoraEditors.swift in Sources */,
+				9B773B11F702000000000105 /* NjoraSharing.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -325,7 +329,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
-				CURRENT_PROJECT_VERSION = 48;
+				CURRENT_PROJECT_VERSION = 49;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -350,7 +354,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
-				CURRENT_PROJECT_VERSION = 48;
+				CURRENT_PROJECT_VERSION = 49;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -372,7 +376,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 48;
+				CURRENT_PROJECT_VERSION = 49;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widgets/Info.plist;
@@ -388,7 +392,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = Shared/WidgetGroup.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 48;
+				CURRENT_PROJECT_VERSION = 49;
 				DEVELOPMENT_TEAM = 4YN82R5Z2X;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widgets/Info.plist;

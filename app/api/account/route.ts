@@ -194,6 +194,7 @@ export async function DELETE(request: NextRequest) {
     const owned = (sql: string) => db.prepare(sql + guard).bind(id, id, created, created);
     const deleted = await db.batch([
       ...await removeBillingAccount(id, created),
+      owned("DELETE FROM workspace_shares WHERE recipient_id=?"),
       owned("DELETE FROM finance_plans WHERE user_id=?"),
       owned("DELETE FROM business_plans WHERE user_id=?"),
       owned("DELETE FROM user_activity WHERE user_id=?"),
