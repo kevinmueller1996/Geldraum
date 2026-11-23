@@ -109,7 +109,7 @@ async function getAccount(request: NextRequest) {
 
   try {
     const { db, id } = await upsertUser(identity, true);
-    const billing = billingEnabled(id) && !identity.local ? await membership(await subscriber(id, identity.accountCreatedAt)) : null;
+    const billing = billingEnabled(id) && !identity.local ? await membership(await subscriber(id, identity.accountCreatedAt, planTable(request) === "business_plans" ? "business" : "private")) : null;
     const result = await db.prepare(`SELECT users.created_at, p.plan_json, p.revision, p.updated_at
       FROM users LEFT JOIN ${planTable(request)} p ON p.user_id=users.id
       WHERE users.id=? AND (? IS NULL OR users.created_at=?)`)
@@ -137,7 +137,7 @@ export async function PUT(request: NextRequest) {
   if (!identity) return json({ authenticated: false }, 401);
 
   try {
-    if (billingEnabled(identity.id) && !identity.local && !(await membership(await subscriber(identity.id, identity.accountCreatedAt))).active) return json({error:"Für Änderungen brauchst du ein aktives Njora-Abo."},402);
+    if (billingEnabled(identity.id) && !identity.local && !(await membership(await subscriber(identity.id, identity.accountCreatedAt, planTable(request) === "business_plans" ? "business" : "private"))).active) return json({error:"Für Änderungen brauchst du ein aktives Njora-Abo."},402);
     let body: { plan?: unknown; revision?: number | null } | null;
     try {
       const bytes = await readBodyBytes(request, 600_000);
@@ -189,7 +189,7 @@ export async function DELETE(request: NextRequest) {
     const created = identity.accountCreatedAt ?? null;
     // If a checkout linked a customer after cancellation began, leave the data
     // intact so a retry can cancel that customer before removing the account.
-    const noSubscriber = " AND NOT EXISTS (SELECT 1 FROM njora_subscribers WHERE user_id=users.id)";
+    const noSubscriber = " AND NOT EXISTS (SELECT 1 FROM njora_subscribers WHERE user_id=users.id) AND NOT EXISTS (SELECT 1 FROM njora_business_subscribers WHERE user_id=users.id)";
     const guard = " AND EXISTS (SELECT 1 FROM users WHERE id=? AND (? IS NULL OR created_at=?)" + noSubscriber + ")";
     const owned = (sql: string) => db.prepare(sql + guard).bind(id, id, created, created);
     const deleted = await db.batch([

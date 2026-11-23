@@ -45,6 +45,7 @@ async function handle(req: NextRequest) {
   if (req.method === "POST" && action === "invite") {
     const email = normalizeEmail(data.email);
     if (!email || !["view","edit"].includes(data.role)) return error("Bitte prüfe E-Mail-Adresse und Berechtigung.",400);
+    if (billingEnabled(identity.id) && !(await membership(await subscriber(identity.id,identity.accountCreatedAt,workspace))).active) return error("Zum Einladen brauchst du ein aktives Abo für diesen Bereich.",402);
     const recipient = await userId(email);
     if (recipient === identity.id) return error("Das ist dein eigenes Konto.",400);
     const expires = new Date(Date.now()+7*86400000).toISOString();
@@ -80,7 +81,7 @@ async function handle(req: NextRequest) {
   const owner = await db.prepare("SELECT s.owner_id,u.created_at FROM workspace_shares s JOIN users u ON u.id=s.owner_id WHERE "+access)
     .bind(...args).first<{owner_id:string;created_at:string}>();
   if (!owner) return missing();
-  if (billingEnabled(owner.owner_id) && !(await membership(await subscriber(owner.owner_id,owner.created_at))).active)
+  if (billingEnabled(owner.owner_id) && !(await membership(await subscriber(owner.owner_id,owner.created_at,workspace))).active)
     return error("Für diesen Bereich ist ein aktives Abo des Inhabers erforderlich.",402);
   if (action === "status") return reply({ok:true});
   if (req.method === "POST") {

@@ -430,13 +430,13 @@ final class NjoraStore: ObservableObject {
         if record.pending { requestSync() } else { syncStatus = "Mit der Cloud abgeglichen." }
     }
 
-    static let subscriptionID = "de.njora.finanzueberblick.monthly"
+    var subscriptionID: String { workspace == .business ? "de.njora.finanzueberblick.business.monthly" : "de.njora.finanzueberblick.monthly" }
 
     func confirm(_ transaction: StoreKit.Transaction) async throws -> Bool {
         let generation = epoch
-        guard let session, transaction.productID == Self.subscriptionID, let token = billing?.accountToken,
+        guard let session, transaction.productID == subscriptionID, let token = billing?.accountToken,
               transaction.appAccountToken == token else { return false }
-        let active = try await api.confirmPurchase(String(transaction.originalID), environment: transaction.environment.rawValue, session: session)
+        let active = try await api.confirmPurchase(String(transaction.originalID), environment: transaction.environment.rawValue, session: session, workspace: workspace)
         guard generation == epoch else { throw CancellationError() }
         requestSync()
         _ = await syncTask?.value

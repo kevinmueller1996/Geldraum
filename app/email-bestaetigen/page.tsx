@@ -25,9 +25,10 @@ export default function ConfirmEmailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, password }),
       });
-      const data = await response.json() as { error?: string };
+      const data = await response.json() as { error?: string; invitationWorkspace?: string };
       if (!response.ok) throw new AuthResponseError(data.error || "Die E-Mail-Adresse konnte nicht bestätigt werden.");
-      window.location.replace("/");
+      const space = data.invitationWorkspace;
+      window.location.replace(space === "private" || space === "business" ? "/freigaben?bereich=" + space : "/");
     } catch (caught) {
       setError(authMessage(caught, "Die E-Mail-Adresse konnte nicht bestätigt werden. Bitte prüfe deine Verbindung und versuche es erneut."));
       setLoading(false);

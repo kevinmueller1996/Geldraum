@@ -49,7 +49,7 @@ function Manage({space}:{space:Space}) {
   const inviteLink = "https://njora.de"+path;
   return <div className="share-panel">
     <nav aria-label="Finanzbereich">{(["private","business"] as const).map(s=><a key={s} href={"/freigaben?bereich="+s} aria-current={s===space?"page":undefined}>{title(s)}</a>)}</nav>
-    <h2>{title(space)} teilen</h2><p>Die eingeladene Person erhält nach der Annahme Zugriff auf alle Finanzdaten in diesem Bereich.</p>
+    <h2>{title(space)} teilen</h2><p>Die eingeladene Person braucht ein eigenes bestätigtes Njora-Konto. Ihr Zugriff auf die Finanzdaten dieses Bereichs ist in deinem Abo enthalten.</p>
     <form onSubmit={invite}><label>E-Mail-Adresse<input required type="email" autoComplete="off" value={email} onChange={e=>setEmail(e.target.value)} /></label>
       <label>Berechtigung<select value={role} onChange={e=>setRole(e.target.value as Access)}><option value="view">Nur ansehen</option><option value="edit">Mitbearbeiten</option></select></label>
       <button disabled={busy || !list}>Einladung erstellen</button></form>

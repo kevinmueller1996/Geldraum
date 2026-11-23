@@ -7,18 +7,18 @@ import ts from "typescript";
 // Exercise the worker's actual checkout code, replacing only its platform bindings and provider transport.
 const source = (await readFile(new URL("../app/billing/subscription.ts", import.meta.url), "utf8"))
   .replace('import { env } from "cloudflare:workers";', "const env = globalThis.njoraBillingTestEnv;");
-globalThis.njoraBillingTestEnv = { NJORA_STRIPE_PRICE:"price_njora", NJORA_STRIPE_SECRET:"test" };
+globalThis.njoraBillingTestEnv = { NJORA_STRIPE_PRICE:"price_njora", NJORA_STRIPE_BUSINESS_PRICE:"price_business", NJORA_STRIPE_SECRET:"test" };
 const compiled = ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}});
 const api = await import("data:text/javascript;base64,"+Buffer.from(compiled.outputText).toString("base64"));
 const row = {user_id:"test",account_token:"test-token",stripe_customer:"cus_test",apple_original:null,apple_environment:null};
-function provider(t, {history=[], amount=99, open=false}={}) {
+function provider(t, {history=[], amount=99, open=false, price="price_njora"}={}) {
   let params;
   t.mock.method(globalThis,"fetch",async (url, options) => {
     assert.equal(options.redirect, "manual");
     const path = new URL(url).pathname;
     let response;
-    if (path.endsWith("/prices/price_njora")) response = {active:true,currency:"eur",unit_amount:amount,recurring:{interval:"month",interval_count:1},tax_behavior:"inclusive"};
-    else if (path.endsWith("/subscriptions")) response = {data:history.map(status=>({status,items:{data:[{price:{id:"price_njora"}}]}}))};
+    if (path.endsWith("/prices/"+price)) response = {active:true,currency:"eur",unit_amount:amount,recurring:{interval:"month",interval_count:1},tax_behavior:"inclusive"};
+    else if (path.endsWith("/subscriptions")) response = {data:history.map(status=>({status,items:{data:[{price:{id:price}}]}}))};
     else if (path.endsWith("/checkout/sessions") && options.method === "GET") response = {data:open ? [{id:"cs_test",status:"open",url:"https://checkout.stripe.com/open"}] : []};
     else if (path.endsWith("/checkout/sessions") && options.method === "POST") {
       params = options.body; response={url:"https://checkout.stripe.com/new"};
@@ -32,6 +32,22 @@ test("web trial requires payment details and runs for exactly 30 days",async t=>
   assert.equal(fields().get("subscription_data[trial_period_days]"),"30");
   assert.equal(fields().get("payment_method_collection"),"always");
   assert.equal(fields().get("line_items[0][price]"),"price_njora");
+});
+test("business checkout charges 999 cents and returns to the company workspace",async t=>{
+  const fields = provider(t,{amount:999,price:"price_business"});
+  await api.checkout({...row,workspace:"business"},"test@example.org");
+  assert.equal(fields().get("line_items[0][price]"),"price_business");
+  assert.equal(new URL(fields().get("success_url")).searchParams.get("bereich"),"business");
+});
+test("personal subscriptions only unlock the personal workspace",async t=>{
+  provider(t,{history:["active"]});
+  assert.equal((await api.membership(row)).active,true);
+  assert.equal((await api.membership({...row,workspace:"business"})).active,false);
+});
+test("business subscriptions only unlock the business workspace",async t=>{
+  provider(t,{history:["trialing"],price:"price_business"});
+  assert.equal((await api.membership(row)).active,false);
+  assert.equal((await api.membership({...row,workspace:"business"})).active,true);
 });
 test("returning subscribers do not receive a second trial",async t=>{
   const fields=provider(t,{history:["canceled"]}); await api.checkout(row,"test@example.org");
@@ -119,6 +135,14 @@ test("Apple review purchase, restore and provider failures", async t => {
     assert.deepEqual(writes, [expectedLink, expectedLink]);
     const linked = { ...review, apple_original: original, apple_environment: "Sandbox" };
     assert.equal((await api.membership(linked)).provider, "apple");
+  });
+  await t.test("an Apple purchase only unlocks the matching workspace", async () => {
+    const company = {...review,workspace:"business"};
+    await assert.rejects(api.confirmApple(company,original,"Sandbox"), /gehört nicht/);
+    transaction.productId = "de.njora.finanzueberblick.business.monthly";
+    assert.deepEqual(await api.confirmApple(company,original,"Sandbox"),{active:true});
+    await assert.rejects(confirm(), /gehört nicht/);
+    transaction.productId = api.appleProduct;
   });
   await t.test("a late purchase response cannot reattach to a recreated account", async () => {
     currentAccount = false;

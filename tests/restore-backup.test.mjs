@@ -31,6 +31,10 @@ test("disaster recovery restores legacy and subscription backups and refuses bro
   tables.business_plans = [{...tables.finance_plans[0], plan_json:JSON.stringify({...plan, name:"Firma"})}];
   await writeFile(source,JSON.stringify(backup));
   assert.equal(restore(join(directory,"v3.sqlite")).status,0);
+  backup.version = 4;
+  tables.njora_business_subscribers = [{...tables.njora_subscribers[0],account_token:"company"}];
+  await writeFile(source,JSON.stringify(backup));
+  assert.equal(restore(join(directory,"v4.sqlite")).status,0);
   for (const bad of ["orphan","invalid-plan"]) {
     if (bad === "orphan") tables.njora_subscribers[0].user_id = "missing";
     else {tables.njora_subscribers[0].user_id = "u"; tables.finance_plans[0].plan_json = "{}";}

@@ -16,9 +16,11 @@ export async function POST(request: NextRequest) {
   if (!user) return json({authenticated:false},401);
   const body = await readFormObject(request);
   if (!body || typeof body.action !== "string" || !["checkout","portal","apple"].includes(body.action)) return json({error:"Unbekannte Aktion."},400);
+  const workspace = body.workspace === undefined ? "private" : body.workspace;
+  if (workspace !== "private" && workspace !== "business") return json({error:"Unbekannter Finanzbereich."},400);
   if (!billingEnabled(body.action === "apple" ? user.id : undefined)) return json({error:"Der Aboverkauf ist noch nicht geöffnet."},409);
   try {
-    const row=await subscriber(user.id, user.accountCreatedAt);
+    const row=await subscriber(user.id, user.accountCreatedAt, workspace);
     if(body.action==="apple") {
       if(typeof body.transaction!=="string" || typeof body.environment!=="string") return json({error:"Kaufdaten fehlen."},400);
       return json(await confirmApple(row,body.transaction,body.environment));

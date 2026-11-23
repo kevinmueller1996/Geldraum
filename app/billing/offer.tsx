@@ -3,7 +3,9 @@ import { useState } from "react";
 
 export type BillingStatus = {active:boolean; provider:"apple"|"stripe"|null; webTrialEligible:boolean; stripeCustomer:boolean};
 
-export default function BillingOffer({billing, standalone = false}:{billing:BillingStatus; standalone?:boolean}) {
+export default function BillingOffer({billing, workspace, standalone = false}:{billing:BillingStatus; workspace:"private"|"business"; standalone?:boolean}) {
+  const name = workspace === "business" ? "Njora Business" : "Njora Privat";
+  const price = workspace === "business" ? "9,99 €" : "0,99 €";
   const Heading = standalone ? "h1" : "h2";
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState("");
@@ -11,7 +13,7 @@ export default function BillingOffer({billing, standalone = false}:{billing:Bill
     setBusy(true); setError("");
     try {
       const response = await fetch("/api/billing", {
-        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({action}),
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({action,workspace}),
         signal: AbortSignal.timeout(15000),
       });
       const data = await response.json() as {url?: string; error?: string};
@@ -27,9 +29,10 @@ export default function BillingOffer({billing, standalone = false}:{billing:Bill
     }
   }
   return <section>
-    <Heading>{billing.active ? "Dein Njora-Abo" : "Njora abonnieren"}</Heading>
+    <Heading>{billing.active ? name + " · Dein Abo" : name + " abonnieren"}</Heading>
     {billing.active ? <p>Dein Zugang ist aktiv.</p> : <>
-      <p>{billing.webTrialEligible ? "Die ersten 30 Tage sind kostenlos. Danach zahlst du 0,99 € pro Monat." : "Njora kostet 0,99 € pro Monat."} Dein Abo verlängert sich monatlich, bis du kündigst.</p>
+      <p>{billing.webTrialEligible ? "Die ersten 30 Tage sind kostenlos. Danach zahlst du " + price + " pro Monat." : price + " pro Monat."} Dein Abo verlängert sich monatlich, bis du kündigst.</p>
+      <p>Du hast eine Einladung? Mit deinem eigenen kostenlosen Konto kannst du den geteilten Bereich öffnen.</p>
       <p><a href="/nutzungsbedingungen">AGB</a> · <a href="/datenschutz">Datenschutz</a></p>
       <button className="auth-button" disabled={busy} onClick={()=>open("checkout")}>{billing.webTrialEligible ? "30 Tage kostenlos testen" : "Zum Monatsabo"}</button>
     </>}

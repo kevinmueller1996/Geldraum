@@ -23,13 +23,15 @@ def restore(source, destination):
     stream = contextlib.nullcontext(sys.stdin.buffer) if source == Path("-") else source.open(encoding="utf-8")
     with stream as file:
         backup = json.load(file)
-    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2, 3):
+    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2, 3, 4):
         raise ValueError("Unbekanntes Sicherungsformat")
     tables = backup["tables"]
     columns_by_table = dict(COLUMNS)
     if backup["version"] >= 2:
         columns_by_table["njora_subscribers"] = ("user_id", "account_token", "stripe_customer", "apple_original", "apple_environment")
-    if backup["version"] == 3:
+    if backup["version"] >= 4:
+        columns_by_table["njora_business_subscribers"] = columns_by_table["njora_subscribers"]
+    if backup["version"] >= 3:
         columns_by_table["business_plans"] = COLUMNS["finance_plans"]
     if not isinstance(tables, dict) or set(tables) != set(columns_by_table):
         raise ValueError("Die Sicherung enthält nicht die erwarteten Tabellen")
@@ -58,10 +60,11 @@ def restore(source, destination):
                 placeholders = ", ".join("?" for _ in columns)
                 sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
                 db.executemany(sql, (tuple(row[column] for column in columns) for row in rows))
-            if backup["version"] >= 2 and db.execute(
-                "SELECT 1 FROM njora_subscribers s LEFT JOIN users u ON u.id=s.user_id WHERE u.id IS NULL LIMIT 1"
-            ).fetchone():
-                raise ValueError("Abonnement ohne zugehöriges Nutzerkonto")
+            for table in ("njora_subscribers", "njora_business_subscribers"):
+                if table in tables and db.execute(
+                    f"SELECT 1 FROM {table} s LEFT JOIN users u ON u.id=s.user_id WHERE u.id IS NULL LIMIT 1"
+                ).fetchone():
+                    raise ValueError("Abonnement ohne zugehöriges Nutzerkonto")
             if db.execute("PRAGMA foreign_key_check").fetchone():
                 raise ValueError("Die Sicherung enthält ungültige Verknüpfungen")
             if db.execute("PRAGMA integrity_check").fetchone() != ("ok",):

@@ -1,3 +1,4 @@
+import { ensurePlanSchema } from "../../../plan-schema";
 import { readFormObject } from "../../../request-body";
 import { NextRequest, NextResponse } from "next/server";
 import { authPublicOrigin } from "../../../auth-email";
@@ -29,7 +30,10 @@ export async function POST(request: NextRequest) {
   }
   const result = typeof body?.token === "string" ? await confirmEmailVerification(body.token, body.password) : null;
   if (!result) return NextResponse.json({ error: "Der Link ist ungültig oder abgelaufen." }, { status: 400 });
-  const response = NextResponse.json({ authenticated: true }, { headers: { "Cache-Control": "no-store" } });
+  const invitation = await ensurePlanSchema().then(db => db.prepare(
+    "SELECT workspace FROM workspace_shares WHERE recipient_id=? AND accepted_by IS NULL AND expires_at>? ORDER BY expires_at DESC LIMIT 1"
+  ).bind(result.userId,new Date().toISOString()).first<{workspace:string}>()).catch(() => null);
+  const response = NextResponse.json({ authenticated: true, invitationWorkspace: invitation?.workspace }, { headers: { "Cache-Control": "no-store" } });
   setSessionCookie(response, result.token, request);
   return response;
 }

@@ -16,7 +16,7 @@ struct NjoraApp: App {
                 switch store.state {
                 case .loading: ProgressView("Njora wird geöffnet …")
                 case .signedOut: LoginView(store: store)
-                case .subscription: SubscriptionView(store: store)
+                case .subscription: SubscriptionView(store: store).id(store.workspace)
                 case .setup: SetupView(store: store).id(store.accountLifetime)
                 case .ready: Dashboard(store: store, tab: $tab).id(store.accountLifetime)
                 case .offline:
@@ -329,7 +329,7 @@ private struct SubscriptionView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Njora Monatsabo") {
+                Section("Njora " + store.workspace.title) {
                     if let product {
                         Text(introductory ? "Ein Monat kostenlos, danach \(product.displayPrice) pro Monat." : "\(product.displayPrice) pro Monat.")
                         Text("Das Abo verlängert sich monatlich, bis du es in deinen Apple-Abonnements kündigst.")
@@ -347,11 +347,14 @@ private struct SubscriptionView: View {
                     Notice(text: notice.isEmpty ? productError : notice)
                 }
                 Section {
+                    NavigationLink("Einladung öffnen") { SharingView(store: store, initial: store.workspace) }
+                    Text("Geteilte Bereiche nutzt du mit deinem Konto kostenlos.").font(.footnote).foregroundStyle(.secondary)
                     NavigationLink("Konto und Daten verwalten") { SettingsView(store: store) }
                     LegalLinksView()
                 }
             }
             .navigationTitle("Njora abonnieren")
+            .toolbar { ToolbarItem(placement: .navigationBarLeading) { WorkspacePicker(store: store).disabled(working) } }
             .njoraNavigationBackground()
         }
         .task {
@@ -370,7 +373,7 @@ private struct SubscriptionView: View {
         productError = ""
         defer { loadingProduct = false }
         do {
-            guard let found = try await Product.products(for: [NjoraStore.subscriptionID]).first,
+            guard let found = try await Product.products(for: [store.subscriptionID]).first,
                   let subscription = found.subscription,
                   subscription.subscriptionPeriod.unit == .month, subscription.subscriptionPeriod.value == 1 else {
                 productError = "Das Monatsabo ist im App Store gerade nicht verfügbar."
@@ -386,7 +389,7 @@ private struct SubscriptionView: View {
     }
 
     private func purchase(_ product: Product) async {
-        guard !working, let token = store.billing?.accountToken else { return }
+        guard !working, product.id == store.subscriptionID, let token = store.billing?.accountToken else { return }
         working = true
         defer { working = false }
         do {
@@ -414,7 +417,7 @@ private struct SubscriptionView: View {
             try await AppStore.sync()
             var differentAccount = false
             for await result in StoreKit.Transaction.currentEntitlements {
-                guard case .verified(let tx) = result, tx.productID == NjoraStore.subscriptionID else { continue }
+                guard case .verified(let tx) = result, tx.productID == store.subscriptionID else { continue }
                 if tx.appAccountToken != store.billing?.accountToken {
                     differentAccount = true
                 } else if try await store.confirm(tx) { return }

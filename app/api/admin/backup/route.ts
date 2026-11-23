@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     const db = await ensurePlanSchema();
 
     const hasSubscriptions = await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='njora_subscribers'").first();
+    const hasBusinessBilling = await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='njora_business_subscribers'").first();
     const results = await db.batch([
       db.prepare("SELECT id, display_name, created_at, updated_at FROM users ORDER BY id"),
       db.prepare("SELECT user_id, plan_json, schema_version, revision, created_at, updated_at FROM finance_plans ORDER BY user_id"),
@@ -38,13 +39,16 @@ export async function GET(request: NextRequest) {
       db.prepare("SELECT user_id, email_mask, email_address, email_verified_at, password_salt, password_hash, password_iterations, created_at, updated_at FROM auth_credentials ORDER BY user_id"),
       db.prepare("SELECT user_id, plan_json, schema_version, revision, created_at, updated_at FROM business_plans ORDER BY user_id"),
       ...(hasSubscriptions ? [db.prepare("SELECT user_id, account_token, stripe_customer, apple_original, apple_environment FROM njora_subscribers ORDER BY user_id")] : []),
+      ...(hasBusinessBilling ? [db.prepare("SELECT user_id, account_token, stripe_customer, apple_original, apple_environment FROM njora_business_subscribers ORDER BY user_id")] : []),
     ]);
-    const [users, financePlans, userActivity, authCredentials, businessPlans, subscribers] = results.map((result) => result.results);
+    const [users, financePlans, userActivity, authCredentials, businessPlans] = results.map((result) => result.results);
+    const subscribers = hasSubscriptions ? results[5].results : undefined;
+    const businessBilling = hasBusinessBilling ? results[hasSubscriptions ? 6 : 5].results : [];
     const exportedAt = new Date().toISOString();
     const filename = `njora-datenbank-${exportedAt.slice(0, 10)}.json`;
     const body = JSON.stringify({
       format: "njora-database-backup",
-      version: businessPlans.length ? 3 : subscribers ? 2 : 1,
+      version: businessBilling.length ? 4 : businessPlans.length ? 3 : subscribers ? 2 : 1,
       exportedAt,
       excludes: ["auth_sessions", "auth_action_tokens", "auth_attempts", "njora_plugin_grants", "njora_plugin_proposals", "njora_cancellation_limits"],
       tables: {
@@ -52,7 +56,8 @@ export async function GET(request: NextRequest) {
         finance_plans: financePlans,
         user_activity: userActivity,
         auth_credentials: authCredentials,
-        ...(businessPlans.length ? { business_plans: businessPlans, njora_subscribers: subscribers ?? [] } : {}),
+        ...(businessPlans.length || businessBilling.length ? { business_plans: businessPlans, njora_subscribers: subscribers ?? [] } : {}),
+        ...(businessBilling.length ? { njora_business_subscribers: businessBilling } : {}),
         ...(subscribers ? { njora_subscribers: subscribers } : {}),
       },
     }, null, 2);

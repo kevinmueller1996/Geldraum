@@ -44,6 +44,7 @@ private struct SharingList: View {
     var body: some View {
         Form {
             Section("\(workspace.title) teilen") {
+                Text("Eingeladene nutzen ein eigenes kostenloses Njora-Konto. Der Zugriff ist in deinem Bereichsabo enthalten.").font(.footnote).foregroundStyle(.secondary)
                 TextField("E-Mail-Adresse", text: $email)
                     .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Picker("Berechtigung", selection: $role) {

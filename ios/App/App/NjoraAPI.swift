@@ -199,10 +199,10 @@ actor NjoraAPI {
         return reply
     }
 
-    func confirmPurchase(_ transaction: String, environment: String, session: String) async throws -> Bool {
+    func confirmPurchase(_ transaction: String, environment: String, session: String, workspace: FinanceWorkspace) async throws -> Bool {
         struct Reply: Decodable { let active: Bool }
         let reply: Reply = try await request("/api/billing", method: "POST", body: [
-            "action": .string("apple"), "transaction": .string(transaction), "environment": .string(environment)
+            "action": .string("apple"), "workspace": .string(workspace == .business ? "business" : "private"), "transaction": .string(transaction), "environment": .string(environment)
         ], expectedSession: session)
         return reply.active
     }

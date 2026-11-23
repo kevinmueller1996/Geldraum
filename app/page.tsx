@@ -1071,7 +1071,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
 
   if (billing && !billing.active && activeView !== "more") return (
     <main className="legal-page"><article>
-      <BillingOffer billing={billing} standalone /><a href={sharePath}>Einladungen und geteilte Bereiche</a>
+      {workspacePicker}<BillingOffer workspace={space} billing={billing} standalone /><a href={sharePath}>Einladungen und geteilte Bereiche</a>
       <button type="button" className="text-action" onClick={() => navigate("more")}>Konto, Datenexport und Löschung</button>
       <LegalLinks />
     </article></main>
@@ -1255,7 +1255,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
           <AppearancePicker {...appearance} />
           <InstallAppCard />
           <NativeSettingsCard cadence={active.checkInCadence} />
-          {billing && <article className="account-card"><BillingOffer billing={billing} /></article>}
+          {billing && <article className="account-card"><BillingOffer workspace={space} billing={billing} /></article>}
           {/* This API endpoint serves its own HTML document and needs a full navigation. */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <article className="account-card"><h3>ChatGPT</h3><a href="/api/chatgpt/manage">Verbindung verwalten</a></article>

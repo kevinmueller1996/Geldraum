@@ -34,7 +34,7 @@ export default function Cancellation() {
         <label>Vor- und Nachname<input name="name" autoComplete="name" required maxLength={120} /></label>
         <label>E-Mail des Njora-Kontos<input name="email" type="email" required maxLength={254} /></label>
         <label>E-Mail für die Bestätigung, falls abweichend<input name="reply" type="email" maxLength={254} /></label>
-        <label>Vertrag<input name="contract" defaultValue="Njora Monatsabo" required maxLength={120} /></label>
+        <label>Finanzbereich<select name="contract" required defaultValue=""><option value="" disabled>Bitte auswählen</option><option>Njora Privat</option><option>Njora Business</option></select></label>
         <label>Art der Kündigung<select name="kind" value={special ? "extraordinary" : "ordinary"} onChange={e=>setSpecial(e.target.value==="extraordinary")}>
           <option value="ordinary">Ordentliche Kündigung</option><option value="extraordinary">Außerordentliche Kündigung</option>
         </select></label>

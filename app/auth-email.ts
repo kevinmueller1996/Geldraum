@@ -83,7 +83,7 @@ export async function sendWorkspaceInvitation(to: string, owner: string, workspa
     method:"POST", redirect:"manual", signal:AbortSignal.timeout(5000),
     headers:{Authorization:"Bearer "+runtime.RESEND_API_KEY?.trim(),"Content-Type":"application/json","Idempotency-Key":"njora-share-"+id},
     body:JSON.stringify({from:runtime.AUTH_EMAIL_FROM?.trim(),to:[to],subject:"Einladung zum Finanzbereich "+title+" in Njora",
-      text:owner+" lädt dich ein, den Finanzbereich "+title+" in Njora "+(role==="edit"?"mitzubearbeiten":"anzusehen")+". Melde dich innerhalb von sieben Tagen mit "+to+" an und nimm die Einladung unter „Mit dir geteilt“ an.\n\n"+url.href+"\n\nFalls du keine Einladung erwartet hast, kannst du sie ignorieren."})
+      text:owner+" lädt dich ein, den Finanzbereich "+title+" in Njora "+(role==="edit"?"mitzubearbeiten":"anzusehen")+". Der Zugang ist für dich im Abo dieses Bereichs enthalten. Erstelle ein kostenloses Konto oder melde dich innerhalb von sieben Tagen mit "+to+" an und nimm die Einladung unter „Mit dir geteilt“ an.\n\n"+url.href+"\n\nFalls du keine Einladung erwartet hast, kannst du sie ignorieren."})
   });
   return response.ok;
 }

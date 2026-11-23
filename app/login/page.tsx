@@ -151,7 +151,7 @@ export default function LoginPage() {
     </section>
 
     <section className="nj-access nj-wrap" aria-labelledby="access-title">
-      <div className="nj-price" id="preis"><p className="nj-kicker">Das Njora-Monatsabo</p><h2>0,99 € <small>pro Monat</small></h2><p>Die ersten 30 Tage im Web sind kostenlos, wenn für dein Njora-Konto bisher weder ein Web-Abo noch ein Apple-Kauf hinterlegt war. Das Abo verlängert sich automatisch um jeweils einen Monat.</p>
+      <div className="nj-price" id="preis"><p className="nj-kicker">Preis pro Finanzbereich</p><h2>Privat 0,99 € <small>pro Monat</small></h2><h2>Business 9,99 € <small>pro Monat</small></h2><p>Eingeladene Personen erstellen ein eigenes kostenloses Konto. Ansehen und Mitbearbeiten sind im Abo des geteilten Bereichs enthalten.</p><p>Die ersten 30 Tage im Web sind kostenlos, wenn für diesen Finanzbereich bisher weder ein Web-Abo noch ein Apple-Kauf hinterlegt war. Das Abo verlängert sich automatisch um jeweils einen Monat.</p>
         <p>Du kannst jederzeit zum Ende des laufenden Zeitraums kündigen. Die Registrierung allein löst keine Zahlung aus.</p>
       </div>
       <aside className="landing-auth-card nj-form" id="zugang">

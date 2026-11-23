@@ -1,8 +1,20 @@
 import { env } from "cloudflare:workers";
 
 export const appleProduct = "de.njora.finanzueberblick.monthly";
+export type BillingSpace = "private" | "business";
+function table(space: BillingSpace = "private") {
+  return space === "business" ? "njora_business_subscribers" : "njora_subscribers";
+}
+function stripePrice(space: BillingSpace = "private") {
+  if (space === "private") return setting("NJORA_STRIPE_PRICE");
+  const configured = env.NJORA_STRIPE_BUSINESS_PRICE;
+  return typeof configured === "string" && configured.trim() ? configured.trim() : "price_1UeowT1MK156gCbjmXhltSxL";
+}
+function returnUrl(space: BillingSpace = "private") {
+  return space === "business" ? "https://njora.de/?bereich=business" : "https://njora.de/";
+}
 export type Membership = { active: boolean; provider: "apple" | "stripe" | null; accountToken: string; webTrialEligible: boolean; stripeCustomer: boolean };
-type Subscriber = { user_id: string; account_token: string; stripe_customer: string | null; apple_original: string | null; apple_environment: string | null };
+type Subscriber = { workspace?: BillingSpace; user_id: string; account_token: string; stripe_customer: string | null; apple_original: string | null; apple_environment: string | null };
 type StripeSubscription = { id: string; status: string; items: { data: { price: { id: string } }[] } };
 const bundle = "de.njora.finanzueberblick";
 
@@ -16,19 +28,19 @@ function setting(key: string) {
   return value.trim();
 }
 
-async function ensureSubscriberTable() {
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS njora_subscribers (
+async function ensureSubscriberTable(space: BillingSpace) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ${table(space)} (
     user_id TEXT PRIMARY KEY, account_token TEXT NOT NULL UNIQUE, stripe_customer TEXT UNIQUE,
     apple_original TEXT UNIQUE, apple_environment TEXT)`).run();
 }
 
-export async function subscriber(id: string, createdAt?: string): Promise<Subscriber> {
-  await ensureSubscriberTable();
-  await env.DB.prepare(`INSERT INTO njora_subscribers (user_id, account_token)
+export async function subscriber(id: string, createdAt?: string, workspace: BillingSpace = "private"): Promise<Subscriber> {
+  await ensureSubscriberTable(workspace);
+  await env.DB.prepare(`INSERT INTO ${table(workspace)} (user_id, account_token)
     SELECT id, ? FROM users WHERE id=? AND (? IS NULL OR created_at=?) ON CONFLICT(user_id) DO NOTHING`).bind(crypto.randomUUID(), id, createdAt ?? null, createdAt ?? null).run();
-  const row = await env.DB.prepare("SELECT s.* FROM njora_subscribers s JOIN users u ON u.id=s.user_id WHERE s.user_id=? AND (? IS NULL OR u.created_at=?)").bind(id, createdAt ?? null, createdAt ?? null).first<Subscriber>();
+  const row = await env.DB.prepare(`SELECT s.* FROM ${table(workspace)} s JOIN users u ON u.id=s.user_id WHERE s.user_id=? AND (? IS NULL OR u.created_at=?)`).bind(id, createdAt ?? null, createdAt ?? null).first<Subscriber>();
   if (!row) throw new Error("Abrechnungskonto fehlt.");
-  return row;
+  return {...row, workspace};
 }
 
 async function stripe<T>(path: string, fields?: Record<string, string>, key?: string): Promise<T> {
@@ -42,9 +54,9 @@ async function stripe<T>(path: string, fields?: Record<string, string>, key?: st
   return await res.json() as T;
 }
 
-async function subscriptions(customer: string) {
+async function subscriptions(customer: string, space?: BillingSpace) {
   const response = await stripe<{data: StripeSubscription[]}>("subscriptions?limit=100&status=all&customer=" + encodeURIComponent(customer));
-  return response.data.filter(s => s.items.data.some(i => i.price.id === setting("NJORA_STRIPE_PRICE")));
+  return response.data.filter(s => s.items.data.some(i => i.price.id === stripePrice(space)));
 }
 function entitled(s: StripeSubscription) { return ["trialing","active"].includes(s.status); }
 
@@ -60,7 +72,7 @@ async function appleAuthorization() {
 }
 
 type AppleTransaction = { originalTransactionId: string; bundleId: string; productId: string; appAccountToken?: string; environment: string; revocationDate?: number };
-async function appleStatus(id: string, environment: string, token: string) {
+async function appleStatus(id: string, environment: string, token: string, space?: BillingSpace) {
   if (!/^\d{1,30}$/.test(id) || !["Production","Sandbox"].includes(environment)) throw new Error("Ungültige Transaktion.");
   const host = environment === "Sandbox" ? "api.storekit-sandbox.apple.com" : "api.storekit.apple.com";
   const res = await fetch("https://"+host+"/inApps/v1/subscriptions/"+id,{headers:{Authorization:"Bearer "+await appleAuthorization()},redirect:"manual",cache:"no-store",signal:AbortSignal.timeout(8000)});
@@ -71,7 +83,7 @@ async function appleStatus(id: string, environment: string, token: string) {
   for (const entry of obj.data.flatMap(group=>group.lastTransactions)) {
     const payload=entry.signedTransactionInfo.split(".")[1];
     const tx=JSON.parse(atob(payload.replaceAll("-","+").replaceAll("_","/"))) as AppleTransaction;
-    if(tx.bundleId===bundle && tx.environment===environment && tx.productId===appleProduct && tx.originalTransactionId===id && tx.appAccountToken?.toLowerCase()===token.toLowerCase())
+    if(tx.bundleId===bundle && tx.environment===environment && tx.productId===(space === "business" ? "de.njora.finanzueberblick.business.monthly" : appleProduct) && tx.originalTransactionId===id && tx.appAccountToken?.toLowerCase()===token.toLowerCase())
       return { active: !tx.revocationDate && [1,4].includes(entry.status) };
   }
   throw new Error("Der Kauf gehört nicht zu diesem Njora-Konto.");
@@ -85,9 +97,9 @@ function allowedAppleEnvironment(userId: string, environment: string) {
 export async function confirmApple(row: Subscriber, id: string, environment: string) {
   // Sandbox purchases unlock only the independently configured test environment.
   if (!allowedAppleEnvironment(row.user_id, environment)) throw new Error("Falsche Kaufumgebung.");
-  const status = await appleStatus(id,environment,row.account_token);
+  const status = await appleStatus(id,environment,row.account_token,row.workspace);
   if (status.active) {
-    const linked = await env.DB.prepare(`UPDATE njora_subscribers SET apple_original=?, apple_environment=?
+    const linked = await env.DB.prepare(`UPDATE ${table(row.workspace)} SET apple_original=?, apple_environment=?
       WHERE user_id=? AND account_token=?`).bind(id, environment, row.user_id, row.account_token).run();
     if (!linked.meta.changes) throw new Error("Das Abrechnungskonto wurde inzwischen geändert.");
   }
@@ -100,7 +112,7 @@ export async function membership(row: Subscriber): Promise<Membership> {
   let stripeError: unknown;
   if (row.stripe_customer) {
     try {
-      history = await subscriptions(row.stripe_customer);
+      history = await subscriptions(row.stripe_customer, row.workspace);
     } catch (error) {
       if (!canVerifyApple) throw error;
       stripeError = error;
@@ -108,7 +120,7 @@ export async function membership(row: Subscriber): Promise<Membership> {
   }
   let provider: Membership["provider"] = history.some(entitled) ? "stripe" : null;
   if (!provider && canVerifyApple) {
-    const apple = await appleStatus(row.apple_original!, row.apple_environment!, row.account_token);
+    const apple = await appleStatus(row.apple_original!, row.apple_environment!, row.account_token, row.workspace);
     if (apple.active) provider = "apple";
   }
   // An unrelated provider outage must neither lock out a verified subscriber nor offer another trial.
@@ -119,25 +131,25 @@ export async function membership(row: Subscriber): Promise<Membership> {
 
 export async function checkout(row: Subscriber, email: string) {
   if ((await membership(row)).active) throw new Error("Du hast bereits ein aktives Abo.");
-  const priceId = setting("NJORA_STRIPE_PRICE");
+  const priceId = stripePrice(row.workspace);
   const price = await stripe<{active:boolean;currency:string;unit_amount:number;recurring:{interval:string;interval_count:number};tax_behavior:string}>("prices/"+encodeURIComponent(priceId));
-  if (!price.active || price.currency!=="eur" || price.unit_amount!==99 || price.recurring?.interval!=="month" || price.recurring.interval_count!==1 || price.tax_behavior!=="inclusive") throw new Error("Der Monatspreis ist nicht korrekt eingerichtet.");
+  if (!price.active || price.currency!=="eur" || price.unit_amount!==(row.workspace === "business" ? 999 : 99) || price.recurring?.interval!=="month" || price.recurring.interval_count!==1 || price.tax_behavior!=="inclusive") throw new Error("Der Monatspreis ist nicht korrekt eingerichtet.");
   if(!row.stripe_customer) {
     const customer=await stripe<{id:string}>("customers",{email,"metadata[njora_account]":row.account_token},"njora-customer-"+row.account_token);
-    await env.DB.prepare("UPDATE njora_subscribers SET stripe_customer=? WHERE user_id=? AND account_token=? AND stripe_customer IS NULL")
+    await env.DB.prepare(`UPDATE ${table(row.workspace)} SET stripe_customer=? WHERE user_id=? AND account_token=? AND stripe_customer IS NULL`)
       .bind(customer.id, row.user_id, row.account_token).run();
-    const current = await subscriber(row.user_id);
+    const current = await subscriber(row.user_id, undefined, row.workspace);
     if (current.account_token !== row.account_token || !current.stripe_customer) throw new Error("Das Abrechnungskonto wurde inzwischen geändert.");
     row = current;
   }
   const customer=row.stripe_customer!;
-  const previous=await subscriptions(customer);
+  const previous=await subscriptions(customer,row.workspace);
   if(previous.some(s=>!["canceled","incomplete_expired"].includes(s.status))) return portal(row);
   const sessions=await stripe<{data:{id:string;status:string;url:string|null}[]}>("checkout/sessions?limit=1&customer="+encodeURIComponent(customer));
   const last=sessions.data[0];
   if(last?.status==="open" && last.url) return last.url;
   const fields:Record<string,string>={mode:"subscription",customer,"line_items[0][price]":priceId,"line_items[0][quantity]":"1",
-    payment_method_collection:"always",success_url:"https://njora.de/",cancel_url:"https://njora.de/",
+    payment_method_collection:"always",success_url:returnUrl(row.workspace),cancel_url:returnUrl(row.workspace),
     "subscription_data[metadata][njora_account]":row.account_token};
   if (!previous.length && !row.apple_original) {
     fields["subscription_data[trial_period_days]"] = "30";
@@ -149,7 +161,7 @@ export async function checkout(row: Subscriber, email: string) {
 
 export async function portal(row: Subscriber) {
   if (!row.stripe_customer) throw new Error("Kein Stripe-Konto vorhanden.");
-  return (await stripe<{url:string}>("billing_portal/sessions",{customer:row.stripe_customer,return_url:"https://njora.de/"})).url;
+  return (await stripe<{url:string}>("billing_portal/sessions",{customer:row.stripe_customer,return_url:returnUrl(row.workspace)})).url;
 }
 
 export class BillingCancellationUnconfirmed extends Error {
@@ -179,10 +191,14 @@ async function deleteStripeCustomer(customerId: string) {
 }
 
 export async function removeBillingAccount(id: string, createdAt: string | null) {
-  await ensureSubscriberTable();
-  const row=await env.DB.prepare(`SELECT s.stripe_customer, s.account_token FROM njora_subscribers s JOIN users u ON u.id=s.user_id
+  const statements = [];
+  for (const space of ["private", "business"] as const) {
+    await ensureSubscriberTable(space);
+    const row=await env.DB.prepare(`SELECT s.stripe_customer, s.account_token FROM ${table(space)} s JOIN users u ON u.id=s.user_id
     WHERE s.user_id=? AND (? IS NULL OR u.created_at=?)`).bind(id, createdAt, createdAt).first<{stripe_customer:string|null; account_token:string}>();
-  if (!row) return [];
-  if (row.stripe_customer) await deleteStripeCustomer(row.stripe_customer);
-  return [env.DB.prepare("DELETE FROM njora_subscribers WHERE user_id=? AND account_token=? AND stripe_customer IS ?").bind(id, row.account_token, row.stripe_customer)];
+    if (!row) continue;
+    if (row.stripe_customer) await deleteStripeCustomer(row.stripe_customer);
+    statements.push(env.DB.prepare(`DELETE FROM ${table(space)} WHERE user_id=? AND account_token=? AND stripe_customer IS ?`).bind(id, row.account_token, row.stripe_customer));
+  }
+  return statements;
 }

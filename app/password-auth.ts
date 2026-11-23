@@ -365,7 +365,7 @@ export async function confirmEmailVerification(rawToken: string, password: strin
   ]);
   if (!results[0].meta.changes) return null;
   const token = await createSession(action.userId, passwordHash);
-  return token ? { token } : null;
+  return token ? { token, userId: action.userId } : null;
 }
 
 export async function requestPasswordReset(email: string) {

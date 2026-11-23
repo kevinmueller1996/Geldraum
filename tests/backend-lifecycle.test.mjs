@@ -344,7 +344,7 @@ test("sharing binds each grant to one verified recipient, owner, role and worksp
   const db = database();
   t.after(()=>db.sql.close());
   const env = {DB:db, AUTH_REQUIRE_EMAIL_VERIFICATION:"1"};
-  const {auth,account,sharing} = await backend(env);
+  const {auth,account,sharing,billing} = await backend(env);
   const session = async name => {
     const email = name+"@example.invalid";
     const pending = await auth.registerPasswordAccount(email,undefined,true);
@@ -382,6 +382,27 @@ test("sharing binds each grant to one verified recipient, owner, role and worksp
   assert.equal((await write(partner,"business",business,1,"Veraltet")).status,409);
   assert.equal((await (await account.GET(request("/api/account/business","GET",null,owner))).json()).plan.name,"Firma aktualisiert");
   assert.equal((await (await account.GET(request("/api/account","GET",null,partner))).json()).plan.name,"Mein eigener Plan");
+  // Enable billing after the grants exist. Only the owner's company subscription funds the shared company plan.
+  Object.assign(env,{NJORA_BILLING_ENABLED:"true",NJORA_STRIPE_PRICE:"price_private",NJORA_STRIPE_BUSINESS_PRICE:"price_company",NJORA_STRIPE_SECRET:"fixture"});
+  const ownerId = await auth.userId("owner@example.invalid");
+  const companySubscriber = await billing.subscriber(ownerId,undefined,"business");
+  assert.notEqual(companySubscriber.account_token,(await billing.subscriber(ownerId)).account_token);
+  db.prepare("UPDATE njora_business_subscribers SET stripe_customer=? WHERE user_id=?").bind("cus_company",ownerId).run();
+  const transport = t.mock.method(globalThis,"fetch",async url=>{
+    const endpoint = new URL(url);
+    assert.equal(endpoint.pathname,"/v1/subscriptions");
+    assert.equal(endpoint.searchParams.get("customer"),"cus_company");
+    return Response.json({data:[{status:"active",items:{data:[{price:{id:"price_company"}}]}}]});
+  });
+  assert.equal((await call(partner,"business","plan",{id:business})).status,200);
+  assert.equal((await write(partner,"business",business,2,"Firma gemeinsam")).status,200);
+  assert.equal((await call(spouse,"private","plan",{id:personal})).status,402);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM njora_business_subscribers WHERE user_id<>?").bind(ownerId).first().n,0);
+  assert.equal((await account.PUT(request("/api/account/business","PUT",{plan:example,revision:null},partner))).status,402);
+  db.prepare("UPDATE njora_business_subscribers SET stripe_customer=NULL WHERE user_id=?").bind(ownerId).run();
+  assert.equal((await call(partner,"business","plan",{id:business})).status,402);
+  delete env.NJORA_BILLING_ENABLED;
+  transport.mock.restore();
   assert.equal((await call(owner,"business","remove",{id:business})).status,200);
   assert.equal((await call(partner,"business","plan",{id:business})).status,404);
   assert.equal((await write(partner,"business",business,2,"Nach Widerruf")).status,404);
