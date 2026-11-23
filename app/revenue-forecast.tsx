@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import type { Plan } from "./page";
 import { revenueMonthLabel } from "./check-in";
 import { RevenueFields } from "./revenue-fields";
-import { draftFromRevenue, revenueAmounts, type RevenueVAT } from "./revenue-vat";
+import { draftFromRevenue, revenueAmounts } from "./revenue-vat";
 import type { VatBasis } from "./recurring-costs";
 
-export type ConfirmedRevenue = {name: string; month: string; vat: RevenueVAT};
+import type { ConfirmedRevenue } from "./forecast-month";
 type Entry = ConfirmedRevenue & {id: string};
 type Props = {plan: Plan; today: string; basis: VatBasis; readOnly: boolean; save: (plan: Plan, base: Plan) => Promise<boolean>};
 const euro = new Intl.NumberFormat("de-DE", {style: "currency", currency: "EUR"});

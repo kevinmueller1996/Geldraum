@@ -165,6 +165,28 @@ struct Plan: Codable, Equatable {
 
     var monthlyRevenue: Record { fields["monthlyRevenue"]?.object ?? [:] }
 
+    func confirmedRevenue(in month: String, net: Bool) -> Double {
+        let entries = fields["revenueForecast"]?.object ?? [:]
+        let key = net ? "net" : "gross"
+        return entries.values.reduce(0.0) { cents, value in
+            guard let row = value.object, row.text("month") == month,
+                  let amount = row["vat"]?.object?[key]?.number else { return cents }
+            return cents + (amount * 100).rounded()
+        } / 100
+    }
+
+    func planningMonths(asOf date: Date) -> [String] {
+        let calendar = Calendar(identifier: .gregorian)
+        let first = calendar.dateInterval(of: .month, for: date)!.start
+        var months = Set((0..<12).compactMap { offset in
+            calendar.date(byAdding: .month, value: offset, to: first).map { String(PlanDate.string($0).prefix(7)) }
+        })
+        for value in (fields["revenueForecast"]?.object ?? [:]).values {
+            if let month = value.object?["month"]?.string { months.insert(month) }
+        }
+        return months.sorted()
+    }
+
     mutating func setRevenue(_ amount: Double, forMonth month: String) {
         var revenue = monthlyRevenue
         revenue[month] = .number(amount)
@@ -717,11 +739,12 @@ struct PlanMetrics {
     var net: Double { plan[.accounts].reduce(0) { $0 + $1.netBalance } }
     var income: Double { plan[.income].filter { !$0.fields.flag("annual") }.sum("amount") }
     var netRegularIncome: Double { plan[.income].filter { !$0.fields.flag("annual") }.reduce(0) { $0 + budgetCents($1.netAmount) } / 100 }
-    func comparisonTotals(net: Bool) -> (income: Double, fixed: Double, flexible: Double, surplus: Double) {
-        let receipts = net ? netRegularIncome : income
+    func comparisonTotals(net: Bool, forecastMonth: String? = nil) -> (income: Double, confirmed: Double, fixed: Double, flexible: Double, surplus: Double) {
+        let confirmed = forecastMonth.map { plan.confirmedRevenue(in: $0, net: net) } ?? 0
+        let receipts = (net ? netRegularIncome : income) + confirmed
         let costs = monthlyFixedCosts(net: net)
         let budget = net ? netFlexibleBudget : flexibleBudget
-        return (receipts, costs, budget, receipts - costs - budget)
+        return (receipts, confirmed, costs, budget, receipts - costs - budget)
     }
     var incomeThisMonth: Double { income + annualIncome.sum("amount") }
     var incomePerYear: Double { income * 12 + plan[.income].filter { $0.fields.flag("annual") }.sum("amount") }
