@@ -1,5 +1,6 @@
 import { readBodyBytes } from "../request-body";
-import { issuer } from "./config";
+import { issuer, redirectUri } from "./config";
+import { escapeHtml, page } from "./pages";
 import { backendOrigin } from "../vercel/proxy-api";
 
 export async function proxyPlugin(request: Request, action: string) {
@@ -38,6 +39,16 @@ export async function proxyPlugin(request: Request, action: string) {
   // On our public issuer, only the registered ChatGPT callback may receive this form redirect.
   if (action === "authorize") {
     out.set("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self' https://chatgpt.com/connector_platform_oauth_redirect; frame-ancestors 'none'; base-uri 'none'");
+  }
+  // The publisher callback continues to the OpenAI dashboard. Finish with a
+  // normal navigation so the consent form's CSP cannot block the next redirect.
+  const location = res.headers.get("location");
+  if (action === "authorize" && request.method === "POST" && res.status === 303 &&
+      request.headers.get("accept")?.includes("text/html") && location?.startsWith(redirectUri + "?") &&
+      new URL(location).searchParams.get("state")?.startsWith("openai_platform_oauth_relay__")) {
+    const result = page("Zurück zu OpenAI", `<p>Schließe die Verbindung im Plugin-Portal ab.</p><a class="button" rel="noreferrer" href="${escapeHtml(location)}">Weiter zu OpenAI</a>`);
+    result.headers.set("referrer-policy", "no-referrer");
+    return result;
   }
   return new Response(res.body,{status:res.status,headers:out});
 }
