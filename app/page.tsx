@@ -271,12 +271,18 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
   const savingsTitle = business ? "Vermögenswerte" : "Deine Ersparnisse";
   const newSavingKind = business ? "other" : "dayMoney";
   const accountEndpoint = business ? "/api/account/business" : "/api/account";
-  const workspacePicker = grant !== null ? <a className="workspace-picker" href={sharePath}>{business?"Business":"Privat"} · Geteilt</a> : <select className="workspace-picker" aria-label="Finanzbereich" value={business ? "business" : "private"}
-    onChange={event => location.assign(event.target.value === "business" ? "/?bereich=business" : "/")}>
-    <option value="private">Privat</option><option value="business">Business</option>
-  </select>;
   const appearance = useAppearance();
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [otherWorkspaceName, setOtherWorkspaceName] = useState<string | null>(null);
+  const currentName = plan?.name.trim() || (business ? "Business" : "Privat");
+  const privateName = business ? otherWorkspaceName || "Privat" : currentName;
+  const businessName = business ? currentName : otherWorkspaceName || "Business";
+  const workspacePicker = grant !== null
+    ? <a className="workspace-picker" href={sharePath}>{currentName} · Geteilt</a>
+    : <select className="workspace-picker" aria-label="Finanzbereich" value={space}
+        onChange={event => location.assign(event.target.value === "business" ? "/?bereich=business" : "/")}>
+        <option value="private">{privateName}</option><option value="business">{businessName}</option>
+      </select>;
   const [draft, setDraft] = useState<Plan>(emptyPlan());
   const [ready, setReady] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -377,6 +383,7 @@ function FinanceDashboard({ business, grant }: { business: boolean; grant:string
       current.current = copy;
       setBilling(copy.billing ?? null);
       setCloudUser(copy.user);
+      setOtherWorkspaceName(copy.otherWorkspaceName?.trim() || null);
       setPlan(copy.draft);
       setAuthStatus("authenticated");
       setRemoteUpdatedAt(copy.updatedAt);

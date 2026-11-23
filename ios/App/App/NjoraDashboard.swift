@@ -90,17 +90,17 @@ struct WorkspacePicker: View {
         Menu {
             ForEach(FinanceWorkspace.allCases, id: \.self) { choice in
                 Button { Task { await store.switchWorkspace(to: choice) } } label: {
-                    if choice == store.workspace { Label(choice.title, systemImage: "checkmark") }
-                    else { Text(choice.title) }
+                    if choice == store.workspace { Label(store.workspaceName(choice), systemImage: "checkmark") }
+                    else { Text(store.workspaceName(choice)) }
                 }
             }
         } label: {
             HStack(spacing: 4) {
-                Text(store.workspace.title)
+                Text(store.workspaceName(store.workspace)).lineLimit(1).truncationMode(.tail)
                 Image(systemName: "chevron.down").font(.caption2)
             }
         }.disabled(store.busy)
-        .accessibilityLabel("Finanzbereich: " + store.workspace.title)
+        .accessibilityLabel("Finanzbereich: " + store.workspaceName(store.workspace))
         .accessibilityIdentifier("njora.workspace")
     }
 }

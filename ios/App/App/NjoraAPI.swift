@@ -66,6 +66,7 @@ enum FinanceWorkspace: String, CaseIterable {
 }
 
 struct AccountPayload: Decodable {
+    var otherWorkspaceName: String? = nil
     var workspace: String? = nil
     var closingPrices: ClosingPrices? = nil
     let billing: BillingStatus?

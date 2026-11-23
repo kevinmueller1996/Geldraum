@@ -130,12 +130,15 @@ test("verification, recovery, plan revisions and dependent records across one ac
   const fresh = await (await getBusiness(cookie)).json();
   assert.equal(fresh.workspace,"business");
   assert.equal(fresh.plan,null);
+  assert.equal(fresh.otherWorkspaceName,"edited");
   assert.equal((await putBusiness(null,"Unternehmen")).status,200);
   assert.equal((await putBusiness(null,"Duplikat")).status,409);
   assert.equal((await putBusiness(1,"Firmenplan")).status,200);
   assert.equal((await putBusiness(1,"Veraltete Firmenrevision")).status,409);
   assert.equal((await (await getBusiness(cookie)).json()).plan.name,"Firmenplan");
-  assert.equal((await (await account.GET(request("/api/account","GET",null,cookie))).json()).plan.name,"edited");
+  const personal = await (await account.GET(request("/api/account","GET",null,cookie))).json();
+  assert.equal(personal.plan.name,"edited");
+  assert.equal(personal.otherWorkspaceName,"Firmenplan");
 
   await storage.ensureTables();
   const token = config.randomToken();

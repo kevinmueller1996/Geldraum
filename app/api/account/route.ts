@@ -110,14 +110,18 @@ async function getAccount(request: NextRequest) {
   try {
     const { db, id } = await upsertUser(identity, true);
     const billing = billingEnabled(id) && !identity.local ? await membership(await subscriber(id, identity.accountCreatedAt, planTable(request) === "business_plans" ? "business" : "private")) : null;
-    const result = await db.prepare(`SELECT users.created_at, p.plan_json, p.revision, p.updated_at
-      FROM users LEFT JOIN ${planTable(request)} p ON p.user_id=users.id
+    const table = planTable(request);
+    const otherTable = table === "business_plans" ? "finance_plans" : "business_plans";
+    const result = await db.prepare(`SELECT users.created_at, p.plan_json, p.revision, p.updated_at,
+        json_extract(other.plan_json, '$.name') AS other_name
+      FROM users LEFT JOIN ${table} p ON p.user_id=users.id
+      LEFT JOIN ${otherTable} other ON other.user_id=users.id
       WHERE users.id=? AND (? IS NULL OR users.created_at=?)`)
       .bind(id, identity.accountCreatedAt ?? null, identity.accountCreatedAt ?? null)
-      .first<{ created_at: string; plan_json: string | null; revision: number | null; updated_at: string | null }>();
+      .first<{ created_at: string; other_name: string | null; plan_json: string | null; revision: number | null; updated_at: string | null }>();
     if (!result) return json({ authenticated: false }, 401);
     return json({
-      authenticated: true, billing, workspace: planTable(request) === "business_plans" ? "business" : "private",
+      authenticated: true, billing, otherWorkspaceName: result.other_name, workspace: table === "business_plans" ? "business" : "private",
       user: { displayName: identity.displayName, email: identity.email, local: identity.local, accountCreatedAt: result.created_at },
       plan: result.plan_json ? normalizePlanCategories(JSON.parse(result.plan_json)) : null,
       revision: result.revision,

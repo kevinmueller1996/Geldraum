@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 
 struct LocalFinancePlan: Codable, Equatable {
+    var otherWorkspaceName: String? = nil
     var user: AccountPayload.User
     var billing: BillingStatus?
     var revision: Int?
@@ -13,7 +14,7 @@ struct LocalFinancePlan: Codable, Equatable {
 
     static func cloud(_ reply: AccountPayload) -> Self {
         let plan = reply.plan?.unifiedCosts
-        return Self(user: reply.user, billing: reply.billing, revision: reply.revision, base: plan, local: plan)
+        return Self(otherWorkspaceName: reply.otherWorkspaceName, user: reply.user, billing: reply.billing, revision: reply.revision, base: plan, local: plan)
     }
 
     func belongsToAccount(in reply: AccountPayload) -> Bool {
@@ -27,6 +28,7 @@ struct LocalFinancePlan: Codable, Equatable {
 
     mutating func applyIdentity(_ reply: AccountPayload) {
         let createdAt = reply.user.accountCreatedAt ?? user.accountCreatedAt
+        otherWorkspaceName = reply.otherWorkspaceName
         user = reply.user
         user.accountCreatedAt = createdAt
         billing = reply.billing

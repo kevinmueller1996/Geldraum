@@ -298,6 +298,12 @@ final class NjoraStore: ObservableObject {
         return true
     }
 
+    func workspaceName(_ choice: FinanceWorkspace) -> String {
+        let name = choice == workspace ? plan?.name : local?.otherWorkspaceName
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? choice.title : trimmed
+    }
+
     func switchWorkspace(to target: FinanceWorkspace) async {
         guard target != workspace, !busy, let session, let user, let current = local else { return }
         busy = true

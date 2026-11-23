@@ -2,7 +2,7 @@ import type { Plan, CloudUser } from "./page";
 import type { BillingStatus } from "./billing/offer";
 import { markerName } from "./browser-session";
 
-export type Remote = { user: CloudUser; billing?: BillingStatus; plan: Plan | null; revision: number | null; updatedAt: string | null };
+export type Remote = { otherWorkspaceName?: string | null; user: CloudUser; billing?: BillingStatus; plan: Plan | null; revision: number | null; updatedAt: string | null };
 export type Copy = Remote & { session: string; draft: Plan | null; sending: Plan | null };
 export type Choice = "device" | "cloud";
 export class Conflict extends Error {}
@@ -62,7 +62,7 @@ export function bindBrowserCopy(saved: Copy | undefined, reply: Remote, session:
   const legacyReset = saved && (!oldCreation || !newCreation) && saved.session !== session
     && (reply.revision ?? 0) < (saved.revision ?? 0);
   if (!saved || differentAccount(saved.user, reply.user) || legacyReset) return { ...reply, session, draft: reply.plan, sending: null };
-  return { ...saved, session, billing: reply.billing, user: reply.user };
+  return { ...saved, session, otherWorkspaceName: reply.otherWorkspaceName, billing: reply.billing, user: reply.user };
 }
 
 export function reconcile(copy: Copy, reply: Remote, choice?: Choice): Copy {
