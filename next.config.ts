@@ -11,7 +11,7 @@ const contentSecurityPolicy = [
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
-  "form-action 'self'",
+  "form-action 'self' https://appleid.apple.com",
   "frame-ancestors 'none'",
 ].join("; ");
 

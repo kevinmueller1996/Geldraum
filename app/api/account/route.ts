@@ -10,6 +10,7 @@ import { ensurePlanSchema } from "../../plan-schema";
 import { NextRequest, NextResponse } from "next/server";
 import { isLocalHostname } from "../../local-host";
 import { clearSessionCookie, ensureAuthSchema, getSessionIdentity, maskEmail, userId } from "../../password-auth";
+import { revokeAppleForDeletion } from "../../apple-auth";
 import { needsCloudflareBackendProxy, proxyApiRequest } from "../../vercel/proxy-api";
 
 export const dynamic = "force-dynamic";
@@ -214,19 +215,24 @@ export async function DELETE(request: NextRequest) {
     // Provider cancellation can take time. Tie every write to the account which
     // authorized the request, even if the email is registered again in between.
     const created = identity.accountCreatedAt ?? null;
+    const billingDeletion = await removeBillingAccount(id, created);
+    await revokeAppleForDeletion(id, created);
     // If a checkout linked a customer after cancellation began, leave the data
     // intact so a retry can cancel that customer before removing the account.
     const noSubscriber = " AND NOT EXISTS (SELECT 1 FROM njora_subscribers WHERE user_id=users.id) AND NOT EXISTS (SELECT 1 FROM njora_business_subscribers WHERE user_id=users.id)";
     const guard = " AND EXISTS (SELECT 1 FROM users WHERE id=? AND (? IS NULL OR created_at=?)" + noSubscriber + ")";
     const owned = (sql: string) => db.prepare(sql + guard).bind(id, id, created, created);
     const deleted = await db.batch([
-      ...await removeBillingAccount(id, created),
+      ...billingDeletion,
       owned("DELETE FROM workspace_shares WHERE recipient_id=?"),
+      owned("DELETE FROM workspace_shares WHERE accepted_by=?"),
+      owned("DELETE FROM workspace_shares WHERE recipient_id IN (SELECT email_id FROM auth_email_aliases WHERE user_id=?)"),
       owned("DELETE FROM finance_plans WHERE user_id=?"),
       owned("DELETE FROM business_plans WHERE user_id=?"),
       owned("DELETE FROM user_activity WHERE user_id=?"),
       owned("DELETE FROM auth_sessions WHERE user_id=?"),
       owned("DELETE FROM auth_action_tokens WHERE user_id=?"),
+      owned("DELETE FROM auth_apple_identities WHERE user_id=?"),
       owned("DELETE FROM auth_credentials WHERE user_id=?"),
       owned("DELETE FROM auth_attempts WHERE email_hash=?"),
       db.prepare("DELETE FROM users WHERE id=? AND (? IS NULL OR created_at=?)" + noSubscriber).bind(id, created, created),

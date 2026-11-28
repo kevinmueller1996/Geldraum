@@ -87,3 +87,18 @@ export async function sendWorkspaceInvitation(to: string, owner: string, workspa
   });
   return response.ok;
 }
+
+export async function sendInvitationEmailCode(to: string, code: string) {
+  const {RESEND_API_KEY, AUTH_EMAIL_FROM} = mailEnv();
+  if (!RESEND_API_KEY?.trim() || !AUTH_EMAIL_FROM?.trim()) throw new Error("Transactional email is not configured");
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST", redirect: "manual", signal: AbortSignal.timeout(8000),
+    headers: {Authorization: "Bearer " + RESEND_API_KEY.trim(), "Content-Type": "application/json",
+      "Idempotency-Key": await idempotencyKey("verify_email", code)},
+    body: JSON.stringify({
+      from: AUTH_EMAIL_FROM.trim(), to: [to], subject: "E-Mail für Njora-Einladungen bestätigen",
+      text: "Dein Bestätigungscode lautet: " + code + "\n\nGib den Code in deinem angemeldeten Njora-Konto ein. Er ist 20 Minuten gültig. Falls du den Code nicht angefordert hast, kannst du ihn ignorieren.",
+    }),
+  });
+  if (!response.ok) throw new Error("Invitation email verification could not be sent");
+}

@@ -23,7 +23,7 @@ def restore(source, destination):
     stream = contextlib.nullcontext(sys.stdin.buffer) if source == Path("-") else source.open(encoding="utf-8")
     with stream as file:
         backup = json.load(file)
-    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2, 3, 4):
+    if not isinstance(backup, dict) or backup.get("format") != "njora-database-backup" or backup.get("version") not in (1, 2, 3, 4, 5):
         raise ValueError("Unbekanntes Sicherungsformat")
     tables = backup["tables"]
     columns_by_table = dict(COLUMNS)
@@ -33,6 +33,9 @@ def restore(source, destination):
         columns_by_table["njora_business_subscribers"] = columns_by_table["njora_subscribers"]
     if backup["version"] >= 3:
         columns_by_table["business_plans"] = COLUMNS["finance_plans"]
+    if backup["version"] >= 5:
+        columns_by_table["auth_apple_identities"] = ("subject", "user_id", "client_id", "encrypted_refresh_token", "authorized_at")
+        columns_by_table["auth_email_aliases"] = ("email_id", "user_id", "email_address", "verified_at")
     if not isinstance(tables, dict) or set(tables) != set(columns_by_table):
         raise ValueError("Die Sicherung enthält nicht die erwarteten Tabellen")
 

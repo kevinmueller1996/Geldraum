@@ -36,7 +36,8 @@ export async function proxyApiRequest(request: Request) {
   const incomingUrl = new URL(request.url);
   const incomingOrigin = request.headers.get("origin");
   const mutating = request.method !== "GET" && request.method !== "HEAD";
-  if ((mutating && !incomingOrigin) || (incomingOrigin && incomingOrigin !== incomingUrl.origin)) {
+  const appleCallback = request.method === "POST" && ["/api/auth/apple/callback", "/api/auth/apple/notifications"].includes(incomingUrl.pathname);
+  if (!appleCallback && ((mutating && !incomingOrigin) || (incomingOrigin && incomingOrigin !== incomingUrl.origin))) {
     return errorResponse("Unzulässige Anfrage.", 403);
   }
 
@@ -55,6 +56,7 @@ export async function proxyApiRequest(request: Request) {
     }
     const adminRoute = incomingUrl.pathname.startsWith("/api/admin/");
     const sessionNames = adminRoute ? ["__Host-njora_admin_session", "njora_admin_session"] : ["__Host-njora_session", "geldraum_session"];
+    if (incomingUrl.pathname.startsWith("/api/auth/apple/")) sessionNames.push("__Host-njora_apple");
     const sessionCookies = request.headers.get("cookie")?.split(";").map(cookie => cookie.trim())
       .filter(cookie => sessionNames.includes(cookie.split("=", 1)[0]));
     if (sessionCookies?.length) headers.set("cookie", sessionCookies.join("; "));

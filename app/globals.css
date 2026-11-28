@@ -1474,3 +1474,16 @@ button.flow-item { grid-template-columns: 8px minmax(0, 1fr) auto auto; border: 
 .month-equation .budget-item { padding-inline:.75rem; font-size:.9rem; }
 .month-equation .budget-result { border-top:2px solid var(--line); margin-top:.35rem; padding-top:1rem; font-weight:650; }
 .month-equation button:hover, .month-equation summary:hover { color:var(--brand); }
+
+.apple-auth-button {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.apple-auth-button img { display: block; width: 270px; max-width: 100%; height: auto; }
+.apple-auth-button:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.apple-auth-button:disabled { opacity: 0.55; cursor: default; }

@@ -7,6 +7,8 @@ import { AuthResponseError, authMessage } from "../auth-link";
 import { isLocalHostname } from "../local-host";
 import LegalLinks from "../legal-links";
 import PreviewCarousel from "./preview-carousel";
+import AppleWebAccess from "../apple-web-access";
+import { appleErrors } from "../apple-auth-messages";
 import "./landing.css";
 
 type Mode = "login" | "register";
@@ -37,14 +39,15 @@ export default function LoginPage() {
   const query = new URLSearchParams(ready ? window.location.search : "");
   const invalidLink = query.get("verification") === "invalid";
   const mode = selectedMode ?? (query.get("start") === "register" ? "register" : "login");
-  const error = formError ?? (invalidLink ? "Der Bestätigungslink ist ungültig oder abgelaufen." : "");
+  const appleError = query.get("apple");
+  const error = formError ?? (invalidLink ? "Der Bestätigungslink ist ungültig oder abgelaufen." : appleError && Object.hasOwn(appleErrors, appleError) ? appleErrors[appleError] : "");
   const needsVerification = resend ?? invalidLink;
   const showPassword = mode === "login" || local;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("verified") === "1") window.location.replace("/");
-    if (params.has("weiter") || params.get("start") === "register" || params.get("verification") === "invalid") {
+    if (params.has("weiter") || params.has("apple") || params.get("start") === "register" || params.get("verification") === "invalid") {
       document.getElementById("zugang")?.scrollIntoView({ block: "start" });
     }
   }, []);
@@ -161,6 +164,7 @@ export default function LoginPage() {
           <button type="button" disabled={loading} aria-pressed={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>Anmelden</button>
           <button type="button" disabled={loading} aria-pressed={mode === "register"} className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>Konto erstellen</button>
         </div>
+        {ready && !local && <AppleWebAccess purpose={mode} destination={signInDestination()} disabled={loading} />}
         <form className="login-form" onSubmit={submit}>
           <label>E-Mail-Adresse<input ref={emailInput} type="email" name="username" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} placeholder="name@beispiel.de" /></label>
           {showPassword && <label>Passwort<input type="password" name="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={10} maxLength={72} placeholder="Mindestens 10 Zeichen" /></label>}

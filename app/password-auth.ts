@@ -10,6 +10,7 @@ const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const PASSWORD_COST = 11;
 const PASSWORD_SCHEME = "bcrypt";
 const PENDING_PASSWORD_SCHEME = "pending-email";
+export const APPLE_CREDENTIAL_SCHEME = "apple";
 const DUMMY_PASSWORD_HASH = "$2b$11$rf0UBpb2Zjnp4JsyWYrA9.wy1IgG87VOy85GYQ19B1DTE8YzRRtKG";
 const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
 const LOGIN_MAX_FAILURES = 5;
@@ -66,6 +67,39 @@ const SESSIONS_USER_INDEX_SQL = "CREATE INDEX IF NOT EXISTS auth_sessions_user_i
 const SESSIONS_EXPIRY_INDEX_SQL = "CREATE INDEX IF NOT EXISTS auth_sessions_expires_at_idx ON auth_sessions(expires_at)";
 const ACTION_TOKENS_USER_INDEX_SQL = "CREATE INDEX IF NOT EXISTS auth_action_tokens_user_purpose_idx ON auth_action_tokens(user_id, purpose)";
 const ACTION_TOKENS_EXPIRY_INDEX_SQL = "CREATE INDEX IF NOT EXISTS auth_action_tokens_expires_at_idx ON auth_action_tokens(expires_at)";
+
+const APPLE_IDENTITIES_SQL = `CREATE TABLE IF NOT EXISTS auth_apple_identities (
+  subject TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL,
+  encrypted_refresh_token TEXT NOT NULL,
+  authorized_at INTEGER NOT NULL
+)`;
+const APPLE_CHALLENGES_SQL = `CREATE TABLE IF NOT EXISTS auth_apple_challenges (
+  state_hash TEXT PRIMARY KEY NOT NULL,
+  nonce TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  platform TEXT NOT NULL CHECK (platform IN ('native','web')),
+  purpose TEXT NOT NULL CHECK (purpose IN ('login','register','link')),
+  browser_hash TEXT,
+  session_hash TEXT,
+  destination TEXT NOT NULL
+)`;
+const EMAIL_ALIASES_SQL = `CREATE TABLE IF NOT EXISTS auth_email_aliases (
+  email_id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  verified_at TEXT NOT NULL
+)`;
+const EMAIL_ALIAS_CODES_SQL = `CREATE TABLE IF NOT EXISTS auth_email_alias_codes (
+  code_hash TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_id TEXT NOT NULL,
+  email_address TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT
+)`;
+const EMAIL_ALIAS_CODES_INDEX_SQL = "CREATE INDEX IF NOT EXISTS auth_email_alias_codes_date ON auth_email_alias_codes(created_at)";
 
 export type SessionIdentity = {
   id: string;
@@ -150,6 +184,11 @@ async function initializeAuthSchema() {
     SESSIONS_EXPIRY_INDEX_SQL,
     ACTION_TOKENS_USER_INDEX_SQL,
     ACTION_TOKENS_EXPIRY_INDEX_SQL,
+    APPLE_IDENTITIES_SQL,
+    APPLE_CHALLENGES_SQL,
+    EMAIL_ALIASES_SQL,
+    EMAIL_ALIAS_CODES_SQL,
+    EMAIL_ALIAS_CODES_INDEX_SQL,
   ]) await db.prepare(statement).run();
 
   return db;
@@ -169,19 +208,28 @@ export function emailVerificationRequired() {
   return runtimeEnv.AUTH_REQUIRE_EMAIL_VERIFICATION === "1" || process.env.NODE_ENV === "production";
 }
 
-async function createSession(userIdValue: string, passwordHash: string) {
+async function createSession(userIdValue: string, proof: {passwordHash: string} | {appleSubject: string}) {
   const db = await ensureAuthSchema();
   const rawToken = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = bytesToBase64Url(await sha256(rawToken));
   const now = new Date();
   const expires = new Date(now.getTime() + SESSION_SECONDS * 1_000);
+  const source = "passwordHash" in proof
+    ? db.prepare(`INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
+        SELECT ?, user_id, ?, ? FROM auth_credentials WHERE user_id = ? AND password_hash = ?`)
+      .bind(tokenHash, now.toISOString(), expires.toISOString(), userIdValue, proof.passwordHash)
+    : db.prepare(`INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
+        SELECT ?, user_id, ?, ? FROM auth_apple_identities WHERE user_id = ? AND subject = ? AND encrypted_refresh_token <> ''`)
+      .bind(tokenHash, now.toISOString(), expires.toISOString(), userIdValue, proof.appleSubject);
   const [, inserted] = await db.batch([
     db.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").bind(now.toISOString()),
-    db.prepare(`INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
-      SELECT ?, user_id, ?, ? FROM auth_credentials WHERE user_id = ? AND password_hash = ?`)
-      .bind(tokenHash, now.toISOString(), expires.toISOString(), userIdValue, passwordHash),
+    source,
   ]);
   return inserted.meta.changes ? rawToken : null;
+}
+
+export function createAppleSession(id: string, subject: string) {
+  return createSession(id, {appleSubject: subject});
 }
 
 async function createActionToken(userIdValue: string, purpose: EmailPurpose) {
@@ -253,7 +301,8 @@ export async function registerPasswordAccount(email: string, password: string | 
     throw new PasswordAuthError("schema", error);
   }
   const id = await userId(email);
-  const existing = await db.prepare("SELECT user_id FROM auth_credentials WHERE user_id = ?").bind(id).first<{ user_id: string }>();
+  const existing = await db.prepare("SELECT user_id FROM auth_credentials WHERE user_id=? UNION ALL SELECT user_id FROM auth_email_aliases WHERE email_id=?")
+    .bind(id, id).first<{ user_id: string }>();
   if (existing) return { error: "exists" as const };
 
   let passwordHash: string;
@@ -271,8 +320,8 @@ export async function registerPasswordAccount(email: string, password: string | 
         ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at`)
         .bind(id, emailMask, now, now),
       db.prepare(`INSERT INTO auth_credentials (user_id, email_mask, email_address, email_verified_at, password_salt, password_hash, password_iterations, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(id, emailMask, email, requiresVerification ? null : now, requiresVerification ? PENDING_PASSWORD_SCHEME : PASSWORD_SCHEME, passwordHash, PASSWORD_COST, now, now),
+        SELECT CASE WHEN EXISTS (SELECT 1 FROM auth_email_aliases WHERE email_id=?) THEN NULL ELSE ? END, ?, ?, ?, ?, ?, ?, ?, ?`)
+        .bind(id, id, emailMask, email, requiresVerification ? null : now, requiresVerification ? PENDING_PASSWORD_SCHEME : PASSWORD_SCHEME, passwordHash, PASSWORD_COST, now, now),
       db.prepare("DELETE FROM auth_attempts WHERE email_hash = ?").bind(id),
     ]);
   } catch (error) {
@@ -284,7 +333,7 @@ export async function registerPasswordAccount(email: string, password: string | 
     return { verificationRequired: true as const, verificationToken: action.token, id, emailMask, email };
   }
   try {
-    const token = await createSession(id, passwordHash);
+    const token = await createSession(id, {passwordHash});
     if (!token) throw new Error("Credentials changed during registration");
     return { verificationRequired: false as const, token, id, emailMask };
   } catch (error) {
@@ -364,7 +413,7 @@ export async function confirmEmailVerification(rawToken: string, password: strin
       .bind(action.now, action.tokenHash, action.now),
   ]);
   if (!results[0].meta.changes) return null;
-  const token = await createSession(action.userId, passwordHash);
+  const token = await createSession(action.userId, {passwordHash});
   return token ? { token, userId: action.userId } : null;
 }
 
@@ -403,29 +452,35 @@ export async function resetPasswordWithToken(rawToken: string, password: string)
       .bind(action.now, action.tokenHash, action.now),
   ]);
   if (!results[0].meta.changes) return null;
-  const token = await createSession(action.userId, passwordHash);
+  const token = await createSession(action.userId, {passwordHash});
   return token ? { token } : null;
 }
 
 export async function loginPasswordAccount(email: string, password: string) {
   const result = await verifyPasswordAccount(email, password);
   if ("error" in result) return result;
-  const token = await createSession(result.id, result.passwordHash);
+  const token = await createSession(result.id, {passwordHash: result.passwordHash});
   return token ? { id: result.id, emailMask: result.emailMask, token } : { error: "invalid" as const };
 }
 
-export async function getSessionIdentity(request: NextRequest): Promise<SessionIdentity | null> {
+export async function sessionTokenHash(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE)?.value ?? request.cookies.get(LEGACY_SESSION_COOKIE)?.value;
-  if (!token) return null;
+  return token ? bytesToBase64Url(await sha256(token)) : null;
+}
+
+export async function getSessionIdentity(request: NextRequest): Promise<SessionIdentity | null> {
+  const tokenHash = await sessionTokenHash(request);
+  if (!tokenHash) return null;
   const db = await ensureAuthSchema();
-  const tokenHash = bytesToBase64Url(await sha256(token));
   const row = await db.prepare(`SELECT sessions.user_id, users.display_name, users.created_at, credentials.email_mask, credentials.email_address
     FROM auth_sessions AS sessions
     JOIN users ON users.id = sessions.user_id
     JOIN auth_credentials AS credentials ON credentials.user_id = sessions.user_id
-    WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND credentials.password_salt = ?
-      AND (? = 0 OR credentials.email_verified_at IS NOT NULL)`)
-    .bind(tokenHash, new Date().toISOString(), PASSWORD_SCHEME, emailVerificationRequired() ? 1 : 0)
+    WHERE sessions.token_hash = ? AND sessions.expires_at > ?
+      AND ((credentials.password_salt = ? AND (? = 0 OR credentials.email_verified_at IS NOT NULL))
+        OR (credentials.password_salt = ? AND credentials.email_verified_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM auth_apple_identities apple WHERE apple.user_id = sessions.user_id AND apple.encrypted_refresh_token <> '')))`)
+    .bind(tokenHash, new Date().toISOString(), PASSWORD_SCHEME, emailVerificationRequired() ? 1 : 0, APPLE_CREDENTIAL_SCHEME)
     .first<{ user_id: string; display_name: string; created_at: string; email_mask: string; email_address: string | null }>();
   if (!row) return null;
   return { id: row.user_id, accountCreatedAt: row.created_at, displayName: row.display_name, email: row.email_address ?? row.email_mask, emailMask: row.email_mask, local: false };

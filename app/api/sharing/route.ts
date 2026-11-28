@@ -33,13 +33,15 @@ async function handle(req: NextRequest) {
   if (workspace !== "private" && workspace !== "business") return error("Bitte wähle einen Finanzbereich.",400);
   const now = new Date().toISOString();
   const table = workspace === "business" ? "business_plans" : "finance_plans";
+  const addressedToUser = "(recipient_id=? OR recipient_id IN (SELECT email_id FROM auth_email_aliases WHERE user_id=?))";
   if (req.method === "POST" && action === "list") {
     await db.prepare("DELETE FROM workspace_shares WHERE owner_id=? AND workspace=? AND accepted_by IS NULL AND expires_at<=?").bind(identity.id,workspace,now).run();
     await db.prepare("DELETE FROM workspace_invite_mail_limits WHERE day<?").bind(now.slice(0,10)).run();
     const visible = " AND (s.accepted_by IS NOT NULL OR s.expires_at>?) AND "+verified;
     const base = "SELECT s.id,s.role,s.workspace,(s.accepted_by IS NOT NULL) AS active,";
     const owned = await db.prepare(base+"s.recipient_email AS email FROM workspace_shares s WHERE s.owner_id=? AND s.workspace=?"+visible+" ORDER BY email").bind(identity.id,workspace,now,...self).all();
-    const received = await db.prepare(base+"c.email_address AS email FROM workspace_shares s JOIN auth_credentials c ON c.user_id=s.owner_id WHERE s.recipient_id=? AND s.workspace=?"+visible+" ORDER BY email").bind(identity.id,workspace,now,...self).all();
+    const received = await db.prepare(base+"c.email_address AS email FROM workspace_shares s JOIN auth_credentials c ON c.user_id=s.owner_id WHERE (s.accepted_by=? OR (s.accepted_by IS NULL AND "+addressedToUser+")) AND s.workspace=?"+visible+" ORDER BY email")
+      .bind(identity.id,identity.id,identity.id,workspace,now,...self).all();
     return reply({owned:owned.results,received:received.results});
   }
   if (req.method === "POST" && action === "invite") {
@@ -47,7 +49,9 @@ async function handle(req: NextRequest) {
     if (!email || !["view","edit"].includes(data.role)) return error("Bitte prüfe E-Mail-Adresse und Berechtigung.",400);
     if (billingEnabled(identity.id) && !(await membership(await subscriber(identity.id,identity.accountCreatedAt,workspace))).active) return error("Zum Einladen brauchst du ein aktives Abo für diesen Bereich.",402);
     const recipient = await userId(email);
-    if (recipient === identity.id) return error("Das ist dein eigenes Konto.",400);
+    if (recipient === identity.id || await db.prepare("SELECT 1 FROM auth_email_aliases WHERE email_id=? AND user_id=?").bind(recipient,identity.id).first()) {
+      return error("Das ist dein eigenes Konto.",400);
+    }
     const expires = new Date(Date.now()+7*86400000).toISOString();
     const newId = crypto.randomUUID();
     const result = await db.prepare(`INSERT INTO workspace_shares (id,owner_id,workspace,recipient_id,recipient_email,role,expires_at)
@@ -66,13 +70,13 @@ async function handle(req: NextRequest) {
   }
   if (typeof id !== "string" || id.length !== 36) return missing();
   if (req.method === "POST" && action === "accept") {
-    const r = await db.prepare("UPDATE workspace_shares SET accepted_by=? WHERE id=? AND workspace=? AND recipient_id=? AND expires_at>? AND accepted_by IS NULL AND "+verified)
-      .bind(identity.id,id,workspace,identity.id,now,...self).run();
+    const r = await db.prepare("UPDATE workspace_shares SET accepted_by=? WHERE id=? AND workspace=? AND "+addressedToUser+" AND expires_at>? AND accepted_by IS NULL AND "+verified)
+      .bind(identity.id,id,workspace,identity.id,identity.id,now,...self).run();
     return r.meta.changes ? reply({ok:true}) : missing();
   }
   if (req.method === "POST" && action === "remove") {
-    const r = await db.prepare("DELETE FROM workspace_shares WHERE id=? AND workspace=? AND (owner_id=? OR recipient_id=?) AND "+verified)
-      .bind(id,workspace,identity.id,identity.id,...self).run();
+    const r = await db.prepare("DELETE FROM workspace_shares WHERE id=? AND workspace=? AND (owner_id=? OR accepted_by=? OR (accepted_by IS NULL AND "+addressedToUser+")) AND "+verified)
+      .bind(id,workspace,identity.id,identity.id,identity.id,identity.id,...self).run();
     return r.meta.changes ? reply({ok:true}) : missing();
   }
   if (action !== "plan" && !(action === "status" && req.method === "POST")) return error("Unbekannte Aktion.",400);

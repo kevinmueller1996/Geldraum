@@ -45,6 +45,11 @@ async function backend(env) {
       export * as register from "./app/api/auth/register/route";
       export * as verify from "./app/api/auth/verify-email/route";
       export * as auth from "./app/password-auth";
+      export * as apple from "./app/api/auth/apple/route";
+      export * as appleStart from "./app/api/auth/apple/start/route";
+      export * as appleCallback from "./app/api/auth/apple/callback/route";
+      export * as appleNotifications from "./app/api/auth/apple/notifications/route";
+      export * as alias from "./app/api/auth/alias/route";
       export * as admin from "./app/admin/admin-auth";
       export * as oauth from "./app/chatgpt/oauth";
       export * as changes from "./app/chatgpt/changes";
@@ -428,4 +433,130 @@ test("sharing binds each grant to one verified recipient, owner, role and worksp
   const fresh = await session("spouse");
   assert.deepEqual((await grants(fresh,"private")).received,[]);
   assert.equal((await call(fresh,"private","plan",{id:personal})).status,404);
+});
+
+test("Apple sign-in preserves account identity across clients, protects linking and serves verified invitations", async t => {
+  const db = database();
+  t.after(() => db.sql.close());
+  const proofKey = await crypto.subtle.generateKey({name:"ECDSA", namedCurve:"P-256"}, true, ["sign","verify"]);
+  const appleKey = await crypto.subtle.generateKey({name:"RSASSA-PKCS1-v1_5", modulusLength:2048,
+    publicExponent:new Uint8Array([1,0,1]), hash:"SHA-256"}, true, ["sign", "verify"]);
+  const pem = Buffer.from(await crypto.subtle.exportKey("pkcs8", proofKey.privateKey)).toString("base64");
+  const jwk = {...await crypto.subtle.exportKey("jwk", appleKey.publicKey), kid:"fixture-apple", alg:"RS256"};
+  const env = {DB:db, AUTH_REQUIRE_EMAIL_VERIFICATION:"1", AUTH_APPLE_ENABLED:"1",
+    AUTH_APPLE_TEAM_ID:"TEAMFIXTURE", AUTH_APPLE_KEY_ID:"KEYFIXTURE",
+    AUTH_APPLE_PRIVATE_KEY:pem, AUTH_APPLE_WEB_CLIENT_ID:"de.njora.web", AUTH_APPLE_TOKEN_KEY:Buffer.alloc(32, 1).toString("base64url"),
+    RESEND_API_KEY:"fixture", AUTH_EMAIL_FROM:"test@example.invalid"};
+  const {auth, apple, appleStart, appleCallback, appleNotifications, alias, account, sharing} = await backend(env);
+  const responses = new Map();
+  const revoked = [];
+  let mailCode;
+  const originalFetch = globalThis.fetch;
+  const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const issuer = "https://appleid.apple.com";
+  const sign = async claims => {
+    const body = encode({alg:"RS256", kid:jwk.kid}) + "." + encode(claims);
+    const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", appleKey.privateKey, new TextEncoder().encode(body));
+    return body + "." + Buffer.from(sig).toString("base64url");
+  };
+  globalThis.fetch = async (url, init) => {
+    switch (String(url)) {
+      case issuer + "/auth/keys": return Response.json({keys:[jwk]});
+      case issuer + "/auth/token": {
+        const form = init.body;
+        const entry = responses.get(form.get("code"));
+        if (!entry) return new Response(null, {status:400});
+        responses.delete(form.get("code"));
+        const iat = Math.floor(Date.now()/1000);
+        assert.equal(form.get("client_id"), entry.client);
+        if (entry.client === env.AUTH_APPLE_WEB_CLIENT_ID) assert.equal(form.get("redirect_uri"), origin + "/api/auth/apple/callback");
+        return Response.json({id_token:await sign({iss:issuer, sub:entry.sub, aud:entry.audience ?? entry.client, iat, exp:iat+300,
+          nonce:entry.nonce, email:entry.email, email_verified:true}), refresh_token:"fixture-refresh-" + entry.sub});
+      }
+      case issuer + "/auth/revoke":
+        revoked.push(init.body.get("token"));
+        return new Response(null, {status:200});
+      case "https://api.resend.com/emails":
+        mailCode = JSON.parse(init.body).text.match(/lautet: ([A-Za-z0-9_-]{16})/)?.[1] ?? mailCode;
+        return Response.json({id:"fixture"});
+      default: throw new Error("Unexpected test request " + url);
+    }
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const route = (body, cookie = "") => request("/api/auth/apple", "POST", body, cookie);
+  const cookie = response => response.headers.get("set-cookie")?.match(/__Host-njora_session=[^;]+/)?.[0];
+  const webForm = (path, body, cookie = "", from = origin) => new NextRequest(origin + path, {
+    method:"POST", headers:{origin:from, cookie}, body:new URLSearchParams(body)
+  });
+  const native = async (purpose, code, entry, accountCookie = "") => {
+    const response = await apple.POST(route({action:"begin", purpose}, accountCookie));
+    assert.equal(response.status, 200);
+    const {state, nonce} = await response.json();
+    responses.set(code, {client:"de.njora.finanzueberblick", nonce, ...entry});
+    const fields = {action:"finish", state, code};
+    const finished = await apple.POST(route(fields, accountCookie));
+    assert.equal((await apple.POST(route(fields, accountCookie))).status, 400);
+    return finished;
+  };
+
+  const password = "existing fixture password";
+  const ownerEmail = "owner@example.invalid";
+  const pending = await auth.registerPasswordAccount(ownerEmail, undefined, true);
+  const verified = await auth.confirmEmailVerification(pending.verificationToken, password);
+  const ownerCookie = "__Host-njora_session=" + verified.token;
+  const existing = {sub:"existing-subject", email:ownerEmail};
+  assert.equal((await native("register","collision",existing)).status, 409);
+  assert.equal((await native("login","not-linked",existing)).status, 409);
+  assert.equal((await native("register","wrong-audience",{...existing,audience:"wrong-client"})).status, 503);
+  assert.equal((await native("link","linked",existing,ownerCookie)).status, 200);
+
+  const start = await appleStart.POST(webForm("/api/auth/apple/start", {purpose:"login", continue:"/freigaben?bereich=business"}));
+  const url = new URL(start.headers.get("location"));
+  assert.equal(url.origin, issuer);
+  const browser = start.headers.get("set-cookie").split(";")[0];
+  const state = url.searchParams.get("state");
+  responses.set("web-login", {client:env.AUTH_APPLE_WEB_CLIENT_ID, ...existing, nonce:url.searchParams.get("nonce")});
+  const callback = browser => appleCallback.POST(webForm("/api/auth/apple/callback", {state, code:"web-login"}, browser, issuer));
+  assert.match((await callback("")).headers.get("location"), /apple_expired/);
+  const entered = await callback(browser);
+  assert.equal(entered.headers.get("location"), origin + "/freigaben?bereich=business");
+  assert.equal((await auth.getSessionIdentity(request("/", "GET", null, cookie(entered)))).id, pending.id);
+
+  const relay = "relay@privaterelay.appleid.com";
+  const newApple = await native("register","new",{sub:"new-subject",email:relay});
+  assert.equal(newApple.status, 200);
+  const newCookie = cookie(newApple);
+  const recipient = await auth.getSessionIdentity(request("/", "GET", null, newCookie));
+  assert.equal(recipient.email, relay);
+  assert.equal((await auth.loginPasswordAccount(ownerEmail, password)).id, pending.id);
+  assert.equal(db.sql.prepare("SELECT count(*) AS n FROM users").get().n, 2);
+
+  const invitedEmail = "invitation@example.invalid";
+  const share = (data, session) => sharing.POST(request("/api/sharing","POST",{workspace:"private",...data},session));
+  assert.equal((await share({action:"invite",email:invitedEmail,role:"view"},ownerCookie)).status, 200);
+  assert.deepEqual((await (await share({action:"list"},newCookie)).json()).received, []);
+  const aliasAction = (data, session) => alias.POST(request("/api/auth/alias","POST",data,session));
+  assert.equal((await aliasAction({action:"send",email:invitedEmail},newCookie)).status, 200);
+  assert.ok(mailCode);
+  assert.equal((await aliasAction({action:"verify",code:mailCode},ownerCookie)).status, 400);
+  assert.equal((await aliasAction({action:"verify",code:mailCode},newCookie)).status, 200);
+  assert.equal((await aliasAction({action:"verify",code:mailCode},newCookie)).status, 400);
+  assert.equal((await auth.registerPasswordAccount(invitedEmail, undefined, true)).error, "exists");
+  const received = (await (await share({action:"list"},newCookie)).json()).received;
+  assert.equal(received.length, 1);
+  assert.equal((await share({action:"accept",id:received[0].id},newCookie)).status, 200);
+
+  const issuedAt = Math.floor(Date.now()/1000);
+  const payload = await sign({iss:issuer, aud:"de.njora.finanzueberblick", iat:issuedAt,
+    events:{type:"consent-revoked",sub:"existing-subject",event_time:issuedAt}});
+  assert.equal((await appleNotifications.POST(request("/api/auth/apple/notifications","POST",{payload}))).status, 200);
+  assert.equal(await auth.getSessionIdentity(request("/", "GET", null, cookie(entered))), null);
+  assert.equal((await auth.loginPasswordAccount(ownerEmail, password)).id, pending.id);
+
+  const deletion = await account.DELETE(request("/api/account","DELETE",null,newCookie));
+  assert.equal(deletion.status, 200);
+  assert.deepEqual(revoked, ["fixture-refresh-new-subject"]);
+  assert.equal(db.sql.prepare("SELECT count(*) AS n FROM auth_email_aliases").get().n, 0);
+  assert.equal(db.sql.prepare("SELECT count(*) AS n FROM workspace_shares").get().n, 0);
 });

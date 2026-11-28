@@ -48,9 +48,10 @@ async function download(token, fetchImpl) {
   const data = JSON.parse(bytes);
   const tables = ["users", "finance_plans", "user_activity", "auth_credentials"];
   if (data?.version >= 2) tables.push("njora_subscribers");
-  if (data?.version === 4) tables.push("njora_business_subscribers");
+  if (data?.version >= 4) tables.push("njora_business_subscribers");
+  if (data?.version === 5) tables.push("auth_apple_identities", "auth_email_aliases");
   if (data?.version >= 3) tables.push("business_plans");
-  if (data?.format !== "njora-database-backup" || ![1, 2, 3, 4].includes(data.version)
+  if (data?.format !== "njora-database-backup" || ![1, 2, 3, 4, 5].includes(data.version)
       || !data.tables || Object.keys(data.tables).length !== tables.length
       || !tables.every(name => Array.isArray(data.tables[name]))) {
     throw new BackupError("Die Antwort enthält keinen vollständigen Njora-Export.");

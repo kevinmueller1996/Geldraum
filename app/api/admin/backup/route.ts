@@ -38,19 +38,22 @@ export async function GET(request: NextRequest) {
       db.prepare("SELECT user_id, email_mask, first_seen_at, last_seen_at, access_count, source FROM user_activity ORDER BY user_id"),
       db.prepare("SELECT user_id, email_mask, email_address, email_verified_at, password_salt, password_hash, password_iterations, created_at, updated_at FROM auth_credentials ORDER BY user_id"),
       db.prepare("SELECT user_id, plan_json, schema_version, revision, created_at, updated_at FROM business_plans ORDER BY user_id"),
+      db.prepare("SELECT subject,user_id,client_id,encrypted_refresh_token,authorized_at FROM auth_apple_identities ORDER BY user_id"),
+      db.prepare("SELECT email_id,user_id,email_address,verified_at FROM auth_email_aliases ORDER BY user_id"),
       ...(hasSubscriptions ? [db.prepare("SELECT user_id, account_token, stripe_customer, apple_original, apple_environment FROM njora_subscribers ORDER BY user_id")] : []),
       ...(hasBusinessBilling ? [db.prepare("SELECT user_id, account_token, stripe_customer, apple_original, apple_environment FROM njora_business_subscribers ORDER BY user_id")] : []),
     ]);
-    const [users, financePlans, userActivity, authCredentials, businessPlans] = results.map((result) => result.results);
-    const subscribers = hasSubscriptions ? results[5].results : undefined;
-    const businessBilling = hasBusinessBilling ? results[hasSubscriptions ? 6 : 5].results : [];
+    const [users, financePlans, userActivity, authCredentials, businessPlans, appleIdentities, emailAliases] = results.map((result) => result.results);
+    const subscribers = hasSubscriptions ? results[7].results : undefined;
+    const businessBilling = hasBusinessBilling ? results[hasSubscriptions ? 8 : 7].results : [];
+    const hasAppleData = appleIdentities.length > 0 || emailAliases.length > 0;
     const exportedAt = new Date().toISOString();
     const filename = `njora-datenbank-${exportedAt.slice(0, 10)}.json`;
     const body = JSON.stringify({
       format: "njora-database-backup",
-      version: businessBilling.length ? 4 : businessPlans.length ? 3 : subscribers ? 2 : 1,
+      version: hasAppleData ? 5 : businessBilling.length ? 4 : businessPlans.length ? 3 : subscribers ? 2 : 1,
       exportedAt,
-      excludes: ["auth_sessions", "auth_action_tokens", "auth_attempts", "njora_plugin_grants", "njora_plugin_proposals", "njora_cancellation_limits"],
+      excludes: ["auth_sessions", "auth_action_tokens", "auth_attempts", "auth_apple_challenges", "auth_email_alias_codes", "njora_plugin_grants", "njora_plugin_proposals", "njora_cancellation_limits"],
       tables: {
         users,
         finance_plans: financePlans,
@@ -59,6 +62,8 @@ export async function GET(request: NextRequest) {
         ...(businessPlans.length || businessBilling.length ? { business_plans: businessPlans, njora_subscribers: subscribers ?? [] } : {}),
         ...(businessBilling.length ? { njora_business_subscribers: businessBilling } : {}),
         ...(subscribers ? { njora_subscribers: subscribers } : {}),
+        ...(hasAppleData ? {business_plans: businessPlans, njora_subscribers: subscribers ?? [], njora_business_subscribers: businessBilling,
+          auth_apple_identities: appleIdentities, auth_email_aliases: emailAliases} : {}),
       },
     }, null, 2);
 
